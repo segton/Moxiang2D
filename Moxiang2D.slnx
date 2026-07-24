@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Moxiang2D/Moxiang2D.vcxproj" />
+  <Project Path="Moxiang2D/Moxiang2D.vcxproj" Id="a6803116-8e7d-4cc1-bdca-7803695b8424" />
 </Solution>

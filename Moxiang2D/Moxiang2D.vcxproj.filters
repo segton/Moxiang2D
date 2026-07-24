@@ -42,4 +42,10 @@
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Assets\shaders\iso_ground_330.vs" />
+    <None Include="Assets\shaders\iso_ground_330.fs" />
+    <None Include="Assets\shaders\iso_ground_100.vs" />
+    <None Include="Assets\shaders\iso_ground_100.fs" />
+  </ItemGroup>
 </Project>

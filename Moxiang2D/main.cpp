@@ -21,12 +21,18 @@ static Game gGame;
 
 static void UpdateDrawFrame()
 {
+    double frameStart = GetTime();
+
     float dt = GetFrameTime();
 
+    double updateStart = GetTime();
     gGame.Update(dt);
+    double updateEnd = GetTime();
 
     BeginDrawing();
     ClearBackground(BLACK);
+
+    double drawStart = GetTime();
 
     gGame.Draw();
 
@@ -36,7 +42,23 @@ static void UpdateDrawFrame()
     rlImGuiEnd();
 #endif
 
+    double drawEnd = GetTime();
+
+    double endDrawingStart = GetTime();
     EndDrawing();
+    double endDrawingEnd = GetTime();
+
+    float updateMs = static_cast<float>((updateEnd - updateStart) * 1000.0);
+    float drawMs = static_cast<float>((drawEnd - drawStart) * 1000.0);
+    float endDrawingMs = static_cast<float>((endDrawingEnd - endDrawingStart) * 1000.0);
+    float fullFrameMs = static_cast<float>((endDrawingEnd - frameStart) * 1000.0);
+
+    gGame.SubmitFrameTiming(
+        fullFrameMs,
+        updateMs,
+        drawMs,
+        endDrawingMs
+    );
 }
 
 #if MOXIANG_WEB
@@ -51,9 +73,9 @@ int main()
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 
 #if MOXIANG_WEB
-    InitWindow(960, 540, "Moxiang2D Web");
+    InitWindow(960, 540, "Moxiang2D Hybrid 3D Web");
 #else
-    InitWindow(1280, 720, "Moxiang2D Editor");
+    InitWindow(1920, 1080, "Moxiang2D Hybrid 3D Editor");
 #endif
 
     SetTargetFPS(60);
@@ -76,8 +98,9 @@ int main()
     rlImGuiShutdown();
 #endif
 
+    gGame.Shutdown();
     CloseWindow();
 #endif
 
     return 0;
-}   
+}
