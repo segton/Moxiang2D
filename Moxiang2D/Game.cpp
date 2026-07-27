@@ -924,6 +924,8 @@ void Game::Init()
 
     LoadSmallEnemySpriteSheet();
     LoadShooterSpriteSheets();
+    LoadBossSpriteSheets();
+
 
     LoadHuashanImpactSpriteSheet();
 
@@ -1073,7 +1075,37 @@ void Game::Shutdown()
     shooterWalkSpriteLoaded = false;
     shooterAttackSpriteLoaded = false;
 
+    if (bossIdleSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossIdleSpriteSheet
+        );
 
+        bossIdleSpriteSheet = {};
+    }
+
+    if (bossWalkSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossWalkSpriteSheet
+        );
+
+        bossWalkSpriteSheet = {};
+    }
+
+    bossIdleSpriteLoaded = false;
+    bossWalkSpriteLoaded = false;
+
+    if (bossAttackSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossAttackSpriteSheet
+        );
+
+        bossAttackSpriteSheet = {};
+    }
+
+    bossAttackSpriteLoaded = false;
     for (Obstacle& obstacle : obstacles)
     {
         if (obstacle.texture.id != 0)
@@ -2950,11 +2982,25 @@ void Game::Update(float dt)
     }
 
 #if MOXIANG_USE_IMGUI
-    if (IsKeyPressed(KEY_B))
+    if (IsKeyPressed(KEY_F2))
     {
-        buildMode = !buildMode;
+        buildMode =
+            !buildMode;
+    }
+#endif
+
+    // B creates a Boss for animation and behaviour testing.
+    if (
+        !buildMode &&
+        gameState ==
+        GameState::Playing &&
+        IsKeyPressed(KEY_B)
+        )
+    {
+        SpawnTestBoss();
     }
 
+#if MOXIANG_USE_IMGUI
     if (buildMode)
     {
         UpdateEditorCameraControls();
@@ -2963,6 +3009,7 @@ void Game::Update(float dt)
         UpdateInput(dt);
         UpdatePlayer(dt);
         UpdateCamera(dt);
+
         return;
     }
 #endif
@@ -2996,8 +3043,24 @@ void Game::Update(float dt)
 
     UpdateInput(dt);
     UpdateDash(dt);
+    UpdatePlayerKnockback(dt);
 
-    if (dashActive)
+    if (playerKnockbackActive)
+    {
+        // Knockback owns player movement until it ends.
+        currentPath.clear();
+        pathIndex = 0;
+        hasPath = false;
+        pendingNpc = -1;
+
+        joystickActive = false;
+
+        joystickDirection = {
+            0.0f,
+            0.0f
+        };
+    }
+    else if (dashActive)
     {
         // Dash movement is handled by UpdateDash().
         currentPath.clear();
@@ -3008,6 +3071,7 @@ void Game::Update(float dt)
         IsPlayerMovementLocked()
         )
     {
+        // Existing code continues...
         // Hard skill locks such as Huashan and Dongfeng
         // still prevent ordinary movement.
         currentPath.clear();
@@ -3068,7 +3132,7 @@ void Game::Draw()
     // Browser and desktop windows may be resized.
     EnsureLightingTargets();
 
-    bool useLighting =
+    const bool useLighting =
         lightingReady &&
         sceneTarget.id != 0 &&
         lightTarget.id != 0 &&
@@ -3077,7 +3141,12 @@ void Game::Draw()
 
     // --------------------------------------------------
     // PASS 1:
-    // Render the entire game world into sceneTarget.
+    // Draw the world.
+    //
+    // With lighting enabled, the world is drawn into
+    // sceneTarget first.
+    //
+    // Without lighting, it is drawn directly to screen.
     // --------------------------------------------------
 
     if (useLighting)
@@ -3091,7 +3160,10 @@ void Game::Draw()
         );
     }
 
-    if (rendererMode == WorldRendererMode::Hybrid3D)
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
     {
         perfBeginMode2DMs = 0.0f;
         perfEndMode2DMs = 0.0f;
@@ -3113,7 +3185,7 @@ void Game::Draw()
     }
     else
     {
-        double beginModeStart =
+        const double beginModeStart =
             GetTime();
 
         BeginMode2D(
@@ -3125,7 +3197,8 @@ void Game::Draw()
                 (
                     GetTime() -
                     beginModeStart
-                    ) * 1000.0
+                    ) *
+                1000.0
                 );
 
         PERF_DRAW_BLOCK(
@@ -3151,7 +3224,7 @@ void Game::Draw()
             }
         );
 
-        double endModeStart =
+        const double endModeStart =
             GetTime();
 
         EndMode2D();
@@ -3161,7 +3234,8 @@ void Game::Draw()
                 (
                     GetTime() -
                     endModeStart
-                    ) * 1000.0
+                    ) *
+                1000.0
                 );
     }
 
@@ -3172,17 +3246,18 @@ void Game::Draw()
 
     // --------------------------------------------------
     // PASS 2:
-    // Create the ambient and point-light texture.
+    // Generate the light map.
     // --------------------------------------------------
 
     if (useLighting)
     {
         DrawLightMap();
 
-        // ----------------------------------------------
+        // --------------------------------------------------
         // PASS 3:
-        // Multiply sceneTarget by lightTarget.
-        // ----------------------------------------------
+        // Draw sceneTarget back to the actual screen and
+        // multiply it by the generated light map.
+        // --------------------------------------------------
 
         BeginShaderMode(
             lightingShader
@@ -3194,14 +3269,15 @@ void Game::Draw()
             lightTarget.texture
         );
 
-        // Render textures are vertically inverted internally.
-        // Negative height corrects their screen orientation.
+        // Render textures are vertically inverted.
         Rectangle sceneSource{
             0.0f,
             0.0f,
+
             static_cast<float>(
                 sceneTarget.texture.width
             ),
+
             -static_cast<float>(
                 sceneTarget.texture.height
             )
@@ -3210,7 +3286,10 @@ void Game::Draw()
         DrawTextureRec(
             sceneTarget.texture,
             sceneSource,
-            { 0.0f, 0.0f },
+            {
+                0.0f,
+                0.0f
+            },
             WHITE
         );
 
@@ -3219,10 +3298,22 @@ void Game::Draw()
 
     // --------------------------------------------------
     // PASS 4:
-    // Draw UI normally so it is not darkened.
+    // Unlit Boss effects.
+    //
+    // This must happen after sceneTarget is composited,
+    // otherwise the white rings will be affected by lighting
+    // or covered by the scene texture.
     // --------------------------------------------------
 
+    DrawBossUnlitEffects();
+
+    // Full-screen Huashan flash is also unlit.
     DrawHuashanImpactFlash();
+
+    // --------------------------------------------------
+    // PASS 5:
+    // UI and screen-space elements.
+    // --------------------------------------------------
 
     PERF_DRAW_BLOCK(
         perfDrawUiMs,
@@ -3287,7 +3378,7 @@ void Game::Draw()
                     0,
                     GetScreenWidth(),
                     GetScreenHeight(),
-                    {
+                    Color{
                         0,
                         0,
                         0,
@@ -3318,10 +3409,11 @@ void Game::Draw()
             (
                 GetTime() -
                 perfDrawStartTime
-                ) * 1000.0
+                ) *
+            1000.0
             );
 
-    float accounted =
+    const float accounted =
         perfBeginMode2DMs +
         perfDrawGroundMs +
         perfDrawCombatWorldMs +
@@ -3340,9 +3432,13 @@ void Game::Draw()
         perfDrawTotalMs -
         accounted;
 
-    if (perfDrawUnaccountedMs < 0.0f)
+    if (
+        perfDrawUnaccountedMs <
+        0.0f
+        )
     {
-        perfDrawUnaccountedMs = 0.0f;
+        perfDrawUnaccountedMs =
+            0.0f;
     }
 }
 
@@ -8240,6 +8336,16 @@ void Game::InitCombat()
     dashInvulnerabilityTimer = 0.0f;
     dashAfterimageTimer = 0.0f;
     dashAfterimages.clear();
+    playerKnockbackActive = false;
+
+    playerKnockbackVelocity = {
+        0.0f,
+        0.0f
+    };
+
+    playerKnockbackTimer = 0.0f;
+    playerKnockbackMaxTimer = 0.0f;
+    playerKnockbackPeakHeight = 145.0f;
 
     UpdateAttackButtonRect();
     UpdateDashButtonRect();
@@ -8914,6 +9020,158 @@ Vector2 Game::GetRandomSpawnPosition() const
     return bestPosition;
 }
 
+void Game::SpawnTestBoss()
+{
+    const std::size_t previousEnemyCount =
+        enemies.size();
+
+    SpawnEnemy(
+        EnemyType::Boss
+    );
+
+    if (
+        enemies.size() <=
+        previousEnemyCount
+        )
+    {
+        TraceLog(
+            LOG_WARNING,
+            "[BOSS TEST] Boss could not be spawned."
+        );
+
+        return;
+    }
+
+    Enemy& boss =
+        enemies.back();
+
+    const Vector2 testOffsets[] = {
+        { 300.0f, 0.0f },
+        { -300.0f, 0.0f },
+        { 0.0f, 300.0f },
+        { 0.0f, -300.0f },
+
+        { 220.0f, 220.0f },
+        { -220.0f, 220.0f },
+        { 220.0f, -220.0f },
+        { -220.0f, -220.0f }
+    };
+
+    bool placedNearPlayer =
+        false;
+
+    for (
+        const Vector2 offset :
+    testOffsets
+        )
+    {
+        Vector2 requestedPosition =
+            Vector2Add(
+                playerPosition,
+                offset
+            );
+
+        int cellX = 0;
+        int cellY = 0;
+
+        if (
+            !FindNearestWalkableCell(
+                requestedPosition,
+                cellX,
+                cellY
+            )
+            )
+        {
+            continue;
+        }
+
+        Vector2 candidatePosition =
+            CellToWorld(
+                cellX,
+                cellY
+            );
+
+        float collisionRadius =
+            std::max(
+                6.0f,
+                boss.radius * 0.55f
+            );
+
+        if (
+            !CanEnemyStandAt(
+                candidatePosition,
+                candidatePosition,
+                collisionRadius
+            )
+            )
+        {
+            continue;
+        }
+
+        std::vector<Vector2>
+            connectionPath;
+
+        if (
+            !FindPath(
+                candidatePosition,
+                playerPosition,
+                connectionPath
+            )
+            )
+        {
+            continue;
+        }
+
+        boss.pos =
+            candidatePosition;
+
+        boss.previousAnimationPosition =
+            candidatePosition;
+
+        boss.animationPositionInitialized =
+            true;
+
+        boss.bossPreviousAnimationPosition =
+            candidatePosition;
+
+        boss.bossAnimationPositionInitialized =
+            true;
+
+        boss.animationState =
+            EnemyAnimationState::Idle;
+
+        boss.bossAnimationFrame = 0;
+        boss.bossAnimationTimer = 0.0f;
+
+        SetEnemyFacingFromWorldDirection(
+            boss,
+            Vector2Subtract(
+                playerPosition,
+                boss.pos
+            )
+        );
+
+        RefreshEnemyPath(
+            boss
+        );
+
+        placedNearPlayer =
+            true;
+
+        break;
+    }
+
+    TraceLog(
+        LOG_INFO,
+        "[BOSS TEST] Spawned Boss id=%d nearPlayer=%d "
+        "position=(%.1f, %.1f)",
+        boss.id,
+        placedNearPlayer ? 1 : 0,
+        boss.pos.x,
+        boss.pos.y
+    );
+}
+
 void Game::SpawnEnemy(EnemyType type)
 {
     if (enemies.size() >= 80)
@@ -8985,19 +9243,46 @@ void Game::SpawnEnemy(EnemyType type)
     {
         enemy.radius = 62.0f;
         enemy.speed = 72.0f;
-        enemy.hp = 420 + wave.wave * 80;
-        enemy.maxHp = enemy.hp;
-        enemy.contactDamage = 22 + wave.wave * 3;
-        enemy.attackInterval = 0.90f;
 
-        enemy.shootRange = 760.0f;
-        enemy.shootInterval = 1.15f;
-        enemy.bulletDamage = 12 + wave.wave * 2;
-        enemy.bulletSpeed = 390.0f;
+        enemy.hp =
+            420 +
+            wave.wave * 80;
 
-        enemy.bossDashHitThreshold = 6;
+        enemy.maxHp =
+            enemy.hp;
+
+        // Used by the circular slam.
+        enemy.contactDamage =
+            22 +
+            wave.wave * 3;
+
+        enemy.attackInterval =
+            1.10f;
+
+        // Used by the laser and phase projectiles.
+        enemy.bulletDamage =
+            12 +
+            wave.wave * 2;
+
+        enemy.bulletSpeed =
+            390.0f;
+
         enemy.weight = 5.0f;
         enemy.knockbackResistance = 4.0f;
+
+        enemy.bossActionState =
+            BossActionState::None;
+
+        enemy.bossPhase75Triggered =
+            false;
+
+        enemy.bossPhase25Triggered =
+            false;
+
+        // Prevent an immediate laser when the Boss
+        // first crosses below 50%.
+        enemy.bossLaserCooldownTimer =
+            2.0f;
     }
 
     if (smallEnemyFramesPerRow > 0)
@@ -9029,6 +9314,44 @@ void Game::SpawnEnemy(EnemyType type)
     enemy.animationPositionInitialized =
         true;
 
+    if (
+        type ==
+        EnemyType::Boss
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Idle;
+
+        if (bossIdleFramesPerRow > 0)
+        {
+            enemy.bossAnimationFrame =
+                GetRandomValue(
+                    0,
+                    bossIdleFramesPerRow - 1
+                );
+        }
+        else
+        {
+            enemy.bossAnimationFrame = 0;
+        }
+
+        enemy.bossAnimationTimer =
+            static_cast<float>(
+                GetRandomValue(
+                    0,
+                    1000
+                )
+                ) /
+            1000.0f *
+            bossIdleFrameDuration;
+
+        enemy.bossPreviousAnimationPosition =
+            enemy.pos;
+
+        enemy.bossAnimationPositionInitialized =
+            true;
+    }
+
     RefreshEnemyPath(enemy);
 
     enemies.push_back(enemy);
@@ -9058,70 +9381,53 @@ void Game::UpdateEnemies(float dt)
             dt
         );
 
+        const int enemyTerrainElevation =
+            GetTerrainElevationAtWorld(
+                enemy.pos
+            );
 
-        // Boss charge.
-        if (enemy.bossDashCharging)
+        const int playerTerrainElevation =
+            GetTerrainElevationAtWorld(
+                playerPosition
+            );
+
+        const bool sameTerrainLevel =
+            enemyTerrainElevation ==
+            playerTerrainElevation;
+
+        const float distanceToPlayer =
+            Vector2Distance(
+                enemy.pos,
+                playerPosition
+            );
+
+        // --------------------------------------------------
+        // Boss has its own complete behaviour controller.
+        // It handles:
+        // - idle/walking animation
+        // - ground slam
+        // - continuous laser
+        // - 75% and 25% phase jumps
+        // --------------------------------------------------
+
+        if (
+            enemy.type ==
+            EnemyType::Boss
+            )
         {
-            enemy.bossDashChargeTimer -=
-                dt;
-
-            if (
-                enemy.bossDashChargeTimer <=
-                0.0f
-                )
-            {
-                enemy.bossDashCharging =
-                    false;
-
-                enemy.bossDashChargeTimer =
-                    0.0f;
-
-                ExecuteBossDash(
-                    enemy
-                );
-            }
+            UpdateBossBehavior(
+                enemy,
+                dt,
+                distanceToPlayer,
+                sameTerrainLevel
+            );
 
             continue;
         }
 
-        // Boss movement during dash.
-        if (enemy.bossDashTimer > 0.0f)
-        {
-            enemy.bossDashTimer -=
-                dt;
-
-            Vector2 nextPos =
-                Vector2Add(
-                    enemy.pos,
-                    Vector2Scale(
-                        enemy.bossDashVelocity,
-                        dt
-                    )
-                );
-
-            if (
-                CanEnemyStandAt(
-                    enemy.pos,
-                    nextPos,
-                    std::max(
-                        6.0f,
-                        enemy.radius *
-                        0.55f
-                    )
-                )
-                )
-            {
-                enemy.pos =
-                    nextPos;
-            }
-            else
-            {
-                enemy.bossDashTimer =
-                    0.0f;
-            }
-
-            continue;
-        }
+        // --------------------------------------------------
+        // Other enemies
+        // --------------------------------------------------
 
         if (
             IsEnemyCrowdControlled(
@@ -9132,34 +9438,6 @@ void Game::UpdateEnemies(float dt)
             continue;
         }
 
-        int enemyTerrainElevation =
-            GetTerrainElevationAtWorld(
-                enemy.pos
-            );
-
-        int playerTerrainElevation =
-            GetTerrainElevationAtWorld(
-                playerPosition
-            );
-
-        bool sameTerrainLevel =
-            enemyTerrainElevation ==
-            playerTerrainElevation;
-
-        float distanceToPlayer =
-            Vector2Distance(
-                enemy.pos,
-                playerPosition
-            );
-
-        // Shooter behavior must update every frame.
-        //
-        // UpdateEnemyShooter() already handles:
-        // - different terrain elevations;
-        // - walking toward a connected ramp;
-        // - idle and walking animations;
-        // - preventing projectiles from firing across elevations;
-        // - completing an attack animation without releasing an invalid shot.
         if (
             enemy.type ==
             EnemyType::Shooter
@@ -9174,22 +9452,12 @@ void Game::UpdateEnemies(float dt)
             continue;
         }
 
-        if (
-            sameTerrainLevel &&
-            (
-                enemy.type ==
-                EnemyType::Boss
-                )
-            )
-        {
-            UpdateEnemyShooter(
-                enemy,
-                dt,
-                distanceToPlayer
-            );
-        }
+        // --------------------------------------------------
+        // Normal contact attack for Grunt, Runner and Tank.
+        // The Boss must not use this section.
+        // --------------------------------------------------
 
-        float enemyAttackRange =
+        const float enemyAttackRange =
             enemy.radius +
             player.radius +
             8.0f;
@@ -9225,18 +9493,20 @@ void Game::UpdateEnemies(float dt)
             continue;
         }
 
+        // --------------------------------------------------
+        // Normal path movement
+        // --------------------------------------------------
+
         enemy.pathRefreshTimer +=
             dt;
 
-        bool pathFinished =
+        const bool pathFinished =
             !enemy.path.empty() &&
             enemy.pathIndex >=
             static_cast<int>(
                 enemy.path.size()
                 );
 
-        // Do not recalculate just because path is empty.
-        // Empty can mean the last search failed.
         if (
             enemy.pathRefreshTimer >=
             enemy.pathRefreshInterval ||
@@ -9252,8 +9522,6 @@ void Game::UpdateEnemies(float dt)
             enemy,
             dt
         );
-
-
     }
 
     ResolveEnemySeparation();
@@ -9263,6 +9531,7 @@ void Game::ResolveEnemySeparation()
 {
     constexpr float separationScale =
         0.62f;
+
 
     auto IsSeparationMovementLocked =
         [](
@@ -9280,10 +9549,27 @@ void Game::ResolveEnemySeparation()
                 enemy.landingStunTimer > 0.0f ||
                 enemy.frozenTimer > 0.0f;
 
+            // Prevent enemy separation from moving the Boss
+            // while it performs a slam, laser, or phase jump.
+            const bool bossLocked =
+                enemy.type ==
+                EnemyType::Boss &&
+                (
+                    enemy.bossActionState !=
+                    BossActionState::None ||
+
+                    enemy.bossDashCharging ||
+
+                    enemy.bossDashTimer >
+                    0.0f
+                    );
+
             return
                 shootingLocked ||
+                bossLocked ||
                 crowdControlLocked;
         };
+
 
     for (
         int firstIndex = 0;
@@ -9620,36 +9906,93 @@ void Game::SpawnRadialEnemyProjectiles(Vector2 center, int count, int damage, fl
 }
 
 
-void Game::StartBossDash(Enemy& enemy)
+void Game::StartBossDash(
+    Enemy& enemy
+)
 {
-    if (enemy.type != EnemyType::Boss)
+    if (
+        enemy.type !=
+        EnemyType::Boss
+        )
     {
         return;
     }
 
-    if (enemy.bossDashCharging || enemy.bossDashTimer > 0.0f)
+    if (
+        enemy.bossDashCharging ||
+        enemy.bossDashTimer > 0.0f
+        )
     {
         return;
     }
 
-    enemy.bossHitCounter = 0;
+    enemy.bossDashIsForward = false;
+    // Interrupt the current attack.
+    enemy.bossActionState =
+        BossActionState::None;
+
+    enemy.bossLaserWindupTimer =
+        0.0f;
+
+    enemy.bossLaserActiveTimer =
+        0.0f;
+
+    enemy.bossLaserDamageTimer =
+        0.0f;
+
+    enemy.animationState =
+        EnemyAnimationState::Idle;
+
+    enemy.bossAnimationFrame = 0;
+    enemy.bossAnimationTimer = 0.0f;
 
     enemy.bossDashCharging = true;
-    enemy.bossDashChargeDuration = 0.90f;
-    enemy.bossDashChargeTimer = enemy.bossDashChargeDuration;
+
+    const float attackSpeedMultiplier =
+        GetBossAttackSpeedMultiplier(
+            enemy
+        );
+
+    enemy.bossDashChargeDuration =
+        0.90f /
+        attackSpeedMultiplier;
+
+    enemy.bossDashChargeTimer =
+        enemy.bossDashChargeDuration;
 
     enemy.path.clear();
     enemy.pathIndex = 0;
 
     VfxParticle warningCircle;
-    warningCircle.type = VfxType::SkillCircle;
-    warningCircle.pos = enemy.pos;
-    warningCircle.radius = enemy.radius + 42.0f;
-    warningCircle.life = enemy.bossDashChargeDuration;
-    warningCircle.maxLife = enemy.bossDashChargeDuration;
-    warningCircle.color = { 255, 30, 30, 130 };
+
+    warningCircle.type =
+        VfxType::SkillCircle;
+
+    warningCircle.pos =
+        enemy.pos;
+
+    warningCircle.radius =
+        enemy.radius +
+        42.0f;
+
+    warningCircle.life =
+        enemy.bossDashChargeDuration;
+
+    warningCircle.maxLife =
+        enemy.bossDashChargeDuration;
+
+    warningCircle.color = {
+        255,
+        30,
+        30,
+        130
+    };
+
     warningCircle.active = true;
-    vfxParticles.push_back(warningCircle);
+
+    vfxParticles.push_back(
+        warningCircle
+    );
 }
 
 
@@ -10213,11 +10556,18 @@ void Game::UpdateHuashan(float dt)
 
 bool Game::IsPlayerAirborne() const
 {
-    return huashanJumpActive;
+    return
+        huashanJumpActive ||
+        playerKnockbackActive;
 }
 
 bool Game::IsPlayerMovementLocked() const
 {
+    if (playerKnockbackActive)
+    {
+        return true;
+    }
+
     return
         huashanJumpActive ||
         dongfengCasting;
@@ -10243,6 +10593,42 @@ float Game::GetHuashanJumpHeight() const
     }
 
     return sinf(t * PI) * 125.0f;
+}
+
+float Game::GetPlayerVisualHeight() const
+{
+    float visualHeight =
+        GetHuashanJumpHeight();
+
+    if (
+        playerKnockbackActive &&
+        playerKnockbackMaxTimer > 0.0f
+        )
+    {
+        const float progress =
+            1.0f -
+            Clamp(
+                playerKnockbackTimer /
+                playerKnockbackMaxTimer,
+                0.0f,
+                1.0f
+            );
+
+        const float knockbackHeight =
+            sinf(
+                progress *
+                PI
+            ) *
+            playerKnockbackPeakHeight;
+
+        visualHeight =
+            std::max(
+                visualHeight,
+                knockbackHeight
+            );
+    }
+
+    return visualHeight;
 }
 
 void Game::ResolveHuashanImpact()
@@ -13007,14 +13393,20 @@ void Game::UpdateDashAfterimages(float dt)
 
 void Game::SpawnDashAfterimage()
 {
-    if (!playerSpriteLoaded ||
-        playerSpriteSheet.id == 0)
+    if (
+        !playerSpriteLoaded ||
+        playerSpriteSheet.id == 0
+        )
     {
         return;
     }
 
-    if (static_cast<int>(dashAfterimages.size()) >=
-        maxDashAfterimages)
+    if (
+        static_cast<int>(
+            dashAfterimages.size()
+            ) >=
+        maxDashAfterimages
+        )
     {
         dashAfterimages.erase(
             dashAfterimages.begin()
@@ -13022,16 +13414,37 @@ void Game::SpawnDashAfterimage()
     }
 
     DashAfterimage afterimage;
-    afterimage.worldPosition = playerPosition;
-    afterimage.direction = playerDirection;
-    afterimage.frame = std::min(
-        playerAnimFrame,
-        playerFramesPerRow - 1
-    );
-    afterimage.life = dashAfterimageLifetime;
-    afterimage.maxLife = dashAfterimageLifetime;
 
-    dashAfterimages.push_back(afterimage);
+    afterimage.worldPosition =
+        playerPosition;
+
+    afterimage.direction =
+        playerDirection;
+
+    afterimage.frame =
+        std::max(
+            0,
+            std::min(
+                playerAnimFrame,
+                std::max(
+                    1,
+                    playerFramesPerRow
+                ) - 1
+            )
+        );
+
+    afterimage.useBossSprite =
+        false;
+
+    afterimage.life =
+        dashAfterimageLifetime;
+
+    afterimage.maxLife =
+        dashAfterimageLifetime;
+
+    dashAfterimages.push_back(
+        afterimage
+    );
 }
 
 void Game::UpdateDash(float dt)
@@ -14280,9 +14693,8 @@ void Game::ApplyDamageToEnemy(
         enemy.shootTimer =
             0.0f;
     }
-
-    // Preserve current boss reaction logic.
-    if (
+    /*
+        if (
         enemy.type ==
         EnemyType::Boss
         )
@@ -14302,6 +14714,9 @@ void Game::ApplyDamageToEnemy(
             );
         }
     }
+    */
+    // Preserve current boss reaction logic.
+
 }
 
 Enemy* Game::FindEnemyById(
@@ -14803,32 +15218,76 @@ bool Game::IsProjectileBlockedByWorld(
 
     return false;
 }
-void Game::ExecuteBossDash(Enemy& enemy)
+void Game::ExecuteBossDash(
+    Enemy& enemy
+)
 {
-    if (enemy.type != EnemyType::Boss)
+    if (
+        enemy.type !=
+        EnemyType::Boss
+        )
     {
         return;
     }
 
-    Vector2 away = Vector2Subtract(enemy.pos, playerPosition);
+    Vector2 away =
+        Vector2Subtract(
+            enemy.pos,
+            playerPosition
+        );
 
-    if (Vector2Length(away) <= 0.01f)
+    if (
+        Vector2Length(away) <=
+        0.01f
+        )
     {
-        away = { 1.0f, 0.0f };
+        away = {
+            1.0f,
+            0.0f
+        };
     }
 
-    away = Vector2Normalize(away);
+    away =
+        Vector2Normalize(
+            away
+        );
 
-    enemy.bossDashTimer = 0.32f;
-    enemy.bossDashVelocity = Vector2Scale(away, 780.0f);
+    const float dashPowerMultiplier =
+        GetBossDashPowerMultiplier(
+            enemy
+        );
 
-    SpawnHitSpark(enemy.pos);
+    const float dashDurationMultiplier =
+        GetBossDashDurationMultiplier(
+            enemy
+        );
 
+    enemy.bossDashIsForward =
+        false;
+
+    enemy.bossDashTimer =
+        0.32f *
+        dashDurationMultiplier;
+
+    enemy.bossDashVelocity =
+        Vector2Scale(
+            away,
+            780.0f *
+            dashPowerMultiplier
+        );
+
+    SpawnHitSpark(
+        enemy.pos
+    );
+
+    // Projectile speed also becomes stronger by phase.
+    // Damage and projectile count remain unchanged.
     SpawnRadialEnemyProjectiles(
         enemy.pos,
         28,
         enemy.bulletDamage * 2,
-        340.0f,
+        340.0f *
+        dashPowerMultiplier,
         11.0f
     );
 }
@@ -16368,6 +16827,10 @@ void Game::DrawEnemyVisual(
         return;
     }
 
+    // --------------------------------------------------
+    // Choose the correct enemy rendering system
+    // --------------------------------------------------
+
     const bool usesShooterEnemySprite =
         enemy.type ==
         EnemyType::Shooter &&
@@ -16375,11 +16838,23 @@ void Game::DrawEnemyVisual(
             EnemyType::Shooter
         );
 
+    const bool usesBossEnemySprite =
+        enemy.type ==
+        EnemyType::Boss &&
+        EnemyHasDedicatedSprite(
+            EnemyType::Boss
+        );
+
     const bool usesBlobEnemySprite =
         !usesShooterEnemySprite &&
+        !usesBossEnemySprite &&
         ShouldUseBlobEnemySprite(
             enemy
         );
+
+    // --------------------------------------------------
+    // Sprite dimensions
+    // --------------------------------------------------
 
     const float shooterVisualWidth =
         static_cast<float>(
@@ -16393,6 +16868,18 @@ void Game::DrawEnemyVisual(
             ) *
         shooterVisualScale;
 
+    const float bossVisualWidth =
+        static_cast<float>(
+            bossFrameWidth
+            ) *
+        bossVisualScale;
+
+    const float bossVisualHeight =
+        static_cast<float>(
+            bossFrameHeight
+            ) *
+        bossVisualScale;
+
     float visualSize =
         enemy.radius *
         2.0f;
@@ -16403,6 +16890,14 @@ void Game::DrawEnemyVisual(
             std::max(
                 shooterVisualWidth,
                 shooterVisualHeight
+            );
+    }
+    else if (usesBossEnemySprite)
+    {
+        visualSize =
+            std::max(
+                bossVisualWidth,
+                bossVisualHeight
             );
     }
     else if (usesBlobEnemySprite)
@@ -16427,6 +16922,10 @@ void Game::DrawEnemyVisual(
     {
         return;
     }
+
+    // --------------------------------------------------
+    // Colours and status effects
+    // --------------------------------------------------
 
     Color fallbackColor =
         GREEN;
@@ -16464,12 +16963,25 @@ void Game::DrawEnemyVisual(
         )
     {
         fallbackColor =
-            PURPLE;
+            GetBossTierTint(
+                enemy
+            );
     }
 
-    // --------------------------------------------------
-    // Status-effect tint
-    // --------------------------------------------------
+    if (
+        enemy.type ==
+        EnemyType::Boss
+        )
+    {
+        spriteTint =
+            GetBossTierTint(
+                enemy
+            );
+
+        fallbackColor =
+            spriteTint;
+    }
+
 
     if (enemy.frozenTimer > 0.0f)
     {
@@ -16523,6 +17035,7 @@ void Game::DrawEnemyVisual(
         };
     }
 
+    // Boss flashes while preparing its dash.
     if (
         enemy.type ==
         EnemyType::Boss &&
@@ -16546,33 +17059,43 @@ void Game::DrawEnemyVisual(
                 )
                 );
 
-        fallbackColor =
-            phase % 2 == 0
-            ? WHITE
-            : Color{
-                255,
-                40,
-                40,
-                255
-        };
+        const Color tierTint =
+            GetBossTierTint(
+                enemy
+            );
 
         spriteTint =
-            fallbackColor;
+            phase % 2 == 0
+            ? tierTint
+            : WHITE;
+
+        fallbackColor =
+            spriteTint;
     }
+
+    // --------------------------------------------------
+    // Screen positions
+    // --------------------------------------------------
 
     const Vector2 groundPosition =
         WorldToViewElevated(
             enemy.pos
         );
 
-    // Shooter sprites use a bottom/feet anchor.
+    // Shooter and Boss use a feet/bottom anchor.
     const Vector2 shooterDrawPosition{
         groundPosition.x,
         groundPosition.y -
             enemy.visualHeight
     };
 
-    // Blob and fallback circles are centre-positioned.
+    const Vector2 bossDrawPosition{
+        groundPosition.x,
+        groundPosition.y -
+            enemy.visualHeight
+    };
+
+    // Blob and circle enemies use a centre anchor.
     float centreVisualLift =
         enemy.radius;
 
@@ -16613,6 +17136,7 @@ void Game::DrawEnemyVisual(
                 groundPosition.x +
                 2.0f
                 ),
+
             static_cast<int>(
                 groundPosition.y +
                 6.0f
@@ -16631,6 +17155,35 @@ void Game::DrawEnemyVisual(
                 0,
                 0,
                 80
+            }
+        );
+    }
+    else if (usesBossEnemySprite)
+    {
+        DrawEllipse(
+            static_cast<int>(
+                groundPosition.x +
+                3.0f
+                ),
+
+            static_cast<int>(
+                groundPosition.y +
+                8.0f
+                ),
+
+            bossVisualWidth *
+            0.22f *
+            shadowScale,
+
+            bossVisualHeight *
+            0.055f *
+            shadowScale,
+
+            Color{
+                0,
+                0,
+                0,
+                85
             }
         );
     }
@@ -16658,12 +17211,15 @@ void Game::DrawEnemyVisual(
                 groundPosition.x +
                 shadowOffsetX
                 ),
+
             static_cast<int>(
                 groundPosition.y +
                 shadowOffsetY
                 ),
+
             shadowWidth,
             shadowHeight,
+
             Color{
                 0,
                 0,
@@ -16679,16 +17235,20 @@ void Game::DrawEnemyVisual(
                 groundPosition.x +
                 5.0f
                 ),
+
             static_cast<int>(
                 groundPosition.y +
                 9.0f
                 ),
+
             enemy.radius *
             1.15f *
             shadowScale,
+
             enemy.radius *
             0.42f *
             shadowScale,
+
             Color{
                 0,
                 0,
@@ -16699,7 +17259,7 @@ void Game::DrawEnemyVisual(
     }
 
     // --------------------------------------------------
-    // Enemy visual
+    // Enemy sprite
     // --------------------------------------------------
 
     if (usesShooterEnemySprite)
@@ -16707,6 +17267,14 @@ void Game::DrawEnemyVisual(
         DrawShooterEnemySprite(
             enemy,
             shooterDrawPosition,
+            spriteTint
+        );
+    }
+    else if (usesBossEnemySprite)
+    {
+        DrawBossEnemySprite(
+            enemy,
+            bossDrawPosition,
             spriteTint
         );
     }
@@ -16732,7 +17300,8 @@ void Game::DrawEnemyVisual(
     // --------------------------------------------------
 
     if (
-        enemy.hp < enemy.maxHp ||
+        enemy.hp <
+        enemy.maxHp ||
         enemy.type ==
         EnemyType::Boss
         )
@@ -16769,6 +17338,17 @@ void Game::DrawEnemyVisual(
             visualTop =
                 shooterDrawPosition.y -
                 shooterVisualHeight *
+                0.98f;
+        }
+        else if (usesBossEnemySprite)
+        {
+            hpBarWidth =
+                bossVisualWidth *
+                0.72f;
+
+            visualTop =
+                bossDrawPosition.y -
+                bossVisualHeight *
                 0.98f;
         }
         else if (usesBlobEnemySprite)
@@ -16816,7 +17396,7 @@ void Game::DrawEnemyVisual(
 void Game::DrawPlayerVisual()
 {
     float jumpHeight =
-        GetHuashanJumpHeight();
+        GetPlayerVisualHeight();
 
     Vector2 groundPosition =
         WorldToViewElevated(playerPosition);
@@ -18252,7 +18832,7 @@ void Game::DrawWorldGroundEffects()
 {
 
     DrawWorldShadows();
-
+    DrawBossLasers2D();
 
     // Player movement path
     if (
@@ -19655,7 +20235,8 @@ void Game::UpdateEnemyShooter(
     // Boss animations can be added separately later.
     // --------------------------------------------------
 
-    if (
+    /*\
+        if (
         enemy.type ==
         EnemyType::Boss
         )
@@ -19695,6 +20276,13 @@ void Game::UpdateEnemyShooter(
         {
             return;
         }
+
+        // Boss remains on idle for shooting,
+        // but turns to face the player.
+        SetEnemyFacingFromWorldDirection(
+            enemy,
+            direction
+        );
 
         direction =
             Vector2Normalize(
@@ -19741,6 +20329,8 @@ void Game::UpdateEnemyShooter(
 
         return;
     }
+    */
+
 
     if (
         enemy.type !=
@@ -20663,8 +21253,6 @@ bool Game::EnemyHasDedicatedSprite(
             smallEnemySpriteLoaded &&
             smallEnemySpriteSheet.id != 0;
 
-        // Change these to their real sprite-loaded checks
-        // when their sprite sheets are added.
     case EnemyType::Tank:
         return false;
 
@@ -20684,12 +21272,23 @@ bool Game::EnemyHasDedicatedSprite(
                 );
 
     case EnemyType::Boss:
-        return false;
+        return
+            (
+                bossIdleSpriteLoaded &&
+                bossIdleSpriteSheet.id != 0
+                ) ||
+            (
+                bossWalkSpriteLoaded &&
+                bossWalkSpriteSheet.id != 0
+                ) ||
+            (
+                bossAttackSpriteLoaded &&
+                bossAttackSpriteSheet.id != 0
+                );
     }
 
     return false;
 }
-
 bool Game::ShouldUseBlobEnemySprite(
     const Enemy& enemy
 ) const
@@ -23378,7 +23977,7 @@ void Game::DrawHybridPlayer3D()
     float anchorY = 0.84f;
 
     const float jumpHeight =
-        GetHuashanJumpHeight();
+        GetPlayerVisualHeight();
 
     if (
         GetActivePlayerFrame(
@@ -23449,14 +24048,110 @@ void Game::DrawHybridDashAfterimage3D(
     const DashAfterimage& afterimage
 )
 {
-    if (
-        !playerSpriteLoaded ||
-        playerSpriteSheet.id == 0 ||
-        afterimage.maxLife <= 0.0f
-        )
+    if (afterimage.maxLife <= 0.0f)
     {
         return;
     }
+
+    Texture2D activeTexture{};
+
+    int frameWidth = 0;
+    int frameHeight = 0;
+    int framesPerRow = 1;
+    int directionRows = 8;
+
+    float drawScale = 1.0f;
+    float anchorY = 0.98f;
+
+    // --------------------------------------------------
+    // Choose Player or Boss sprite
+    // --------------------------------------------------
+
+    if (afterimage.useBossSprite)
+    {
+        if (
+            bossWalkSpriteLoaded &&
+            bossWalkSpriteSheet.id != 0
+            )
+        {
+            activeTexture =
+                bossWalkSpriteSheet;
+
+            framesPerRow =
+                bossWalkFramesPerRow;
+        }
+        else if (
+            bossIdleSpriteLoaded &&
+            bossIdleSpriteSheet.id != 0
+            )
+        {
+            activeTexture =
+                bossIdleSpriteSheet;
+
+            framesPerRow =
+                bossIdleFramesPerRow;
+        }
+        else
+        {
+            return;
+        }
+
+        frameWidth =
+            bossFrameWidth;
+
+        frameHeight =
+            bossFrameHeight;
+
+        directionRows =
+            bossDirectionRows;
+
+        drawScale =
+            bossVisualScale;
+
+        anchorY = 0.98f;
+    }
+    else
+    {
+        if (
+            !playerSpriteLoaded ||
+            playerSpriteSheet.id == 0
+            )
+        {
+            return;
+        }
+
+        activeTexture =
+            playerSpriteSheet;
+
+        frameWidth =
+            playerFrameWidth;
+
+        frameHeight =
+            playerFrameHeight;
+
+        framesPerRow =
+            playerFramesPerRow;
+
+        directionRows =
+            playerDirectionRows;
+
+        drawScale =
+            playerSpriteDrawScale;
+
+        anchorY = 0.84f;
+    }
+
+    framesPerRow =
+        std::max(
+            1,
+            framesPerRow
+        );
+
+    directionRows =
+        std::max(
+            1,
+            directionRows
+        );
 
     const float lifeRatio =
         Clamp(
@@ -23471,43 +24166,55 @@ void Game::DrawHybridDashAfterimage3D(
             0,
             std::min(
                 afterimage.frame,
-                playerFramesPerRow - 1
+                framesPerRow - 1
             )
         );
 
-    const int row =
+    int row =
         GetPlayerDirectionRow(
             afterimage.direction
+        );
+
+    row =
+        std::max(
+            0,
+            std::min(
+                row,
+                directionRows - 1
+            )
         );
 
     Rectangle source{
         static_cast<float>(
             frame *
-            playerFrameWidth
+            frameWidth
         ),
+
         static_cast<float>(
             row *
-            playerFrameHeight
+            frameHeight
         ),
+
         static_cast<float>(
-            playerFrameWidth
+            frameWidth
         ),
+
         static_cast<float>(
-            playerFrameHeight
+            frameHeight
         )
     };
 
     const float afterimageWidthPixels =
         static_cast<float>(
-            playerFrameWidth
+            frameWidth
             ) *
-        playerSpriteDrawScale;
+        drawScale;
 
     const float afterimageHeightPixels =
         static_cast<float>(
-            playerFrameHeight
+            frameHeight
             ) *
-        playerSpriteDrawScale;
+        drawScale;
 
     const float alpha =
         lifeRatio *
@@ -23520,7 +24227,6 @@ void Game::DrawHybridDashAfterimage3D(
         dashAfterimageColorLocation >= 0
         )
     {
-        // Same bright cyan range used by the legacy effect.
         float outerColor[4]{
             0.25f +
                 0.55f *
@@ -23531,7 +24237,6 @@ void Game::DrawHybridDashAfterimage3D(
                 lifeRatio,
 
             1.0f,
-
             alpha
         };
 
@@ -23543,20 +24248,18 @@ void Game::DrawHybridDashAfterimage3D(
         );
 
         DrawHybridBillboardFrame(
-            playerSpriteSheet,
+            activeTexture,
             source,
             afterimage.worldPosition,
             afterimageWidthPixels,
             afterimageHeightPixels,
-            0.98f,
+            anchorY,
             0.0f,
             WHITE,
             HybridBillboardOrientation::UprightWorld
         );
 
-        // Second, lower-opacity core pass.
-        // This gives the effect a bright Sandevistan-like centre
-        // without requiring bloom or another render target.
+        // Bright inner silhouette.
         float coreColor[4]{
             0.78f,
             0.96f,
@@ -23572,26 +24275,26 @@ void Game::DrawHybridDashAfterimage3D(
         );
 
         DrawHybridBillboardFrame(
-            playerSpriteSheet,
+            activeTexture,
             source,
             afterimage.worldPosition,
             afterimageWidthPixels,
             afterimageHeightPixels,
-            0.98f,
+            anchorY,
             0.0f,
-            WHITE
+            WHITE,
+            HybridBillboardOrientation::UprightWorld
         );
     }
     else
     {
-        // Shader fallback.
         DrawHybridBillboardFrame(
-            playerSpriteSheet,
+            activeTexture,
             source,
             afterimage.worldPosition,
             afterimageWidthPixels,
             afterimageHeightPixels,
-            0.98f,
+            anchorY,
             0.0f,
             Color{
                 125,
@@ -23601,7 +24304,8 @@ void Game::DrawHybridDashAfterimage3D(
                     245.0f *
                     alpha
                 )
-            }
+            },
+            HybridBillboardOrientation::UprightWorld
         );
     }
 }
@@ -23641,8 +24345,29 @@ void Game::DrawHybridEnemy3D(
     }
     else if (enemy.type == EnemyType::Boss)
     {
-        fallbackTint = PURPLE;
+        fallbackTint =
+            GetBossTierTint(
+                enemy
+            );
     }
+
+    // Apply the persistent Boss phase tint before
+    // temporary status-effect colors.
+    if (
+        enemy.type ==
+        EnemyType::Boss
+        )
+    {
+        spriteTint =
+            GetBossTierTint(
+                enemy
+            );
+
+        fallbackTint =
+            spriteTint;
+    }
+
+    if (enemy.frozenTimer > 0.0f)
 
     if (enemy.frozenTimer > 0.0f)
     {
@@ -23704,6 +24429,55 @@ void Game::DrawHybridEnemy3D(
                 shooterWidthPixels,
                 shooterHeightPixels,
                 shooterAnchorY,
+                enemy.visualHeight,
+                spriteTint,
+                HybridBillboardOrientation::UprightWorld,
+                enemyWhiteFlash
+            );
+
+            return;
+        }
+    }
+
+    // --------------------------------------------------
+// Dedicated Boss sprite
+// --------------------------------------------------
+
+    if (
+        enemy.type ==
+        EnemyType::Boss
+        )
+    {
+        Texture2D bossTexture{};
+        Rectangle bossSource{};
+
+        float bossWidthPixels =
+            0.0f;
+
+        float bossHeightPixels =
+            0.0f;
+
+        float bossAnchorY =
+            1.0f;
+
+        if (
+            GetBossAnimationFrame(
+                enemy,
+                bossTexture,
+                bossSource,
+                bossWidthPixels,
+                bossHeightPixels,
+                bossAnchorY
+            )
+            )
+        {
+            DrawHybridBillboardFrame(
+                bossTexture,
+                bossSource,
+                enemy.pos,
+                bossWidthPixels,
+                bossHeightPixels,
+                bossAnchorY,
                 enemy.visualHeight,
                 spriteTint,
                 HybridBillboardOrientation::UprightWorld,
@@ -24114,6 +24888,8 @@ void Game::DrawHybridActors3D()
     {
         EndShaderMode();
     }
+
+    DrawBossLasersHybrid3D();
 
     // --------------------------------------------------
     // Bright transparent dash pass
@@ -25187,3 +25963,3244 @@ void Game::DrawHuashanImpactFlash() const
         }
     );
 }
+void Game::LoadBossSpriteSheets()
+{
+    auto LoadBossSheet =
+        [this](
+            const char* path,
+            Texture2D& texture,
+            bool& loaded,
+            int& framesPerRow
+            )
+        {
+            if (texture.id != 0)
+            {
+                UnloadTexture(
+                    texture
+                );
+
+                texture = {};
+            }
+
+            loaded = false;
+
+            texture =
+                LoadTexture(
+                    path
+                );
+
+            if (texture.id == 0)
+            {
+                TraceLog(
+                    LOG_WARNING,
+                    "[BOSS SPRITE] Failed to load: %s",
+                    path
+                );
+
+                return;
+            }
+
+            SetTextureFilter(
+                texture,
+                TEXTURE_FILTER_POINT
+            );
+
+            framesPerRow =
+                std::max(
+                    1,
+                    texture.width /
+                    std::max(
+                        1,
+                        bossFrameWidth
+                    )
+                );
+
+            const int expectedHeight =
+                bossFrameHeight *
+                bossDirectionRows;
+
+            if (
+                texture.height <
+                expectedHeight
+                )
+            {
+                TraceLog(
+                    LOG_WARNING,
+                    "[BOSS SPRITE] Sheet too short: %s | "
+                    "expected height=%d actual=%d",
+                    path,
+                    expectedHeight,
+                    texture.height
+                );
+            }
+
+            loaded = true;
+
+            TraceLog(
+                LOG_INFO,
+                "[BOSS SPRITE] Loaded: %s | "
+                "size=%dx%d frames=%d",
+                path,
+                texture.width,
+                texture.height,
+                framesPerRow
+            );
+        };
+
+    LoadBossSheet(
+        "Assets/enemies/boss_idle.png",
+        bossIdleSpriteSheet,
+        bossIdleSpriteLoaded,
+        bossIdleFramesPerRow
+    );
+
+    LoadBossSheet(
+        "Assets/enemies/boss_walk.png",
+        bossWalkSpriteSheet,
+        bossWalkSpriteLoaded,
+        bossWalkFramesPerRow
+    );
+
+    bossAttackSpriteSheet =
+        LoadTexture(
+            "Assets/enemies/boss_attack.png"
+        );
+
+    if (bossAttackSpriteSheet.id != 0)
+    {
+        bossAttackSpriteLoaded = true;
+
+        SetTextureFilter(
+            bossAttackSpriteSheet,
+            TEXTURE_FILTER_POINT
+        );
+
+        bossAttackFramesPerRow =
+            std::max(
+                1,
+                bossAttackSpriteSheet.width /
+                bossFrameWidth
+            );
+
+        bossAttackDirectionRows =
+            std::max(
+                1,
+                bossAttackSpriteSheet.height /
+                bossFrameHeight
+            );
+
+        TraceLog(
+            LOG_INFO,
+            "[BOSS SPRITE] Attack loaded: %dx%d | "
+            "frames=%d rows=%d",
+            bossAttackSpriteSheet.width,
+            bossAttackSpriteSheet.height,
+            bossAttackFramesPerRow,
+            bossAttackDirectionRows
+        );
+    }
+    else
+    {
+        bossAttackSpriteLoaded = false;
+
+        TraceLog(
+            LOG_WARNING,
+            "[BOSS SPRITE] Failed to load: "
+            "Assets/enemies/boss_attack.png"
+        );
+    }
+
+}
+
+void Game::UpdateBossAnimation(
+    Enemy& enemy,
+    float dt
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss
+        )
+    {
+        return;
+    }
+
+    // --------------------------------------------------
+    // Slam animation
+    // --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::Slam
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Attacking;
+
+        if (enemy.frozenTimer > 0.0f)
+        {
+            return;
+        }
+
+        const float attackAnimationSpeed =
+            GetBossAttackSpeedMultiplier(
+                enemy
+            );
+
+        enemy.bossAnimationTimer +=
+            dt *
+            attackAnimationSpeed;
+
+        while (
+            enemy.bossAnimationTimer >=
+            bossAttackFrameDuration
+            )
+        {
+            enemy.bossAnimationTimer -=
+                bossAttackFrameDuration;
+
+            enemy.bossAnimationFrame++;
+
+            if (
+                enemy.bossAnimationFrame >=
+                bossAttackImpactFrame &&
+                !enemy.bossSlamImpactProcessed
+                )
+            {
+                ResolveBossSlamImpact(
+                    enemy
+                );
+            }
+
+            if (
+                enemy.bossAnimationFrame >=
+                bossAttackFramesPerRow
+                )
+            {
+                enemy.bossActionState =
+                    BossActionState::None;
+
+                enemy.animationState =
+                    EnemyAnimationState::Idle;
+
+                enemy.bossAnimationFrame =
+                    0;
+
+                enemy.bossAnimationTimer =
+                    0.0f;
+
+                break;
+            }
+        }
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Idle and walking animation
+    // --------------------------------------------------
+
+    Vector2 movement =
+        Vector2Subtract(
+            enemy.pos,
+            enemy.bossPreviousAnimationPosition
+        );
+
+    enemy.bossPreviousAnimationPosition =
+        enemy.pos;
+
+    bool isMoving =
+        Vector2Length(movement) >
+        0.05f;
+
+    if (
+        enemy.bossDashCharging ||
+        enemy.bossActionState ==
+        BossActionState::SlamWindup ||
+        enemy.bossActionState ==
+        BossActionState::LaserWindup ||
+        enemy.bossActionState ==
+        BossActionState::LaserActive
+        )
+    {
+        isMoving = false;
+    }
+
+    if (enemy.bossDashTimer > 0.0f)
+    {
+        isMoving = true;
+
+        movement =
+            enemy.bossDashVelocity;
+    }
+
+    const EnemyAnimationState desiredState =
+        isMoving
+        ? EnemyAnimationState::Walking
+        : EnemyAnimationState::Idle;
+
+    if (
+        enemy.animationState !=
+        desiredState
+        )
+    {
+        enemy.animationState =
+            desiredState;
+
+        enemy.bossAnimationFrame = 0;
+        enemy.bossAnimationTimer = 0.0f;
+    }
+
+    if (isMoving)
+    {
+        SetEnemyFacingFromWorldDirection(
+            enemy,
+            movement
+        );
+    }
+
+    if (enemy.frozenTimer > 0.0f)
+    {
+        return;
+    }
+
+    int frameCount =
+        bossIdleFramesPerRow;
+
+    float frameDuration =
+        bossIdleFrameDuration;
+
+    if (
+        enemy.animationState ==
+        EnemyAnimationState::Walking
+        )
+    {
+        frameCount =
+            bossWalkFramesPerRow;
+
+        frameDuration =
+            bossWalkFrameDuration;
+
+        float walkingAnimationSpeed =
+            GetBossMovementSpeedMultiplier(
+                enemy
+            );
+
+        // During a dash, animate even faster so the sprite
+        // matches its much higher physical movement speed.
+        if (enemy.bossDashTimer > 0.0f)
+        {
+            walkingAnimationSpeed *=
+                GetBossDashPowerMultiplier(
+                    enemy
+                );
+        }
+
+        frameDuration =
+            std::max(
+                0.025f,
+                frameDuration /
+                walkingAnimationSpeed
+            );
+    }
+
+    frameCount =
+        std::max(
+            1,
+            frameCount
+        );
+
+    frameDuration =
+        std::max(
+            0.01f,
+            frameDuration
+        );
+
+    enemy.bossAnimationTimer +=
+        dt;
+
+    while (
+        enemy.bossAnimationTimer >=
+        frameDuration
+        )
+    {
+        enemy.bossAnimationTimer -=
+            frameDuration;
+
+        enemy.bossAnimationFrame =
+            (
+                enemy.bossAnimationFrame +
+                1
+                ) %
+            frameCount;
+    }
+}
+
+bool Game::GetBossAnimationFrame(
+    const Enemy& enemy,
+    Texture2D& outTexture,
+    Rectangle& outSource,
+    float& outWidthPixels,
+    float& outHeightPixels,
+    float& outAnchorY
+) const
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss
+        )
+    {
+        return false;
+    }
+
+    int framesPerRow = 1;
+    int directionRows = bossDirectionRows;
+
+    bool selected = false;
+
+    auto SelectSheet =
+        [&](
+            Texture2D texture,
+            bool loaded,
+            int frameCount,
+            int rowCount
+            )
+        {
+            if (
+                selected ||
+                !loaded ||
+                texture.id == 0
+                )
+            {
+                return;
+            }
+
+            outTexture =
+                texture;
+
+            framesPerRow =
+                std::max(
+                    1,
+                    frameCount
+                );
+
+            directionRows =
+                std::max(
+                    1,
+                    rowCount
+                );
+
+            selected = true;
+        };
+
+    if (
+        enemy.animationState ==
+        EnemyAnimationState::Attacking
+        )
+    {
+        SelectSheet(
+            bossAttackSpriteSheet,
+            bossAttackSpriteLoaded,
+            bossAttackFramesPerRow,
+            bossAttackDirectionRows
+        );
+    }
+    else if (
+        enemy.animationState ==
+        EnemyAnimationState::Walking
+        )
+    {
+        SelectSheet(
+            bossWalkSpriteSheet,
+            bossWalkSpriteLoaded,
+            bossWalkFramesPerRow,
+            bossDirectionRows
+        );
+    }
+    else
+    {
+        SelectSheet(
+            bossIdleSpriteSheet,
+            bossIdleSpriteLoaded,
+            bossIdleFramesPerRow,
+            bossDirectionRows
+        );
+    }
+
+    // Fallbacks.
+    SelectSheet(
+        bossIdleSpriteSheet,
+        bossIdleSpriteLoaded,
+        bossIdleFramesPerRow,
+        bossDirectionRows
+    );
+
+    SelectSheet(
+        bossWalkSpriteSheet,
+        bossWalkSpriteLoaded,
+        bossWalkFramesPerRow,
+        bossDirectionRows
+    );
+
+    SelectSheet(
+        bossAttackSpriteSheet,
+        bossAttackSpriteLoaded,
+        bossAttackFramesPerRow,
+        bossAttackDirectionRows
+    );
+
+    if (!selected)
+    {
+        return false;
+    }
+
+    const int frame =
+        std::max(
+            0,
+            std::min(
+                enemy.bossAnimationFrame,
+                framesPerRow - 1
+            )
+        );
+
+    int directionRow = 0;
+
+    if (directionRows > 1)
+    {
+        directionRow =
+            GetPlayerDirectionRow(
+                enemy.spriteDirection
+            );
+
+        directionRow =
+            std::max(
+                0,
+                std::min(
+                    directionRow,
+                    directionRows - 1
+                )
+            );
+    }
+
+    outSource = {
+        static_cast<float>(
+            frame *
+            bossFrameWidth
+        ),
+
+        static_cast<float>(
+            directionRow *
+            bossFrameHeight
+        ),
+
+        static_cast<float>(
+            bossFrameWidth
+        ),
+
+        static_cast<float>(
+            bossFrameHeight
+        )
+    };
+
+    outWidthPixels =
+        static_cast<float>(
+            bossFrameWidth
+            ) *
+        bossVisualScale;
+
+    outHeightPixels =
+        static_cast<float>(
+            bossFrameHeight
+            ) *
+        bossVisualScale;
+
+    // Position represents the boss's feet.
+    outAnchorY = 0.98f;
+
+    return true;
+}
+
+void Game::DrawBossEnemySprite(
+    const Enemy& enemy,
+    Vector2 drawPosition,
+    Color tint
+)
+{
+    Texture2D texture{};
+    Rectangle source{};
+
+    float widthPixels = 0.0f;
+    float heightPixels = 0.0f;
+    float anchorY = 1.0f;
+
+    if (
+        !GetBossAnimationFrame(
+            enemy,
+            texture,
+            source,
+            widthPixels,
+            heightPixels,
+            anchorY
+        )
+        )
+    {
+        return;
+    }
+
+    Rectangle destination{
+        drawPosition.x,
+        drawPosition.y,
+        widthPixels,
+        heightPixels
+    };
+
+    Vector2 origin{
+        widthPixels * 0.5f,
+        heightPixels * anchorY
+    };
+
+    DrawTexturePro(
+        texture,
+        source,
+        destination,
+        origin,
+        0.0f,
+        tint
+    );
+}
+
+void Game::StartBossSlam(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        enemy.bossActionState !=
+        BossActionState::None
+        )
+    {
+        return;
+    }
+
+    // Do not start the attack animation yet.
+    enemy.bossActionState =
+        BossActionState::SlamWindup;
+
+    enemy.bossSlamWindupTimer =
+        bossSlamWindupDuration;
+
+    enemy.animationState =
+        EnemyAnimationState::Idle;
+
+    enemy.bossAnimationFrame = 0;
+    enemy.bossAnimationTimer = 0.0f;
+
+    enemy.bossSlamImpactProcessed =
+        false;
+
+    enemy.attackTimer =
+        0.0f;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    SetEnemyFacingFromWorldDirection(
+        enemy,
+        Vector2Subtract(
+            playerPosition,
+            enemy.pos
+        )
+    );
+}
+
+void Game::ResolveBossSlamImpact(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.bossSlamImpactProcessed
+        )
+    {
+        return;
+    }
+
+    enemy.bossSlamImpactProcessed =
+        true;
+
+    // White unlit impact ring.
+    enemy.bossSlamImpactVisualTimer =
+        bossSlamImpactVisualDuration;
+
+    const bool sameTerrainLevel =
+        GetTerrainElevationAtWorld(
+            enemy.pos
+        ) ==
+        GetTerrainElevationAtWorld(
+            playerPosition
+        );
+
+    const float hitDistance =
+        Vector2Distance(
+            enemy.pos,
+            playerPosition
+        );
+
+    if (
+        sameTerrainLevel &&
+        hitDistance <=
+        bossSlamRadius +
+        player.radius &&
+        !IsPlayerAirborne() &&
+        !IsPlayerInvulnerable()
+        )
+    {
+        // Apply launch first because DamagePlayer() may begin
+ // the player's invulnerability period.
+        ApplyKnockbackToPlayer(
+            enemy.pos,
+            bossSlamKnockbackForce,
+            bossSlamKnockbackDuration
+        );
+
+        DamagePlayer(
+            enemy.contactDamage
+        );
+    }
+}
+
+void Game::StartBossLaser(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        enemy.bossActionState !=
+        BossActionState::None
+        )
+    {
+        return;
+    }
+
+    enemy.bossActionState =
+        BossActionState::LaserWindup;
+
+    enemy.bossLaserWindupTimer =
+        bossLaserWindupDuration;
+
+    enemy.bossLaserActiveTimer =
+        bossLaserDuration;
+
+    enemy.bossLaserDamageTimer =
+        0.0f;
+
+    // The beam initially aims at the player's current
+    // location, but causes no damage during wind-up.
+    enemy.bossLaserAimPosition =
+        playerPosition;
+
+    enemy.bossLaserEndPosition =
+        playerPosition;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    enemy.animationState =
+        EnemyAnimationState::Idle;
+
+    enemy.bossAnimationFrame = 0;
+    enemy.bossAnimationTimer = 0.0f;
+
+    SetEnemyFacingFromWorldDirection(
+        enemy,
+        Vector2Subtract(
+            playerPosition,
+            enemy.pos
+        )
+    );
+}
+
+Vector2 Game::GetBossLaserBlockedEnd(
+    Vector2 start,
+    Vector2 desiredEnd
+) const
+{
+    const float distance =
+        Vector2Distance(
+            start,
+            desiredEnd
+        );
+
+    const int sampleCount =
+        std::max(
+            1,
+            static_cast<int>(
+                std::ceil(
+                    distance /
+                    8.0f
+                )
+                )
+        );
+
+    const int laserElevation =
+        GetTerrainElevationAtWorld(
+            start
+        );
+
+    Vector2 previousSample =
+        start;
+
+    for (
+        int sampleIndex = 1;
+        sampleIndex <= sampleCount;
+        ++sampleIndex
+        )
+    {
+        const float t =
+            static_cast<float>(
+                sampleIndex
+                ) /
+            static_cast<float>(
+                sampleCount
+                );
+
+        const Vector2 samplePosition =
+            Vector2Lerp(
+                start,
+                desiredEnd,
+                t
+            );
+
+        if (
+            IsProjectileBlockedByWorld(
+                previousSample,
+                samplePosition,
+                laserElevation
+            )
+            )
+        {
+            return previousSample;
+        }
+
+        previousSample =
+            samplePosition;
+    }
+
+    return desiredEnd;
+}
+
+void Game::UpdateBossLaser(
+    Enemy& enemy,
+    float dt
+)
+{
+    if (
+        enemy.bossActionState !=
+        BossActionState::LaserWindup &&
+        enemy.bossActionState !=
+        BossActionState::LaserActive
+        )
+    {
+        return;
+    }
+    const float attackSpeedMultiplier =
+        GetBossAttackSpeedMultiplier(
+            enemy
+        );
+
+    // The target follows the player slowly instead of
+    // snapping directly onto their current position.
+    enemy.bossLaserAimPosition =
+        Vector2Lerp(
+            enemy.bossLaserAimPosition,
+            playerPosition,
+            Clamp(
+                bossLaserFollowSpeed *
+                attackSpeedMultiplier *
+                dt,
+                0.0f,
+                1.0f
+            )
+        );
+
+    Vector2 direction =
+        Vector2Subtract(
+            enemy.bossLaserAimPosition,
+            enemy.pos
+        );
+
+    if (
+        Vector2Length(direction) <=
+        0.001f
+        )
+    {
+        direction = {
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        direction =
+            Vector2Normalize(
+                direction
+            );
+    }
+
+    SetEnemyFacingFromWorldDirection(
+        enemy,
+        direction
+    );
+
+    // Start slightly outside the Boss body.
+    const Vector2 laserStart =
+        Vector2Add(
+            enemy.pos,
+            Vector2Scale(
+                direction,
+                bossLaserForwardOffset
+            )
+        );
+
+    enemy.bossLaserStartPosition =
+        laserStart;
+
+    const Vector2 desiredEnd =
+        Vector2Add(
+            enemy.pos,
+            Vector2Scale(
+                direction,
+                bossLaserRange
+            )
+        );
+
+    enemy.bossLaserEndPosition =
+        GetBossLaserBlockedEnd(
+            laserStart,
+            desiredEnd
+        );
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::LaserWindup
+        )
+    {
+        enemy.bossLaserWindupTimer -=
+            dt *
+            attackSpeedMultiplier;
+
+        if (
+            enemy.bossLaserWindupTimer <=
+            0.0f
+            )
+        {
+            enemy.bossLaserWindupTimer =
+                0.0f;
+
+            enemy.bossActionState =
+                BossActionState::LaserActive;
+
+            enemy.bossLaserActiveTimer =
+                bossLaserDuration;
+
+            enemy.bossLaserDamageTimer =
+                0.0f;
+        }
+
+        return;
+    }
+
+    enemy.bossLaserActiveTimer -=
+        dt;
+
+    enemy.bossLaserDamageTimer -=
+        dt;
+
+    if (
+        enemy.bossLaserDamageTimer <=
+        0.0f
+        )
+    {
+        enemy.bossLaserDamageTimer =
+            bossLaserDamageInterval;
+
+        const bool sameTerrainLevel =
+            GetTerrainElevationAtWorld(
+                enemy.pos
+            ) ==
+            GetTerrainElevationAtWorld(
+                playerPosition
+            );
+
+        float segmentT = 0.0f;
+
+        const float distanceSquared =
+            DistancePointToSegmentSquared(
+                playerPosition,
+                laserStart,
+                enemy.bossLaserEndPosition,
+                segmentT
+            );
+
+        const float damageRadius =
+            player.radius +
+            bossLaserWidth *
+            0.5f;
+
+        if (
+            sameTerrainLevel &&
+            distanceSquared <=
+            damageRadius *
+            damageRadius &&
+            !IsPlayerAirborne() &&
+            !IsPlayerInvulnerable()
+            )
+        {
+            DamagePlayer(
+                enemy.bulletDamage
+            );
+
+            SpawnHitSpark(
+                playerPosition
+            );
+        }
+    }
+
+    if (
+        enemy.bossLaserActiveTimer <=
+        0.0f
+        )
+    {
+        enemy.bossActionState =
+            BossActionState::None;
+
+        enemy.bossLaserActiveTimer =
+            0.0f;
+
+        enemy.bossLaserCooldownTimer =
+            bossLaserCooldown;
+
+        enemy.animationState =
+            EnemyAnimationState::Idle;
+
+        enemy.bossAnimationFrame = 0;
+        enemy.bossAnimationTimer = 0.0f;
+
+        RefreshEnemyPath(
+            enemy
+        );
+    }
+}
+
+void Game::UpdateBossBehavior(
+    Enemy& enemy,
+    float dt,
+    float distanceToPlayer,
+    bool sameTerrainLevel
+)
+{
+    const float movementSpeedMultiplier =
+        GetBossMovementSpeedMultiplier(
+            enemy
+        );
+
+    const float attackSpeedMultiplier =
+        GetBossAttackSpeedMultiplier(
+            enemy
+        );
+
+    const float dashPowerMultiplier =
+        GetBossDashPowerMultiplier(
+            enemy
+        );
+
+    enemy.bossForwardDashCooldownTimer =
+        std::max(
+            0.0f,
+            enemy.bossForwardDashCooldownTimer -
+            dt *
+            dashPowerMultiplier
+        );
+
+    enemy.bossSlamImpactVisualTimer =
+        std::max(
+            0.0f,
+            enemy.bossSlamImpactVisualTimer -
+            dt
+        );
+
+    enemy.bossLaserCooldownTimer =
+        std::max(
+            0.0f,
+            enemy.bossLaserCooldownTimer -
+            dt *
+            attackSpeedMultiplier
+        );
+
+    const float healthRatio =
+        static_cast<float>(
+            enemy.hp
+            ) /
+        static_cast<float>(
+            std::max(
+                1,
+                enemy.maxHp
+            )
+            );
+
+    // --------------------------------------------------
+    // One-time health phases have highest priority.
+    // --------------------------------------------------
+
+    if (
+        !enemy.bossDashCharging &&
+        enemy.bossDashTimer <= 0.0f
+        )
+    {
+        if (
+            healthRatio <= 0.75f &&
+            !enemy.bossPhase75Triggered
+            )
+        {
+            enemy.bossPhase75Triggered =
+                true;
+
+            StartBossDash(
+                enemy
+            );
+        }
+        else if (
+            healthRatio <= 0.25f &&
+            !enemy.bossPhase25Triggered
+            )
+        {
+            enemy.bossPhase25Triggered =
+                true;
+
+            StartBossDash(
+                enemy
+            );
+        }
+    }
+
+    // --------------------------------------------------
+    // Phase jump charge.
+    // --------------------------------------------------
+
+    if (enemy.bossDashCharging)
+    {
+        enemy.bossDashChargeTimer -=
+            dt;
+
+        if (
+            enemy.bossDashChargeTimer <=
+            0.0f
+            )
+        {
+            enemy.bossDashCharging =
+                false;
+
+            enemy.bossDashChargeTimer =
+                0.0f;
+
+            ExecuteBossDash(
+                enemy
+            );
+        }
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Phase jump movement.
+    // --------------------------------------------------
+
+    if (enemy.bossDashTimer > 0.0f)
+    {
+        enemy.bossDashTimer -=
+            dt;
+
+        Vector2 totalMovement =
+            Vector2Scale(
+                enemy.bossDashVelocity,
+                dt
+            );
+
+        const float movementLength =
+            Vector2Length(
+                totalMovement
+            );
+
+        const int stepCount =
+            std::max(
+                1,
+                static_cast<int>(
+                    std::ceil(
+                        movementLength /
+                        8.0f
+                    )
+                    )
+            );
+
+        const Vector2 movementStep =
+            Vector2Scale(
+                totalMovement,
+                1.0f /
+                static_cast<float>(
+                    stepCount
+                    )
+            );
+
+        for (
+            int stepIndex = 0;
+            stepIndex < stepCount;
+            ++stepIndex
+            )
+        {
+            if (
+                enemy.bossDashIsForward &&
+                Vector2Distance(
+                    enemy.pos,
+                    playerPosition
+                ) <=
+                bossForwardDashStopDistance
+                )
+            {
+                enemy.bossDashTimer =
+                    0.0f;
+
+                break;
+            }
+
+            const Vector2 nextPosition =
+                Vector2Add(
+                    enemy.pos,
+                    movementStep
+                );
+
+            if (
+                !CanEnemyStandAt(
+                    enemy.pos,
+                    nextPosition,
+                    std::max(
+                        6.0f,
+                        enemy.radius *
+                        0.55f
+                    )
+                )
+                )
+            {
+                enemy.bossDashTimer =
+                    0.0f;
+
+                break;
+            }
+
+            enemy.pos =
+                nextPosition;
+        }
+
+        if (enemy.bossDashIsForward)
+        {
+            enemy.bossDashAfterimageTimer -=
+                dt *
+                dashPowerMultiplier;
+
+            while (
+                enemy.bossDashAfterimageTimer <=
+                0.0f
+                )
+            {
+                SpawnBossDashAfterimage(
+                    enemy
+                );
+
+                enemy.bossDashAfterimageTimer +=
+                    bossDashAfterimageInterval;
+            }
+        }
+
+        if (enemy.bossDashTimer <= 0.0f)
+        {
+            if (enemy.bossDashIsForward)
+            {
+                SpawnBossDashAfterimage(
+                    enemy
+                );
+            }
+
+            enemy.bossDashTimer =
+                0.0f;
+
+            enemy.bossDashIsForward =
+                false;
+
+            enemy.bossDashVelocity = {
+                0.0f,
+                0.0f
+            };
+
+            RefreshEnemyPath(
+                enemy
+            );
+        }
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    if (
+        IsEnemyCrowdControlled(
+            enemy
+        )
+        )
+    {
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Continue an existing special attack.
+    // --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::LaserWindup ||
+        enemy.bossActionState ==
+        BossActionState::LaserActive
+        )
+    {
+        UpdateBossLaser(
+            enemy,
+            dt
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::Slam
+        )
+    {
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    enemy.attackTimer =
+        std::min(
+            enemy.attackInterval,
+            enemy.attackTimer +
+            dt *
+            attackSpeedMultiplier
+        );
+
+    if (
+        sameTerrainLevel &&
+        distanceToPlayer >
+        bossForwardDashTriggerDistance &&
+        enemy.bossForwardDashCooldownTimer <=
+        0.0f
+        )
+    {
+        StartBossForwardDash(
+            enemy
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Below 50%: ranged laser when the player is not close.
+    // --------------------------------------------------
+
+    const bool laserUnlocked =
+        healthRatio <=
+        0.50f;
+
+    const float slamStartRange =
+        bossSlamRadius *
+        0.82f;
+
+    if (
+        laserUnlocked &&
+        sameTerrainLevel &&
+        distanceToPlayer >
+        slamStartRange &&
+        enemy.bossLaserCooldownTimer <=
+        0.0f
+        )
+    {
+        StartBossLaser(
+            enemy
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::SlamWindup
+        )
+    {
+        enemy.bossSlamWindupTimer -=
+            dt *
+            attackSpeedMultiplier;
+
+        if (
+            enemy.bossSlamWindupTimer <=
+            0.0f
+            )
+        {
+            enemy.bossSlamWindupTimer =
+                0.0f;
+
+            enemy.bossActionState =
+                BossActionState::Slam;
+
+            enemy.animationState =
+                EnemyAnimationState::Attacking;
+
+            enemy.bossAnimationFrame =
+                0;
+
+            enemy.bossAnimationTimer =
+                0.0f;
+        }
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Basic circular axe slam.
+    // --------------------------------------------------
+
+    if (
+        sameTerrainLevel &&
+        distanceToPlayer <=
+        slamStartRange &&
+        enemy.attackTimer >=
+        enemy.attackInterval
+        )
+    {
+        StartBossSlam(
+            enemy
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Ordinary Boss movement.
+    // --------------------------------------------------
+
+    enemy.pathRefreshTimer +=
+        dt;
+
+    const bool pathFinished =
+        !enemy.path.empty() &&
+        enemy.pathIndex >=
+        static_cast<int>(
+            enemy.path.size()
+            );
+
+    if (
+        enemy.pathRefreshTimer >=
+        enemy.pathRefreshInterval ||
+        pathFinished
+        )
+    {
+        RefreshEnemyPath(
+            enemy
+        );
+    }
+
+    // Temporarily scale movement without permanently
+    // modifying the Boss's base speed.
+    const float baseMovementSpeed =
+        enemy.speed;
+
+    enemy.speed =
+        baseMovementSpeed *
+        movementSpeedMultiplier;
+
+    MoveEnemyAlongPath(
+        enemy,
+        dt
+    );
+
+    enemy.speed =
+        baseMovementSpeed;
+
+    UpdateBossAnimation(
+        enemy,
+        dt
+    );
+}
+
+void Game::DrawBossLasers2D() const
+{
+    for (const Enemy& enemy : enemies)
+    {
+        if (
+            !enemy.active ||
+            enemy.type !=
+            EnemyType::Boss
+            )
+        {
+            continue;
+        }
+
+        const bool windup =
+            enemy.bossActionState ==
+            BossActionState::LaserWindup;
+
+        const bool active =
+            enemy.bossActionState ==
+            BossActionState::LaserActive;
+
+        if (!windup && !active)
+        {
+            continue;
+        }
+
+        const Vector2 start =
+            WorldToViewElevated(
+                enemy.bossLaserStartPosition,
+                bossLaserVisualHeight
+            );
+
+        const Vector2 end =
+            WorldToViewElevated(
+                enemy.bossLaserEndPosition,
+                bossLaserVisualHeight
+            );
+
+        if (windup)
+        {
+            DrawLineEx(
+                start,
+                end,
+                5.0f,
+                Color{
+                    255,
+                    70,
+                    40,
+                    115
+                }
+            );
+
+            continue;
+        }
+
+        DrawLineEx(
+            start,
+            end,
+            bossLaserWidth + 18.0f,
+            Color{
+                100,
+                220,
+                255,
+                75
+            }
+        );
+
+        DrawLineEx(
+            start,
+            end,
+            bossLaserWidth,
+            Color{
+                150,
+                235,
+                255,
+                225
+            }
+        );
+
+        DrawLineEx(
+            start,
+            end,
+            bossLaserWidth * 0.30f,
+            WHITE
+        );
+    }
+}
+
+void Game::DrawBossLasersHybrid3D() const
+{
+    rlDisableDepthMask();
+
+    BeginBlendMode(
+        BLEND_ADDITIVE
+    );
+
+    for (const Enemy& enemy : enemies)
+    {
+        if (
+            !enemy.active ||
+            enemy.type !=
+            EnemyType::Boss
+            )
+        {
+            continue;
+        }
+
+        const bool windup =
+            enemy.bossActionState ==
+            BossActionState::LaserWindup;
+
+        const bool active =
+            enemy.bossActionState ==
+            BossActionState::LaserActive;
+
+        if (!windup && !active)
+        {
+            continue;
+        }
+
+        const Vector3 start =
+            WorldToHybrid3D(
+                enemy.bossLaserStartPosition,
+                bossLaserVisualHeight
+            );
+
+        const Vector3 end =
+            WorldToHybrid3D(
+                enemy.bossLaserEndPosition,
+                bossLaserVisualHeight
+            );
+
+        // --------------------------------------------------
+        // Blue laser warning
+        // --------------------------------------------------
+
+        if (windup)
+        {
+            DrawCylinderEx(
+                start,
+                end,
+                PixelsToHybridUnits(
+                    3.0f
+                ),
+                PixelsToHybridUnits(
+                    3.0f
+                ),
+                8,
+                Color{
+                    80,
+                    190,
+                    255,
+                    150
+                }
+            );
+
+            DrawCylinderEx(
+                start,
+                end,
+                PixelsToHybridUnits(
+                    1.2f
+                ),
+                PixelsToHybridUnits(
+                    1.2f
+                ),
+                8,
+                Color{
+                    220,
+                    250,
+                    255,
+                    240
+                }
+            );
+
+            continue;
+        }
+
+        // --------------------------------------------------
+        // Blue continuous laser
+        // --------------------------------------------------
+
+        // Wide outer blue glow.
+        DrawCylinderEx(
+            start,
+            end,
+            PixelsToHybridUnits(
+                bossLaserWidth *
+                0.70f
+            ),
+            PixelsToHybridUnits(
+                bossLaserWidth *
+                0.70f
+            ),
+            12,
+            Color{
+                45,
+                125,
+                255,
+                75
+            }
+        );
+
+        // Main beam body.
+        DrawCylinderEx(
+            start,
+            end,
+            PixelsToHybridUnits(
+                bossLaserWidth *
+                0.48f
+            ),
+            PixelsToHybridUnits(
+                bossLaserWidth *
+                0.48f
+            ),
+            12,
+            Color{
+                65,
+                185,
+                255,
+                185
+            }
+        );
+
+        // Bright cyan-white core.
+        DrawCylinderEx(
+            start,
+            end,
+            PixelsToHybridUnits(
+                bossLaserWidth *
+                0.15f
+            ),
+            PixelsToHybridUnits(
+                bossLaserWidth *
+                0.15f
+            ),
+            10,
+            Color{
+                215,
+                248,
+                255,
+                255
+            }
+        );
+    }
+
+    EndBlendMode();
+
+    rlEnableDepthMask();
+}
+
+void Game::ApplyKnockbackToPlayer(
+    Vector2 origin,
+    float force,
+    float duration
+)
+{
+    // Do not interrupt the player's own Huashan jump.
+    if (huashanJumpActive)
+    {
+        return;
+    }
+
+    Vector2 direction =
+        Vector2Subtract(
+            playerPosition,
+            origin
+        );
+
+    if (
+        Vector2Length(direction) <=
+        0.01f
+        )
+    {
+        direction = {
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        direction =
+            Vector2Normalize(
+                direction
+            );
+    }
+
+    playerKnockbackVelocity =
+        Vector2Scale(
+            direction,
+            force
+        );
+
+    playerKnockbackTimer =
+        std::max(
+            0.01f,
+            duration
+        );
+
+    playerKnockbackMaxTimer =
+        playerKnockbackTimer;
+
+    // Stronger attacks launch the player higher.
+    playerKnockbackPeakHeight =
+        Clamp(
+            force *
+            0.13f,
+            105.0f,
+            180.0f
+        );
+
+    playerKnockbackActive =
+        true;
+
+    currentPath.clear();
+    pathIndex = 0;
+    hasPath = false;
+    pendingNpc = -1;
+
+    joystickActive = false;
+
+    joystickDirection = {
+        0.0f,
+        0.0f
+    };
+}
+
+void Game::UpdatePlayerKnockback(
+    float dt
+)
+{
+    if (!playerKnockbackActive)
+    {
+        return;
+    }
+
+    playerKnockbackTimer -=
+        dt;
+
+    Vector2 totalMovement =
+        Vector2Scale(
+            playerKnockbackVelocity,
+            dt
+        );
+
+    const float movementLength =
+        Vector2Length(
+            totalMovement
+        );
+
+    const int stepCount =
+        std::max(
+            1,
+            static_cast<int>(
+                std::ceil(
+                    movementLength /
+                    std::max(
+                        1.0f,
+                        playerCollisionSubstep
+                    )
+                )
+                )
+        );
+
+    const Vector2 movementStep =
+        Vector2Scale(
+            totalMovement,
+            1.0f /
+            static_cast<float>(
+                stepCount
+                )
+        );
+
+    for (
+        int stepIndex = 0;
+        stepIndex < stepCount;
+        ++stepIndex
+        )
+    {
+        const Vector2 candidatePosition =
+            Vector2Add(
+                playerPosition,
+                movementStep
+            );
+
+        if (
+            !CanPlayerStandAt(
+                candidatePosition
+            )
+            )
+        {
+            playerKnockbackVelocity = {
+                0.0f,
+                0.0f
+            };
+
+            playerKnockbackActive =
+                false;
+
+            break;
+        }
+
+        playerPosition =
+            candidatePosition;
+    }
+
+    const float damping =
+        expf(
+            -playerKnockbackDamping *
+            dt
+        );
+
+    playerKnockbackVelocity =
+        Vector2Scale(
+            playerKnockbackVelocity,
+            damping
+        );
+
+    if (
+        playerKnockbackTimer <= 0.0f ||
+        Vector2Length(
+            playerKnockbackVelocity
+        ) < 20.0f
+        )
+    {
+        playerKnockbackActive =
+            false;
+
+        playerKnockbackTimer =
+            0.0f;
+
+        playerKnockbackVelocity = {
+            0.0f,
+            0.0f
+        };
+    }
+    if (
+        playerKnockbackTimer <= 0.0f ||
+        Vector2Length(
+            playerKnockbackVelocity
+        ) < 20.0f
+        )
+    {
+        playerKnockbackActive =
+            false;
+
+        playerKnockbackTimer =
+            0.0f;
+
+        playerKnockbackMaxTimer =
+            0.0f;
+
+        playerKnockbackVelocity = {
+            0.0f,
+            0.0f
+        };
+    }
+
+    player.pos =
+        playerPosition;
+}
+
+void Game::StartBossForwardDash(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        enemy.bossActionState !=
+        BossActionState::None ||
+        enemy.bossDashCharging ||
+        enemy.bossDashTimer > 0.0f ||
+        enemy.bossForwardDashCooldownTimer > 0.0f
+        )
+    {
+        return;
+    }
+
+    Vector2 direction =
+        Vector2Subtract(
+            playerPosition,
+            enemy.pos
+        );
+
+    if (
+        Vector2Length(direction) <=
+        0.01f
+        )
+    {
+        return;
+    }
+
+    direction =
+        Vector2Normalize(
+            direction
+        );
+
+    const float dashPowerMultiplier =
+        GetBossDashPowerMultiplier(
+            enemy
+        );
+
+    const float dashDurationMultiplier =
+        GetBossDashDurationMultiplier(
+            enemy
+        );
+
+    enemy.bossDashIsForward =
+        true;
+
+    // Lower-health phases dash for longer.
+    enemy.bossDashTimer =
+        bossForwardDashDuration *
+        dashDurationMultiplier;
+
+    // Lower-health phases dash faster.
+    enemy.bossDashVelocity =
+        Vector2Scale(
+            direction,
+            bossForwardDashSpeed *
+            dashPowerMultiplier
+        );
+
+    // Store the normal cooldown. UpdateBossBehavior()
+    // will count it down faster at higher phases.
+    enemy.bossForwardDashCooldownTimer =
+        bossForwardDashCooldown;
+
+    enemy.bossDashAfterimageTimer =
+        0.0f;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    enemy.animationState =
+        EnemyAnimationState::Walking;
+
+    SetEnemyFacingFromWorldDirection(
+        enemy,
+        direction
+    );
+
+    SpawnBossDashAfterimage(
+        enemy
+    );
+}
+
+void Game::SpawnBossDashAfterimage(
+    const Enemy& enemy
+)
+{
+    const bool hasWalkingSheet =
+        bossWalkSpriteLoaded &&
+        bossWalkSpriteSheet.id != 0;
+
+    const bool hasIdleSheet =
+        bossIdleSpriteLoaded &&
+        bossIdleSpriteSheet.id != 0;
+
+    if (
+        !hasWalkingSheet &&
+        !hasIdleSheet
+        )
+    {
+        return;
+    }
+
+    if (
+        static_cast<int>(
+            dashAfterimages.size()
+            ) >=
+        maxDashAfterimages
+        )
+    {
+        dashAfterimages.erase(
+            dashAfterimages.begin()
+        );
+    }
+
+    const int frameCount =
+        hasWalkingSheet
+        ? bossWalkFramesPerRow
+        : bossIdleFramesPerRow;
+
+    DashAfterimage afterimage;
+
+    afterimage.worldPosition =
+        enemy.pos;
+
+    afterimage.direction =
+        enemy.spriteDirection;
+
+    afterimage.frame =
+        std::max(
+            0,
+            std::min(
+                enemy.bossAnimationFrame,
+                std::max(
+                    1,
+                    frameCount
+                ) - 1
+            )
+        );
+
+    afterimage.useBossSprite =
+        true;
+
+    afterimage.life =
+        dashAfterimageLifetime;
+
+    afterimage.maxLife =
+        dashAfterimageLifetime;
+
+    dashAfterimages.push_back(
+        afterimage
+    );
+}
+
+void Game::DrawBossUnlitEffects() const
+{
+
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        DrawBossSlamDomeHybrid3D();
+        return;
+    }
+
+    // --------------------------------------------------
+    // Legacy 2D renderer
+    // --------------------------------------------------
+
+    if (
+        rendererMode ==
+        WorldRendererMode::Legacy2D
+        )
+    {
+        BeginMode2D(
+            camera
+        );
+
+        BeginBlendMode(
+            BLEND_ADDITIVE
+        );
+
+        for (const Enemy& enemy : enemies)
+        {
+            if (
+                !enemy.active ||
+                enemy.type !=
+                EnemyType::Boss
+                )
+            {
+                continue;
+            }
+
+            // ------------------------------------------
+            // White translucent slam warning dome
+            // ------------------------------------------
+
+            if (
+                enemy.bossActionState ==
+                BossActionState::SlamWindup
+                )
+            {
+                const float progress =
+                    1.0f -
+                    Clamp(
+                        enemy.bossSlamWindupTimer /
+                        std::max(
+                            0.01f,
+                            bossSlamWindupDuration
+                        ),
+                        0.0f,
+                        1.0f
+                    );
+
+                const float pulse =
+                    0.5f +
+                    0.5f *
+                    sinf(
+                        progress *
+                        PI *
+                        5.0f
+                    );
+
+                const float domeRadius =
+                    bossSlamRadius *
+                    (
+                        0.92f +
+                        progress *
+                        0.08f
+                        );
+
+                // Large translucent dome body.
+                DrawGroundCircle(
+                    enemy.pos,
+                    domeRadius,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        static_cast<unsigned char>(
+                            26.0f +
+                            progress *
+                            22.0f
+                        )
+                    }
+                );
+
+                // Brighter inner layer gives the effect
+                // more volume instead of looking flat.
+                DrawGroundCircle(
+                    enemy.pos,
+                    domeRadius *
+                    0.72f,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        static_cast<unsigned char>(
+                            13.0f +
+                            pulse *
+                            17.0f
+                        )
+                    }
+                );
+
+                // Bright outer boundary.
+                DrawGroundCircleLines(
+                    enemy.pos,
+                    domeRadius,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        static_cast<unsigned char>(
+                            190.0f +
+                            progress *
+                            65.0f
+                        )
+                    }
+                );
+
+                DrawGroundCircleLines(
+                    enemy.pos,
+                    domeRadius - 3.0f,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        static_cast<unsigned char>(
+                            90.0f +
+                            progress *
+                            100.0f
+                        )
+                    }
+                );
+
+                // Closing circle indicates when the
+                // slam is about to begin.
+                const float closingRadius =
+                    std::max(
+                        4.0f,
+                        bossSlamRadius *
+                        (
+                            1.0f -
+                            progress
+                            )
+                    );
+
+                DrawGroundCircleLines(
+                    enemy.pos,
+                    closingRadius,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        225
+                    }
+                );
+            }
+
+            // ------------------------------------------
+            // White impact burst
+            // ------------------------------------------
+
+            if (
+                enemy.bossSlamImpactVisualTimer >
+                0.0f
+                )
+            {
+                const float lifeRatio =
+                    Clamp(
+                        enemy.bossSlamImpactVisualTimer /
+                        std::max(
+                            0.01f,
+                            bossSlamImpactVisualDuration
+                        ),
+                        0.0f,
+                        1.0f
+                    );
+
+                const float impactProgress =
+                    1.0f -
+                    lifeRatio;
+
+                const float impactRadius =
+                    bossSlamRadius *
+                    (
+                        1.0f +
+                        impactProgress *
+                        0.32f
+                        );
+
+                DrawGroundCircle(
+                    enemy.pos,
+                    impactRadius,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        static_cast<unsigned char>(
+                            70.0f *
+                            lifeRatio
+                        )
+                    }
+                );
+
+                DrawGroundCircleLines(
+                    enemy.pos,
+                    impactRadius,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        static_cast<unsigned char>(
+                            255.0f *
+                            lifeRatio
+                        )
+                    }
+                );
+
+                DrawGroundCircleLines(
+                    enemy.pos,
+                    impactRadius - 5.0f,
+                    Color{
+                        255,
+                        255,
+                        255,
+                        static_cast<unsigned char>(
+                            190.0f *
+                            lifeRatio
+                        )
+                    }
+                );
+            }
+        }
+
+        EndBlendMode();
+        EndMode2D();
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Hybrid 3D renderer
+    //
+    // This is rendered in screen space after lighting.
+    // The projected filled ellipses recreate the previous
+    // translucent dome appearance.
+    // --------------------------------------------------
+
+    auto GetProjectedEllipse =
+        [this](
+            Vector2 worldPosition,
+            float worldRadius,
+            Vector2& outCenter,
+            float& outRadiusX,
+            float& outRadiusY
+            )
+        {
+            outCenter =
+                GetWorldToScreen(
+                    WorldToHybrid3D(
+                        worldPosition,
+                        4.0f
+                    ),
+                    hybridCamera
+                );
+
+            const Vector2 horizontalEdge =
+                GetWorldToScreen(
+                    WorldToHybrid3D(
+                        {
+                            worldPosition.x +
+                                worldRadius,
+
+                            worldPosition.y
+                        },
+                        4.0f
+                    ),
+                    hybridCamera
+                );
+
+            const Vector2 verticalEdge =
+                GetWorldToScreen(
+                    WorldToHybrid3D(
+                        {
+                            worldPosition.x,
+
+                            worldPosition.y +
+                                worldRadius
+                        },
+                        4.0f
+                    ),
+                    hybridCamera
+                );
+
+            outRadiusX =
+                std::max(
+                    1.0f,
+                    Vector2Distance(
+                        outCenter,
+                        horizontalEdge
+                    )
+                );
+
+            outRadiusY =
+                std::max(
+                    1.0f,
+                    Vector2Distance(
+                        outCenter,
+                        verticalEdge
+                    )
+                );
+        };
+
+    BeginBlendMode(
+        BLEND_ADDITIVE
+    );
+
+    for (const Enemy& enemy : enemies)
+    {
+        if (
+            !enemy.active ||
+            enemy.type !=
+            EnemyType::Boss
+            )
+        {
+            continue;
+        }
+
+        // ----------------------------------------------
+        // White translucent warning dome
+        // ----------------------------------------------
+
+        if (
+            enemy.bossActionState ==
+            BossActionState::SlamWindup
+            )
+        {
+            const float progress =
+                1.0f -
+                Clamp(
+                    enemy.bossSlamWindupTimer /
+                    std::max(
+                        0.01f,
+                        bossSlamWindupDuration
+                    ),
+                    0.0f,
+                    1.0f
+                );
+
+            const float pulse =
+                0.5f +
+                0.5f *
+                sinf(
+                    progress *
+                    PI *
+                    5.0f
+                );
+
+            const float domeRadius =
+                bossSlamRadius *
+                (
+                    0.92f +
+                    progress *
+                    0.08f
+                    );
+
+            Vector2 center{};
+            float radiusX = 0.0f;
+            float radiusY = 0.0f;
+
+            GetProjectedEllipse(
+                enemy.pos,
+                domeRadius,
+                center,
+                radiusX,
+                radiusY
+            );
+
+            // Main translucent dome body.
+            DrawEllipse(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                radiusX,
+                radiusY,
+                Color{
+                    255,
+                    255,
+                    255,
+                    static_cast<unsigned char>(
+                        28.0f +
+                        progress *
+                        24.0f
+                    )
+                }
+            );
+
+            // Inner glow layer.
+            DrawEllipse(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                radiusX *
+                0.72f,
+                radiusY *
+                0.72f,
+                Color{
+                    255,
+                    255,
+                    255,
+                    static_cast<unsigned char>(
+                        12.0f +
+                        pulse *
+                        18.0f
+                    )
+                }
+            );
+
+            // Outer glowing border.
+            DrawEllipseLines(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                radiusX,
+                radiusY,
+                Color{
+                    255,
+                    255,
+                    255,
+                    static_cast<unsigned char>(
+                        190.0f +
+                        progress *
+                        65.0f
+                    )
+                }
+            );
+
+            DrawEllipseLines(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                std::max(
+                    1.0f,
+                    radiusX - 3.0f
+                ),
+                std::max(
+                    1.0f,
+                    radiusY - 2.0f
+                ),
+                Color{
+                    255,
+                    255,
+                    255,
+                    static_cast<unsigned char>(
+                        90.0f +
+                        progress *
+                        100.0f
+                    )
+                }
+            );
+
+            // Closing timing indicator.
+            const float closingScale =
+                std::max(
+                    0.04f,
+                    1.0f -
+                    progress
+                );
+
+            DrawEllipseLines(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                radiusX *
+                closingScale,
+                radiusY *
+                closingScale,
+                Color{
+                    255,
+                    255,
+                    255,
+                    230
+                }
+            );
+        }
+
+        // ----------------------------------------------
+        // White impact burst
+        // ----------------------------------------------
+
+        if (
+            enemy.bossSlamImpactVisualTimer >
+            0.0f
+            )
+        {
+            const float lifeRatio =
+                Clamp(
+                    enemy.bossSlamImpactVisualTimer /
+                    std::max(
+                        0.01f,
+                        bossSlamImpactVisualDuration
+                    ),
+                    0.0f,
+                    1.0f
+                );
+
+            const float impactProgress =
+                1.0f -
+                lifeRatio;
+
+            const float impactRadius =
+                bossSlamRadius *
+                (
+                    1.0f +
+                    impactProgress *
+                    0.32f
+                    );
+
+            Vector2 center{};
+            float radiusX = 0.0f;
+            float radiusY = 0.0f;
+
+            GetProjectedEllipse(
+                enemy.pos,
+                impactRadius,
+                center,
+                radiusX,
+                radiusY
+            );
+
+            DrawEllipse(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                radiusX,
+                radiusY,
+                Color{
+                    255,
+                    255,
+                    255,
+                    static_cast<unsigned char>(
+                        75.0f *
+                        lifeRatio
+                    )
+                }
+            );
+
+            DrawEllipseLines(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                radiusX,
+                radiusY,
+                Color{
+                    255,
+                    255,
+                    255,
+                    static_cast<unsigned char>(
+                        255.0f *
+                        lifeRatio
+                    )
+                }
+            );
+
+            DrawEllipseLines(
+                static_cast<int>(
+                    center.x
+                    ),
+                static_cast<int>(
+                    center.y
+                    ),
+                std::max(
+                    1.0f,
+                    radiusX - 5.0f
+                ),
+                std::max(
+                    1.0f,
+                    radiusY - 3.0f
+                ),
+                Color{
+                    255,
+                    255,
+                    255,
+                    static_cast<unsigned char>(
+                        190.0f *
+                        lifeRatio
+                    )
+                }
+            );
+        }
+    }
+
+    EndBlendMode();
+}
+void Game::DrawBossSlamDomeHybrid3D() const
+{
+    if (
+        rendererMode !=
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        return;
+    }
+
+    // Only draw when an actual slam impact is active.
+    bool hasVisibleImpactDome = false;
+
+    for (const Enemy& enemy : enemies)
+    {
+        if (
+            enemy.active &&
+            enemy.type ==
+            EnemyType::Boss &&
+            enemy.bossSlamImpactVisualTimer >
+            0.0f
+            )
+        {
+            hasVisibleImpactDome = true;
+            break;
+        }
+    }
+
+    if (!hasVisibleImpactDome)
+    {
+        return;
+    }
+
+    BeginMode3D(
+        hybridCamera
+    );
+
+    // This effect is drawn after the lighting composite.
+    // Keep it unlit and visible as an overlay.
+    rlDisableDepthTest();
+    rlDisableDepthMask();
+    rlDisableBackfaceCulling();
+
+    BeginBlendMode(
+        BLEND_ALPHA
+    );
+
+    auto DrawSolidHemisphere =
+        [](
+            Vector3 center,
+            float radius,
+            float heightScale,
+            Color color
+            )
+        {
+            constexpr int longitudeSegments =
+                40;
+
+            constexpr int latitudeSegments =
+                14;
+
+            // Only filled triangles.
+            // There is intentionally no RL_LINES pass.
+            rlBegin(
+                RL_TRIANGLES
+            );
+
+            rlColor4ub(
+                color.r,
+                color.g,
+                color.b,
+                color.a
+            );
+
+            for (
+                int latitude = 0;
+                latitude <
+                latitudeSegments;
+                ++latitude
+                )
+            {
+                const float latitude0 =
+                    static_cast<float>(
+                        latitude
+                        ) /
+                    static_cast<float>(
+                        latitudeSegments
+                        ) *
+                    PI *
+                    0.5f;
+
+                const float latitude1 =
+                    static_cast<float>(
+                        latitude + 1
+                        ) /
+                    static_cast<float>(
+                        latitudeSegments
+                        ) *
+                    PI *
+                    0.5f;
+
+                const float ringRadius0 =
+                    cosf(latitude0) *
+                    radius;
+
+                const float ringRadius1 =
+                    cosf(latitude1) *
+                    radius;
+
+                const float height0 =
+                    sinf(latitude0) *
+                    radius *
+                    heightScale;
+
+                const float height1 =
+                    sinf(latitude1) *
+                    radius *
+                    heightScale;
+
+                for (
+                    int longitude = 0;
+                    longitude <
+                    longitudeSegments;
+                    ++longitude
+                    )
+                {
+                    const float angle0 =
+                        static_cast<float>(
+                            longitude
+                            ) /
+                        static_cast<float>(
+                            longitudeSegments
+                            ) *
+                        PI *
+                        2.0f;
+
+                    const float angle1 =
+                        static_cast<float>(
+                            longitude + 1
+                            ) /
+                        static_cast<float>(
+                            longitudeSegments
+                            ) *
+                        PI *
+                        2.0f;
+
+                    const Vector3 point00{
+                        center.x +
+                            cosf(angle0) *
+                            ringRadius0,
+
+                        center.y +
+                            height0,
+
+                        center.z +
+                            sinf(angle0) *
+                            ringRadius0
+                    };
+
+                    const Vector3 point01{
+                        center.x +
+                            cosf(angle1) *
+                            ringRadius0,
+
+                        center.y +
+                            height0,
+
+                        center.z +
+                            sinf(angle1) *
+                            ringRadius0
+                    };
+
+                    const Vector3 point10{
+                        center.x +
+                            cosf(angle0) *
+                            ringRadius1,
+
+                        center.y +
+                            height1,
+
+                        center.z +
+                            sinf(angle0) *
+                            ringRadius1
+                    };
+
+                    const Vector3 point11{
+                        center.x +
+                            cosf(angle1) *
+                            ringRadius1,
+
+                        center.y +
+                            height1,
+
+                        center.z +
+                            sinf(angle1) *
+                            ringRadius1
+                    };
+
+                    // First triangle.
+                    rlVertex3f(
+                        point00.x,
+                        point00.y,
+                        point00.z
+                    );
+
+                    rlVertex3f(
+                        point10.x,
+                        point10.y,
+                        point10.z
+                    );
+
+                    rlVertex3f(
+                        point11.x,
+                        point11.y,
+                        point11.z
+                    );
+
+                    // Second triangle.
+                    rlVertex3f(
+                        point00.x,
+                        point00.y,
+                        point00.z
+                    );
+
+                    rlVertex3f(
+                        point11.x,
+                        point11.y,
+                        point11.z
+                    );
+
+                    rlVertex3f(
+                        point01.x,
+                        point01.y,
+                        point01.z
+                    );
+                }
+            }
+
+            rlEnd();
+        };
+
+    for (const Enemy& enemy : enemies)
+    {
+        if (
+            !enemy.active ||
+            enemy.type !=
+            EnemyType::Boss ||
+            enemy.bossSlamImpactVisualTimer <=
+            0.0f
+            )
+        {
+            continue;
+        }
+
+        const float lifeRatio =
+            Clamp(
+                enemy.bossSlamImpactVisualTimer /
+                std::max(
+                    0.01f,
+                    bossSlamImpactVisualDuration
+                ),
+                0.0f,
+                1.0f
+            );
+
+        const float impactProgress =
+            1.0f -
+            lifeRatio;
+
+        // Starts near the attack radius and expands
+        // slightly after the slam.
+        const float radiusPixels =
+            bossSlamRadius *
+            (
+                0.94f +
+                impactProgress *
+                0.24f
+                );
+
+        const float radiusUnits =
+            PixelsToHybridUnits(
+                radiusPixels
+            );
+
+        const Vector3 domeCenter =
+            WorldToHybrid3D(
+                enemy.pos,
+
+                // Keep the base slightly above the terrain
+                // to avoid visual z-fighting.
+                3.0f
+            );
+
+        // Strong at impact, then fades out.
+        const unsigned char alpha =
+            static_cast<unsigned char>(
+                125.0f *
+                lifeRatio *
+                lifeRatio
+                );
+
+        DrawSolidHemisphere(
+            domeCenter,
+            radiusUnits,
+
+            // Controls the dome height.
+            // 1.0 = round hemisphere.
+            // Lower = flatter dome.
+            0.72f,
+
+            Color{
+                255,
+                255,
+                255,
+                alpha
+            }
+        );
+    }
+
+    EndBlendMode();
+
+    rlEnableBackfaceCulling();
+    rlEnableDepthMask();
+    rlEnableDepthTest();
+
+    EndMode3D();
+}
+
+int Game::GetBossPowerTier(
+    const Enemy& enemy
+) const
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        enemy.maxHp <= 0
+        )
+    {
+        return 0;
+    }
+
+    const float healthRatio =
+        Clamp(
+            static_cast<float>(
+                enemy.hp
+                ) /
+            static_cast<float>(
+                enemy.maxHp
+                ),
+            0.0f,
+            1.0f
+        );
+
+    if (healthRatio <= 0.25f)
+    {
+        return 3;
+    }
+
+    if (healthRatio <= 0.50f)
+    {
+        return 2;
+    }
+
+    if (healthRatio <= 0.75f)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+float Game::GetBossMovementSpeedMultiplier(
+    const Enemy& enemy
+) const
+{
+    return
+        1.0f +
+        static_cast<float>(
+            GetBossPowerTier(enemy)
+            ) *
+        bossMovementSpeedPerTier;
+}
+
+float Game::GetBossAttackSpeedMultiplier(
+    const Enemy& enemy
+) const
+{
+    return
+        1.0f +
+        static_cast<float>(
+            GetBossPowerTier(enemy)
+            ) *
+        bossAttackSpeedPerTier;
+}
+
+float Game::GetBossDashPowerMultiplier(
+    const Enemy& enemy
+) const
+{
+    return
+        1.0f +
+        static_cast<float>(
+            GetBossPowerTier(enemy)
+            ) *
+        bossDashPowerPerTier;
+}
+
+float Game::GetBossDashDurationMultiplier(
+    const Enemy& enemy
+) const
+{
+    return
+        1.0f +
+        static_cast<float>(
+            GetBossPowerTier(enemy)
+            ) *
+        bossDashDurationPerTier;
+}
+Color Game::GetBossTierTint(
+    const Enemy& enemy
+) const
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        enemy.maxHp <= 0
+        )
+    {
+        return WHITE;
+    }
+
+    const float healthRatio =
+        Clamp(
+            static_cast<float>(
+                enemy.hp
+                ) /
+            static_cast<float>(
+                enemy.maxHp
+                ),
+            0.0f,
+            1.0f
+        );
+
+    // 25% HP or lower: yellow.
+    if (healthRatio <= 0.25f)
+    {
+        return Color{
+            255,
+            235,
+            115,
+            255
+        };
+    }
+
+    // 50% HP or lower: orange.
+    if (healthRatio <= 0.50f)
+    {
+        return Color{
+            255,
+            180,
+            105,
+            255
+        };
+    }
+
+    // 75% HP or lower: red.
+    if (healthRatio <= 0.75f)
+    {
+        return Color{
+            255,
+            125,
+            125,
+            255
+        };
+    }
+
+    // Above 75%: original sprite colors.
+    return WHITE;
+}
+
+

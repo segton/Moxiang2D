@@ -117,8 +117,15 @@ struct HuashanGroundMark
 struct DashAfterimage
 {
     Vector2 worldPosition{};
-    PlayerDirection direction = PlayerDirection::Down;
+
+    PlayerDirection direction =
+        PlayerDirection::Down;
+
     int frame = 0;
+
+    // False = player walking sheet.
+    // True  = Boss walking sheet.
+    bool useBossSprite = false;
 
     float life = 0.0f;
     float maxLife = 0.28f;
@@ -180,6 +187,20 @@ enum class EnemyAnimationState
     Idle = 0,
     Walking,
     Attacking
+};
+
+enum class BossActionState
+{
+    None = 0,
+
+    // Boss remains idle while the white warning circle appears.
+    SlamWindup,
+
+    // Attack sprite starts only after the wind-up finishes.
+    Slam,
+
+    LaserWindup,
+    LaserActive
 };
 
 enum class ProjectileOwner
@@ -483,6 +504,67 @@ struct Enemy
 
     // Shooter runs away while this is greater than zero.
     float shooterRetreatTimer = 0.0f;
+
+
+    // Boss idle and walking animation.
+    int bossAnimationFrame = 0;
+    float bossAnimationTimer = 0.0f;
+
+    // Boss uses a separate previous-position value.
+    // Do not share this with the blob placeholder animation.
+    Vector2 bossPreviousAnimationPosition{
+        0.0f,
+        0.0f
+    };
+
+    bool bossAnimationPositionInitialized = false;
+
+
+    BossActionState bossActionState =
+        BossActionState::None;
+
+    // One-time health phases.
+    bool bossPhase75Triggered = false;
+    bool bossPhase25Triggered = false;
+
+    // Slam attack.
+    bool bossSlamImpactProcessed = false;
+
+    // Laser attack.
+    float bossLaserWindupTimer = 0.0f;
+    float bossLaserActiveTimer = 0.0f;
+    float bossLaserCooldownTimer = 0.0f;
+    float bossLaserDamageTimer = 0.0f;
+
+    Vector2 bossLaserAimPosition{
+        0.0f,
+        0.0f
+    };
+
+    Vector2 bossLaserEndPosition{
+        0.0f,
+        0.0f
+    };
+
+    // True only during the normal forward chase dash.
+// The 75% and 25% escape jump keeps this false.
+    bool bossDashIsForward = false;
+
+    float bossForwardDashCooldownTimer = 0.0f;
+    float bossDashAfterimageTimer = 0.0f;
+
+    // Delay before the slam animation starts.
+    float bossSlamWindupTimer = 0.0f;
+
+    // White, unlit ring shown briefly after impact.
+    float bossSlamImpactVisualTimer = 0.0f;
+
+    // Actual world-space start of the laser.
+    Vector2 bossLaserStartPosition{
+        0.0f,
+        0.0f
+    };
+
 
 };
 
@@ -1213,6 +1295,19 @@ private:
     std::vector<WorldDrawItem> worldDrawItems;
     Vector2 playerPosition{ 0.0f, 0.0f };
 
+    bool playerKnockbackActive = false;
+
+    float playerKnockbackMaxTimer = 0.0f;
+    float playerKnockbackPeakHeight = 145.0f;
+
+    Vector2 playerKnockbackVelocity{
+        0.0f,
+        0.0f
+    };
+
+    float playerKnockbackTimer = 0.0f;
+    float playerKnockbackDamping = 8.0f;
+
     // Gameplay/combat body radius.
     float playerRadius = 20.0f;
 
@@ -1552,9 +1647,9 @@ private:
     Vector2 dashDirectionWorld{ 0.0f, 1.0f };
 
     float dashAfterimageTimer = 0.0f;
-    float dashAfterimageInterval = 0.070f;
+    float dashAfterimageInterval = 0.045f;
     float dashAfterimageLifetime = 0.15f;
-    int maxDashAfterimages = 5;
+    int maxDashAfterimages = 6;
 
     std::vector<DashAfterimage> dashAfterimages;
 
@@ -1841,5 +1936,201 @@ private:
     float worldShadowLengthScale = 0.0f;
     float worldShadowWidthScale = 0.0f;
     int worldShadowOpacity = 50;
+
+    void LoadBossSpriteSheets();
+
+    void UpdateBossAnimation(
+        Enemy& enemy,
+        float dt
+    );
+
+    bool GetBossAnimationFrame(
+        const Enemy& enemy,
+        Texture2D& outTexture,
+        Rectangle& outSource,
+        float& outWidthPixels,
+        float& outHeightPixels,
+        float& outAnchorY
+    ) const;
+
+    void DrawBossEnemySprite(
+        const Enemy& enemy,
+        Vector2 drawPosition,
+        Color tint
+    );
+
+    void SpawnTestBoss();
+
+    Texture2D bossIdleSpriteSheet{};
+    Texture2D bossWalkSpriteSheet{};
+
+    bool bossIdleSpriteLoaded = false;
+    bool bossWalkSpriteLoaded = false;
+
+    int bossFrameWidth = 256;
+    int bossFrameHeight = 256;
+    int bossDirectionRows = 8;
+
+    int bossIdleFramesPerRow = 9;
+    int bossWalkFramesPerRow = 9;
+
+    float bossIdleFrameDuration = 0.14f;
+    float bossWalkFrameDuration = 0.14f;
+
+    // 256 × 0.90 = approximately 230 pixels tall.
+    float bossVisualScale = 1.4f;
+
+    void UpdateBossBehavior(
+        Enemy& enemy,
+        float dt,
+        float distanceToPlayer,
+        bool sameTerrainLevel
+    );
+
+    void StartBossSlam(
+        Enemy& enemy
+    );
+
+    void ResolveBossSlamImpact(
+        Enemy& enemy
+    );
+
+    void StartBossLaser(
+        Enemy& enemy
+    );
+
+    void UpdateBossLaser(
+        Enemy& enemy,
+        float dt
+    );
+
+    Vector2 GetBossLaserBlockedEnd(
+        Vector2 start,
+        Vector2 desiredEnd
+    ) const;
+
+    void DrawBossLasers2D() const;
+    void DrawBossLasersHybrid3D() const;
+
+    Texture2D bossAttackSpriteSheet{};
+
+    bool bossAttackSpriteLoaded = false;
+
+    int bossAttackFramesPerRow = 9;
+
+    // The supplied attack strip contains one directional row.
+    int bossAttackDirectionRows = 1;
+
+    float bossAttackFrameDuration = 0.10f;
+
+    // Zero-based: frame 4 is the fifth frame.
+    int bossAttackImpactFrame = 4;
+
+    // Circular axe-slam attack.
+    float bossSlamRadius = 150.0f;
+
+    // Laser attack.
+    float bossLaserWindupDuration = 3.f;
+    float bossLaserDuration = 3.0f;
+    float bossLaserCooldown = 7.0f;
+
+    // Lower value creates more noticeable tracking delay.
+    float bossLaserFollowSpeed = 0.8f;
+
+    float bossLaserRange = 900.0f;
+
+
+    float bossLaserDamageInterval = 0.5f;
+
+
+    // --------------------------------------------------
+// Boss forward chase dash
+// --------------------------------------------------
+
+    float bossForwardDashTriggerDistance = 520.0f;
+    float bossForwardDashStopDistance = 320.0f;
+
+    float bossForwardDashDuration = 0.4f;
+    float bossForwardDashSpeed = 1050.0f;
+    float bossForwardDashCooldown = 3.5f;
+
+    float bossDashAfterimageInterval = 0.08f;
+
+    // --------------------------------------------------
+    // Boss slam
+    // --------------------------------------------------
+
+    float bossSlamWindupDuration = 0.72f;
+    float bossSlamImpactVisualDuration = 0.55f;
+
+    float bossSlamKnockbackForce = 3150.0f;
+    float bossSlamKnockbackDuration = 0.5f;
+
+    // Each tier represents another 25% HP lost,
+// beginning at 75% HP.
+    float bossMovementSpeedPerTier = 1.25f;
+    float bossAttackSpeedPerTier = 0.32f;
+    float bossDashPowerPerTier = 0.2f;
+    float bossDashDurationPerTier = 0.09f;
+
+    // --------------------------------------------------
+    // Laser
+    // --------------------------------------------------
+
+    // Boss is approximately 358 pixels tall at scale 1.4.
+    // This places the laser around the upper torso/chest.
+    float bossLaserVisualHeight = 200.0f;
+
+    float bossLaserForwardOffset = 42.0f;
+
+    // Previously 20.
+    float bossLaserWidth = 170.0f;
+    int GetBossPowerTier(
+        const Enemy& enemy
+    ) const;
+
+    float GetBossMovementSpeedMultiplier(
+        const Enemy& enemy
+    ) const;
+
+    float GetBossAttackSpeedMultiplier(
+        const Enemy& enemy
+    ) const;
+
+    float GetBossDashPowerMultiplier(
+        const Enemy& enemy
+    ) const;
+
+    float GetBossDashDurationMultiplier(
+        const Enemy& enemy
+    ) const;
+
+    void StartBossForwardDash(
+        Enemy& enemy
+    );
+
+    void SpawnBossDashAfterimage(
+        const Enemy& enemy
+    );
+
+    void ApplyKnockbackToPlayer(
+        Vector2 origin,
+        float force,
+        float duration
+    );
+
+    void UpdatePlayerKnockback(
+        float dt
+    );
+
+    Color GetBossTierTint(
+        const Enemy& enemy
+    ) const;
+
+    void DrawBossUnlitEffects() const;
+
+    void DrawBossSlamDomeHybrid3D() const;
+
+    float GetPlayerVisualHeight() const;
 
 };
