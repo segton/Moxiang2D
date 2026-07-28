@@ -1096,6 +1096,47 @@ void Game::Shutdown()
     bossIdleSpriteLoaded = false;
     bossWalkSpriteLoaded = false;
 
+    if (bossRoarSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossRoarSpriteSheet
+        );
+
+        bossRoarSpriteSheet = {};
+    }
+
+    if (bossStunnedSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossStunnedSpriteSheet
+        );
+
+        bossStunnedSpriteSheet = {};
+    }
+
+    if (bossPreChargeSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossPreChargeSpriteSheet
+        );
+
+        bossPreChargeSpriteSheet = {};
+    }
+
+    if (bossChargeSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossChargeSpriteSheet
+        );
+
+        bossChargeSpriteSheet = {};
+    }
+
+    bossRoarSpriteLoaded = false;
+    bossStunnedSpriteLoaded = false;
+    bossPreChargeSpriteLoaded = false;
+    bossChargeSpriteLoaded = false;
+
     if (bossAttackSpriteSheet.id != 0)
     {
         UnloadTexture(
@@ -2912,6 +2953,12 @@ void Game::Update(float dt)
     UpdateHuashanImpactFeedback(dt);
     UpdateHuashanImpactAnimation(dt);
 
+    // Keep the debug button responsive to window resizing.
+    UpdateDebugUpgradeButtonRect();
+
+    // Keyboard test controls.
+    UpdateDebugControls();
+
     if (IsKeyPressed(KEY_F4))
     {
         showPerformanceOverlay =
@@ -2966,6 +3013,11 @@ void Game::Update(float dt)
     {
 
         RestartGameplay();
+    }
+
+    if (IsKeyPressed(KEY_E))
+    {
+        GenerateSkillChoices();
     }
 #endif
 
@@ -3342,6 +3394,9 @@ void Game::Draw()
             DrawJoystick();
             DrawDashButton();
             DrawAttackButton();
+
+            DrawDebugUpgradeButton();
+
         }
     );
 
@@ -3691,6 +3746,17 @@ void Game::UpdateInput(float dt)
     if (gameState == GameState::ChoosingUpgrade)
     {
         TryChooseUpgradeAtScreen(clickScreenPosition);
+        return;
+    }
+
+    if (
+        CheckCollisionPointRec(
+            clickScreenPosition,
+            debugUpgradeButtonRect
+        )
+        )
+    {
+        OpenManualUpgradeMenu();
         return;
     }
 
@@ -7674,6 +7740,270 @@ void Game::DrawDialogue()
     DrawText("Click / tap to close", boxX + 20, boxY + 84, 16, Color{ 190, 190, 190, 255 });
 }
 
+void Game::UpdateDebugUpgradeButtonRect()
+{
+    const float screenWidth =
+        static_cast<float>(
+            GetScreenWidth()
+            );
+
+    const float buttonWidth =
+        Clamp(
+            screenWidth * 0.15f,
+            124.0f,
+            170.0f
+        );
+
+    debugUpgradeButtonRect = {
+        screenWidth -
+            buttonWidth -
+            18.0f,
+
+        72.0f,
+
+        buttonWidth,
+        42.0f
+    };
+}
+
+void Game::OpenManualUpgradeMenu()
+{
+    if (
+        gameState !=
+        GameState::Playing ||
+        buildMode
+        )
+    {
+        return;
+    }
+
+    upgradeMenuOpenedManually =
+        true;
+
+    GenerateSkillChoices();
+
+    gameState =
+        GameState::ChoosingUpgrade;
+
+    // Release gameplay controls so they do not remain
+    // held when the player returns from the menu.
+    attackButtonDown =
+        false;
+
+    dashButtonDown =
+        false;
+
+    dashButtonPressed =
+        false;
+
+    joystickActive =
+        false;
+
+    joystickDirection = {
+        0.0f,
+        0.0f
+    };
+}
+
+void Game::UpdateDebugControls()
+{
+    if (
+        buildMode ||
+        gameState !=
+        GameState::Playing
+        )
+    {
+        return;
+    }
+
+    // --------------------------------------------------
+    // Pause/resume automatic wave spawning
+    // --------------------------------------------------
+
+    if (IsKeyPressed(KEY_P))
+    {
+        waveSpawningPaused =
+            !waveSpawningPaused;
+
+        TraceLog(
+            LOG_INFO,
+            "[DEBUG] Automatic wave spawning: %s",
+            waveSpawningPaused
+            ? "PAUSED"
+            : "RUNNING"
+        );
+    }
+
+    // --------------------------------------------------
+    // Manual enemy spawning
+    //
+    // These do not change wave.enemiesSpawned, so they
+    // do not corrupt normal wave progression.
+    // --------------------------------------------------
+
+    if (IsKeyPressed(KEY_ONE))
+    {
+        SpawnEnemy(
+            EnemyType::Grunt
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[DEBUG] Spawned Grunt."
+        );
+    }
+
+    if (IsKeyPressed(KEY_TWO))
+    {
+        SpawnEnemy(
+            EnemyType::Runner
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[DEBUG] Spawned Runner."
+        );
+    }
+
+    if (IsKeyPressed(KEY_THREE))
+    {
+        SpawnEnemy(
+            EnemyType::Tank
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[DEBUG] Spawned Tank."
+        );
+    }
+
+    if (IsKeyPressed(KEY_FOUR))
+    {
+        SpawnEnemy(
+            EnemyType::Shooter
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[DEBUG] Spawned Shooter."
+        );
+    }
+
+    if (IsKeyPressed(KEY_FIVE))
+    {
+        // Uses your existing special test function,
+        // which positions the Boss close to the player.
+        SpawnTestBoss();
+    }
+
+    // --------------------------------------------------
+    // Manual upgrade selection
+    // --------------------------------------------------
+
+    if (IsKeyPressed(KEY_U))
+    {
+        OpenManualUpgradeMenu();
+    }
+
+}
+
+void Game::DrawDebugUpgradeButton() const
+{
+    if (
+        gameState !=
+        GameState::Playing ||
+        buildMode
+        )
+    {
+        return;
+    }
+
+    const bool hovered =
+        CheckCollisionPointRec(
+            GetMousePosition(),
+            debugUpgradeButtonRect
+        );
+
+    Color fillColor =
+        hovered
+        ? Color{
+            150,
+            105,
+            35,
+            235
+    }
+        : Color{
+            95,
+            68,
+            30,
+            220
+    };
+
+    Color outlineColor =
+        hovered
+        ? GOLD
+        : Color{
+            225,
+            190,
+            105,
+            255
+    };
+
+    DrawRectangleRounded(
+        debugUpgradeButtonRect,
+        0.20f,
+        8,
+        fillColor
+    );
+
+    DrawRectangleRoundedLinesEx(
+        debugUpgradeButtonRect,
+        0.20f,
+        8,
+        2.0f,
+        outlineColor
+    );
+
+    const char* label =
+        "UPGRADE [U]";
+
+    constexpr int fontSize =
+        18;
+
+    const int textWidth =
+        MeasureText(
+            label,
+            fontSize
+        );
+
+    DrawText(
+        label,
+
+        static_cast<int>(
+            debugUpgradeButtonRect.x +
+            debugUpgradeButtonRect.width *
+            0.5f -
+            static_cast<float>(
+                textWidth
+                ) *
+            0.5f
+            ),
+
+        static_cast<int>(
+            debugUpgradeButtonRect.y +
+            debugUpgradeButtonRect.height *
+            0.5f -
+            static_cast<float>(
+                fontSize
+                ) *
+            0.5f
+            ),
+
+        fontSize,
+        WHITE
+    );
+
+}
 void Game::DrawUi()
 {
     DrawRectangle(0, 0, GetScreenWidth(), 62, Color{ 0, 0, 0, 130 });
@@ -8327,6 +8657,14 @@ void Game::InitCombat()
     attackButtonDown = false;
     attackAssistPathTimer = 0.0f;
 
+    waveSpawningPaused =
+        false;
+
+    upgradeMenuOpenedManually =
+        false;
+
+    UpdateDebugUpgradeButtonRect();
+
     dashButtonDown = false;
     dashButtonWasDown = false;
     dashButtonPressed = false;
@@ -8424,6 +8762,8 @@ void Game::InitCombat()
 
     gameState = GameState::Playing;
 
+    bossFallingRocks.clear();
+
     StartWave(1);
 }
 
@@ -8432,7 +8772,7 @@ void Game::RestartGameplay()
     // --------------------------------------------------
     // Clear temporary movement and interaction state
     // --------------------------------------------------
-
+    bossFallingRocks.clear();
     currentPath.clear();
     pathIndex = 0;
     hasPath = false;
@@ -8584,6 +8924,9 @@ void Game::UpdateCombat(float dt)
     PERF_TIME_BLOCK(perfEnemiesMs,
         {
             UpdateEnemies(dt);
+            UpdateBossFallingRocks(
+                dt
+            );
         });
 
     PERF_TIME_BLOCK(perfMeleeMs,
@@ -8813,7 +9156,11 @@ void Game::UpdateWave(float dt)
         return;
     }
 
-    if (wave.enemiesSpawned < wave.enemiesToSpawn)
+    if (
+        !waveSpawningPaused &&
+        wave.enemiesSpawned <
+        wave.enemiesToSpawn
+        )
     {
         wave.spawnTimer += dt;
 
@@ -8860,11 +9207,24 @@ void Game::UpdateWave(float dt)
         }
     }
 
-    if (wave.enemiesSpawned >= wave.enemiesToSpawn && !anyEnemyAlive)
+    if (
+        wave.enemiesSpawned >=
+        wave.enemiesToSpawn &&
+        !anyEnemyAlive
+        )
     {
-        wave.waveActive = false;
+        wave.waveActive =
+            false;
+
+        // This upgrade came from completing a wave,
+        // so selecting one should begin the next wave.
+        upgradeMenuOpenedManually =
+            false;
+
         GenerateSkillChoices();
-        gameState = GameState::ChoosingUpgrade;
+
+        gameState =
+            GameState::ChoosingUpgrade;
     }
 }
 
@@ -9245,7 +9605,7 @@ void Game::SpawnEnemy(EnemyType type)
         enemy.speed = 72.0f;
 
         enemy.hp =
-            420 +
+            800 +
             wave.wave * 80;
 
         enemy.maxHp =
@@ -9927,6 +10287,10 @@ void Game::StartBossDash(
     }
 
     enemy.bossDashIsForward = false;
+
+    enemy.bossDashPurpose =
+        BossDashPurpose::PhaseEscape;
+
     // Interrupt the current attack.
     enemy.bossActionState =
         BossActionState::None;
@@ -10234,6 +10598,20 @@ void Game::CleanupCombatObjects()
             }
         ),
         enemies.end()
+    );
+
+    bossFallingRocks.erase(
+        std::remove_if(
+            bossFallingRocks.begin(),
+            bossFallingRocks.end(),
+            [](
+                const BossFallingRock& rock
+                )
+            {
+                return !rock.active;
+            }
+        ),
+        bossFallingRocks.end()
     );
 
     projectiles.erase(
@@ -11613,12 +11991,28 @@ void Game::DrawVfx()
 }
 void Game::DrawCombatHud()
 {
-    int y = 68;
+    const int y =
+        68;
 
-    DrawRectangle(0, y, 280, 58, { 0, 0, 0, 120 });
+    DrawRectangle(
+        0,
+        y,
+        320,
+        82,
+        Color{
+            0,
+            0,
+            0,
+            120
+        }
+    );
 
     DrawText(
-        TextFormat("HP: %d/%d", player.hp, player.maxHp),
+        TextFormat(
+            "HP: %d/%d",
+            player.hp,
+            player.maxHp
+        ),
         18,
         y + 8,
         20,
@@ -11626,11 +12020,44 @@ void Game::DrawCombatHud()
     );
 
     DrawText(
-        TextFormat("Wave: %d  Spawned: %d/%d", wave.wave, wave.enemiesSpawned, wave.enemiesToSpawn),
+        TextFormat(
+            "Wave: %d  Spawned: %d/%d",
+            wave.wave,
+            wave.enemiesSpawned,
+            wave.enemiesToSpawn
+        ),
         18,
         y + 32,
         18,
         WHITE
+    );
+
+    const Color spawnStatusColor =
+        waveSpawningPaused
+        ? Color{
+            255,
+            190,
+            70,
+            255
+    }
+        : Color{
+            130,
+            255,
+            150,
+            255
+    };
+
+    DrawText(
+        TextFormat(
+            "Auto spawn: %s  [P]",
+            waveSpawningPaused
+            ? "PAUSED"
+            : "RUNNING"
+        ),
+        18,
+        y + 56,
+        17,
+        spawnStatusColor
     );
 }
 
@@ -12251,8 +12678,37 @@ void Game::ApplyUpgradeChoice(int choiceIndex)
         skills[slotIndex].cooldownRemaining = 0.0f;
     }
 
+    const bool returnToCurrentWave =
+        upgradeMenuOpenedManually;
+
+    upgradeMenuOpenedManually =
+        false;
+
     currentUpgradeChoices.clear();
-    StartWave(wave.wave + 1);
+
+    if (returnToCurrentWave)
+    {
+        // Manual upgrade:
+        // resume the same wave without changing its counters.
+        gameState =
+            GameState::Playing;
+
+        attackButtonDown =
+            false;
+
+        dashButtonDown =
+            false;
+
+        dashButtonPressed =
+            false;
+
+        return;
+    }
+
+    // Normal wave-completion upgrade:
+    StartWave(
+        wave.wave + 1
+    );
 }
 
 void Game::UnlockSkill(int slotIndex)
@@ -14129,6 +14585,17 @@ void Game::MoveEnemyAlongPath(
 
 bool Game::IsScreenPointOnCombatUi(Vector2 screenPos) const
 {
+
+    if (
+        CheckCollisionPointRec(
+            screenPos,
+            debugUpgradeButtonRect
+        )
+        )
+    {
+        return true;
+    }
+
     if (useJoystickMovement && IsScreenPointInsideJoystick(screenPos))
     {
         return true;
@@ -14640,8 +15107,16 @@ void Game::ApplyDamageToEnemy(
         EnemyType::Boss
         )
     {
+        const bool bossPerformingSpecialAction =
+            enemy.bossActionState !=
+            BossActionState::None;
+
+        // Ordinary tiny hit-stun must not repeatedly pause
+        // laser, roar, charge, or slam.
         hitStunDuration =
-            bossHitStunDuration;
+            bossPerformingSpecialAction
+            ? 0.0f
+            : bossHitStunDuration;
     }
 
     enemy.stunTimer =
@@ -14653,6 +15128,60 @@ void Game::ApplyDamageToEnemy(
     enemy.path.clear();
     enemy.pathIndex = 0;
     enemy.pathRefreshTimer = 0.0f;
+
+    
+    // --------------------------------------------------
+// Boss channelled-attack interruption
+// --------------------------------------------------
+
+    if (
+        enemy.type ==
+        EnemyType::Boss
+        )
+    {
+        const bool breakableBossAttack =
+            enemy.bossActionState ==
+            BossActionState::LaserWindup ||
+            enemy.bossActionState ==
+            BossActionState::LaserActive ||
+            enemy.bossActionState ==
+            BossActionState::BombardmentRoar;
+
+        if (
+            breakableBossAttack &&
+            GetBossPowerTier(enemy) < 3
+            )
+        {
+            enemy.bossInterruptDamage +=
+                static_cast<float>(
+                    finalDamage
+                    );
+
+            if (
+                enemy.bossInterruptDamage >=
+                GetBossInterruptThreshold(
+                    enemy
+                )
+                )
+            {
+                const float stunDuration =
+                    GetBossSpecialStunDuration(
+                        enemy
+                    );
+
+                if (
+                    StartBossStunned(
+                        enemy,
+                        stunDuration,
+                        false
+                    )
+                    )
+                {
+                    return;
+                }
+            }
+        }
+    }
 
     // --------------------------------------------------
     // Damage interrupts shooter attacks
@@ -14851,6 +15380,16 @@ Enemy* Game::FindNearestEnemyExcluding(
 
 bool Game::IsScreenPointOnButtonUi(Vector2 screenPos) const
 {
+    if (
+        CheckCollisionPointRec(
+            screenPos,
+            debugUpgradeButtonRect
+        )
+        )
+    {
+        return true;
+    }
+
     if (CheckCollisionPointRec(screenPos, attackButtonRect) ||
         CheckCollisionPointRec(screenPos, dashButtonRect))
     {
@@ -16923,6 +17462,7 @@ void Game::DrawEnemyVisual(
         return;
     }
 
+
     // --------------------------------------------------
     // Colours and status effects
     // --------------------------------------------------
@@ -16980,6 +17520,41 @@ void Game::DrawEnemyVisual(
 
         fallbackColor =
             spriteTint;
+    }
+
+    // --------------------------------------------------
+// Charge warning blink
+//
+// The charge animation remains on frame zero.
+// The Boss alternates between its current tier tint
+// and bright white before charging.
+// --------------------------------------------------
+
+    if (
+        enemy.type ==
+        EnemyType::Boss &&
+        enemy.bossActionState ==
+        BossActionState::ChargeWindup
+        )
+    {
+        const int blinkPhase =
+            static_cast<int>(
+                GetTime() *
+                12.0
+                );
+
+        if (
+            blinkPhase %
+            2 ==
+            0
+            )
+        {
+            spriteTint =
+                WHITE;
+
+            fallbackColor =
+                WHITE;
+        }
     }
 
 
@@ -17072,6 +17647,7 @@ void Game::DrawEnemyVisual(
         fallbackColor =
             spriteTint;
     }
+
 
     // --------------------------------------------------
     // Screen positions
@@ -17294,6 +17870,7 @@ void Game::DrawEnemyVisual(
             fallbackColor
         );
     }
+
 
     // --------------------------------------------------
     // Health bar
@@ -18832,6 +19409,7 @@ void Game::DrawWorldGroundEffects()
 {
 
     DrawWorldShadows();
+    DrawBossFallingRockTelegraphs2D();
     DrawBossLasers2D();
 
     // Player movement path
@@ -18941,6 +19519,8 @@ void Game::DrawWorldGroundEffects()
 
 void Game::DrawWorldForegroundEffects()
 {
+
+    DrawBossFallingRocks2D();
     for (
         const VfxParticle& particle :
         vfxParticles
@@ -22952,8 +23532,14 @@ void Game::DrawHybridGroundEffects3D()
 
             drawnEnemyShadows++;
         }
-        if (
-            huashanImpactSpriteLoaded &&
+    }
+
+    // Falling-rock danger circles must always draw,
+    // regardless of whether Huashan is active.
+    DrawBossFallingRockTelegraphsHybrid3D();
+
+    if (
+        huashanImpactSpriteLoaded &&
             (
                 huashanImpactAnimationActive ||
                 !huashanGroundMarks.empty()
@@ -22972,6 +23558,7 @@ void Game::DrawHybridGroundEffects3D()
             // Do not use the billboard shader here.
             // Its alpha-discard threshold can make the final
             // portion of the slow fade disappear suddenly.
+
             DrawHuashanImpactGround3D();
 
             EndBlendMode();
@@ -22981,7 +23568,7 @@ void Game::DrawHybridGroundEffects3D()
             rlEnableDepthMask();
             rlEnableBackfaceCulling();
         }
-    }
+    
 
     // Obstacle shadows are disabled here by default.
     // Trees and large props can later use baked artwork shadows
@@ -24352,7 +24939,7 @@ void Game::DrawHybridEnemy3D(
     }
 
     // Apply the persistent Boss phase tint before
-    // temporary status-effect colors.
+   // temporary status-effect colours.
     if (
         enemy.type ==
         EnemyType::Boss
@@ -24367,25 +24954,83 @@ void Game::DrawHybridEnemy3D(
             spriteTint;
     }
 
-    if (enemy.frozenTimer > 0.0f)
+    // --------------------------------------------------
+    // Charge warning blink
+    // --------------------------------------------------
 
+    if (
+        enemy.type ==
+        EnemyType::Boss &&
+        enemy.bossActionState ==
+        BossActionState::ChargeWindup
+        )
+    {
+        const int blinkPhase =
+            static_cast<int>(
+                GetTime() *
+                12.0
+                );
+
+        if (
+            blinkPhase %
+            2 ==
+            0
+            )
+        {
+            spriteTint =
+                WHITE;
+
+            fallbackTint =
+                WHITE;
+        }
+    }
+
+    // Temporary status effects take priority over
+    // the charge warning and HP-tier tint.
     if (enemy.frozenTimer > 0.0f)
     {
-        spriteTint = Color{ 150, 230, 255, 255 };
-        fallbackTint = spriteTint;
+        spriteTint =
+            Color{
+                150,
+                230,
+                255,
+                255
+        };
+
+        fallbackTint =
+            spriteTint;
     }
     else if (
         enemy.stunTimer > 0.0f ||
         enemy.landingStunTimer > 0.0f
         )
     {
-        spriteTint = Color{ 255, 255, 150, 255 };
-        fallbackTint = spriteTint;
+        spriteTint =
+            Color{
+                255,
+                255,
+                150,
+                255
+        };
+
+        fallbackTint =
+            spriteTint;
     }
-    else if (enemy.slowTimer > 0.0f)
+    else if (
+        enemy.slowTimer >
+        0.0f
+        )
     {
-        spriteTint = Color{ 150, 205, 255, 255 };
-        fallbackTint = spriteTint;
+        spriteTint =
+            Color{
+                150,
+                205,
+                255,
+                255
+        };
+
+        fallbackTint =
+            spriteTint;
     }
 
     // --------------------------------------------------
@@ -24888,7 +25533,7 @@ void Game::DrawHybridActors3D()
     {
         EndShaderMode();
     }
-
+    DrawBossFallingRocksHybrid3D();
     DrawBossLasersHybrid3D();
 
     // --------------------------------------------------
@@ -26109,6 +26754,110 @@ void Game::LoadBossSpriteSheets()
             "Assets/enemies/boss_attack.png"
         );
     }
+    auto LoadBossActionSheet =
+        [this](
+            const char* path,
+            Texture2D& texture,
+            bool& loaded,
+            int& framesPerRow,
+            int& directionRows
+            )
+        {
+            if (texture.id != 0)
+            {
+                UnloadTexture(
+                    texture
+                );
+
+                texture = {};
+            }
+
+            loaded = false;
+
+            texture =
+                LoadTexture(
+                    path
+                );
+
+            if (texture.id == 0)
+            {
+                TraceLog(
+                    LOG_WARNING,
+                    "[BOSS SPRITE] Failed to load: %s",
+                    path
+                );
+
+                return;
+            }
+
+            SetTextureFilter(
+                texture,
+                TEXTURE_FILTER_POINT
+            );
+
+            framesPerRow =
+                std::max(
+                    1,
+                    texture.width /
+                    std::max(
+                        1,
+                        bossFrameWidth
+                    )
+                );
+
+            directionRows =
+                std::max(
+                    1,
+                    texture.height /
+                    std::max(
+                        1,
+                        bossFrameHeight
+                    )
+                );
+
+            loaded = true;
+
+            TraceLog(
+                LOG_INFO,
+                "[BOSS SPRITE] Loaded action: %s | "
+                "frames=%d rows=%d",
+                path,
+                framesPerRow,
+                directionRows
+            );
+        };
+
+    LoadBossActionSheet(
+        "Assets/enemies/boss_roar.png",
+        bossRoarSpriteSheet,
+        bossRoarSpriteLoaded,
+        bossRoarFramesPerRow,
+        bossRoarDirectionRows
+    );
+
+    LoadBossActionSheet(
+        "Assets/enemies/boss_stunned.png",
+        bossStunnedSpriteSheet,
+        bossStunnedSpriteLoaded,
+        bossStunnedFramesPerRow,
+        bossStunnedDirectionRows
+    );
+
+    LoadBossActionSheet(
+        "Assets/enemies/boss_precharge.png",
+        bossPreChargeSpriteSheet,
+        bossPreChargeSpriteLoaded,
+        bossPreChargeFramesPerRow,
+        bossPreChargeDirectionRows
+    );
+
+    LoadBossActionSheet(
+        "Assets/enemies/boss_charge.png",
+        bossChargeSpriteSheet,
+        bossChargeSpriteLoaded,
+        bossChargeFramesPerRow,
+        bossChargeDirectionRows
+    );
 
 }
 
@@ -26122,6 +26871,211 @@ void Game::UpdateBossAnimation(
         EnemyType::Boss
         )
     {
+        return;
+    }
+
+    auto AdvanceBossLoop =
+        [&enemy, dt](
+            int frameCount,
+            float frameDuration,
+            float playbackSpeed,
+            int firstFrame
+            )
+        {
+            frameCount =
+                std::max(
+                    1,
+                    frameCount
+                );
+
+            firstFrame =
+                std::max(
+                    0,
+                    std::min(
+                        firstFrame,
+                        frameCount - 1
+                    )
+                );
+
+            if (
+                enemy.bossAnimationFrame <
+                firstFrame
+                )
+            {
+                enemy.bossAnimationFrame =
+                    firstFrame;
+            }
+
+            enemy.bossAnimationTimer +=
+                dt *
+                playbackSpeed;
+
+            frameDuration =
+                std::max(
+                    0.01f,
+                    frameDuration
+                );
+
+            while (
+                enemy.bossAnimationTimer >=
+                frameDuration
+                )
+            {
+                enemy.bossAnimationTimer -=
+                    frameDuration;
+
+                enemy.bossAnimationFrame++;
+
+                if (
+                    enemy.bossAnimationFrame >=
+                    frameCount
+                    )
+                {
+                    enemy.bossAnimationFrame =
+                        firstFrame;
+                }
+            }
+        };
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::BombardmentRoar
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Attacking;
+
+        AdvanceBossLoop(
+            bossRoarFramesPerRow,
+            bossRoarFrameDuration,
+            GetBossAttackSpeedMultiplier(
+                enemy
+            ),
+            0
+        );
+
+        return;
+    }
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::Stunned
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Attacking;
+
+        AdvanceBossLoop(
+            bossStunnedFramesPerRow,
+            bossStunnedFrameDuration,
+            1.0f,
+            0
+        );
+
+        return;
+    }
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::ChargeWindup
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Attacking;
+
+        const int frameCount =
+            std::max(
+                1,
+                bossPreChargeFramesPerRow
+            );
+
+        const float frameDuration =
+            std::max(
+                0.01f,
+                bossPreChargeFrameDuration
+            );
+
+        const float playbackSpeed =
+            GetBossAttackSpeedMultiplier(
+                enemy
+            );
+
+        enemy.bossAnimationTimer +=
+            dt *
+            playbackSpeed;
+
+        while (
+            enemy.bossAnimationTimer >=
+            frameDuration
+            )
+        {
+            enemy.bossAnimationTimer -=
+                frameDuration;
+
+            enemy.bossAnimationFrame++;
+
+            // One complete pre-charge animation has finished.
+            if (
+                enemy.bossAnimationFrame >=
+                frameCount
+                )
+            {
+                enemy.bossAnimationFrame =
+                    0;
+
+                enemy.bossPreChargeLoopsCompleted++;
+
+                // After two complete loops, begin charging.
+                if (
+                    enemy.bossPreChargeLoopsCompleted >=
+                    bossPreChargeLoopCount
+                    )
+                {
+                    enemy.bossPreChargeLoopsCompleted =
+                        bossPreChargeLoopCount;
+
+                    enemy.bossActionState =
+                        BossActionState::ChargeActive;
+
+                    // The moving charge sheet starts from frame zero.
+                    enemy.bossAnimationFrame =
+                        0;
+
+                    enemy.bossAnimationTimer =
+                        0.0f;
+
+                    SpawnBossDashAfterimage(
+                        enemy
+                    );
+
+                    break;
+                }
+            }
+        }
+
+        return;
+    }
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::ChargeActive
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Attacking;
+
+        AdvanceBossLoop(
+            bossChargeFramesPerRow,
+            bossChargeFrameDuration,
+            GetBossDashPowerMultiplier(
+                enemy
+            ),
+
+            // Pre-charge now uses a separate sheet,
+            // so the charge sheet uses every frame.
+            0
+        );
+
         return;
     }
 
@@ -26392,6 +27346,67 @@ bool Game::GetBossAnimationFrame(
 
             selected = true;
         };
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::BombardmentRoar
+        )
+    {
+        SelectSheet(
+            bossRoarSpriteSheet,
+            bossRoarSpriteLoaded,
+            bossRoarFramesPerRow,
+            bossRoarDirectionRows
+        );
+    }
+    else if (
+        enemy.bossActionState ==
+        BossActionState::Stunned
+        )
+    {
+        SelectSheet(
+            bossStunnedSpriteSheet,
+            bossStunnedSpriteLoaded,
+            bossStunnedFramesPerRow,
+            bossStunnedDirectionRows
+        );
+    }
+    else if (
+        enemy.bossActionState ==
+        BossActionState::ChargeWindup
+        )
+    {
+        SelectSheet(
+            bossPreChargeSpriteSheet,
+            bossPreChargeSpriteLoaded,
+            bossPreChargeFramesPerRow,
+            bossPreChargeDirectionRows
+        );
+    }
+    else if (
+        enemy.bossActionState ==
+        BossActionState::ChargeActive
+        )
+    {
+        SelectSheet(
+            bossChargeSpriteSheet,
+            bossChargeSpriteLoaded,
+            bossChargeFramesPerRow,
+            bossChargeDirectionRows
+        );
+    }
+    else if (
+        enemy.bossActionState ==
+        BossActionState::Slam
+        )
+    {
+        SelectSheet(
+            bossAttackSpriteSheet,
+            bossAttackSpriteLoaded,
+            bossAttackFramesPerRow,
+            bossAttackDirectionRows
+        );
+    }
 
     if (
         enemy.animationState ==
@@ -27000,6 +28015,34 @@ void Game::UpdateBossBehavior(
     bool sameTerrainLevel
 )
 {
+
+    enemy.bossBombardmentCooldownTimer =
+        std::max(
+            0.0f,
+            enemy.bossBombardmentCooldownTimer -
+            dt *
+            GetBossAttackSpeedMultiplier(
+                enemy
+            )
+        );
+
+    enemy.bossChargeCooldownTimer =
+        std::max(
+            0.0f,
+            enemy.bossChargeCooldownTimer -
+            dt *
+            GetBossAttackSpeedMultiplier(
+                enemy
+            )
+        );
+
+    enemy.bossDecisionTimer =
+        std::max(
+            0.0f,
+            enemy.bossDecisionTimer -
+            dt
+        );
+
     const float movementSpeedMultiplier =
         GetBossMovementSpeedMultiplier(
             enemy
@@ -27048,6 +28091,94 @@ void Game::UpdateBossBehavior(
                 enemy.maxHp
             )
             );
+
+    // --------------------------------------------------
+// Dedicated Boss stunned state
+// --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::Stunned
+        )
+    {
+        enemy.bossStunnedTimer -=
+            dt;
+
+        if (
+            enemy.bossStunnedTimer <=
+            0.0f
+            )
+        {
+            enemy.bossStunnedTimer =
+                0.0f;
+
+            enemy.bossActionState =
+                BossActionState::None;
+
+            enemy.animationState =
+                EnemyAnimationState::Idle;
+
+            enemy.bossAnimationFrame = 0;
+            enemy.bossAnimationTimer = 0.0f;
+
+            RefreshEnemyPath(
+                enemy
+            );
+        }
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Straight-line charge
+    // --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::ChargeWindup ||
+        enemy.bossActionState ==
+        BossActionState::ChargeActive
+        )
+    {
+        UpdateBossCharge(
+            enemy,
+            dt
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Bombardment roar
+    // --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::BombardmentRoar
+        )
+    {
+        UpdateBossBombardment(
+            enemy,
+            dt
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
 
     // --------------------------------------------------
     // One-time health phases have highest priority.
@@ -27226,8 +28357,14 @@ void Game::UpdateBossBehavior(
             }
         }
 
-        if (enemy.bossDashTimer <= 0.0f)
+        if (
+            enemy.bossDashTimer <=
+            0.0f
+            )
         {
+            const BossDashPurpose completedPurpose =
+                enemy.bossDashPurpose;
+
             if (enemy.bossDashIsForward)
             {
                 SpawnBossDashAfterimage(
@@ -27246,9 +28383,47 @@ void Game::UpdateBossBehavior(
                 0.0f
             };
 
-            RefreshEnemyPath(
-                enemy
-            );
+            enemy.bossDashPurpose =
+                BossDashPurpose::None;
+
+            // ----------------------------------------------
+            // Chase dash ends in a delayed ground slam.
+            // ----------------------------------------------
+
+            if (
+                completedPurpose ==
+                BossDashPurpose::ChaseSlam
+                )
+            {
+                StartBossSlam(
+                    enemy
+                );
+            }
+
+            // ----------------------------------------------
+            // Bombardment retreat ends in the roaring state.
+            // ----------------------------------------------
+
+            else if (
+                completedPurpose ==
+                BossDashPurpose::BombardmentEscape
+                )
+            {
+                StartBossBombardmentRoar(
+                    enemy
+                );
+            }
+
+            // ----------------------------------------------
+            // Health-phase escape simply resumes movement.
+            // ----------------------------------------------
+
+            else
+            {
+                RefreshEnemyPath(
+                    enemy
+                );
+            }
         }
 
         UpdateBossAnimation(
@@ -27317,6 +28492,79 @@ void Game::UpdateBossBehavior(
             dt *
             attackSpeedMultiplier
         );
+
+
+    const bool bombardmentUnlocked =
+        healthRatio <=
+        0.75f;
+
+    const bool chargeRangeValid =
+        distanceToPlayer >
+        bossSlamRadius *
+        1.45f &&
+        distanceToPlayer <
+        950.0f;
+
+    if (
+        enemy.bossDecisionTimer <=
+        0.0f
+        )
+    {
+        enemy.bossDecisionTimer =
+            0.80f;
+
+        const int attackRoll =
+            GetRandomValue(
+                0,
+                99
+            );
+
+        // 25% chance to bombard when available.
+        if (
+            bombardmentUnlocked &&
+            attackRoll < 25 &&
+            sameTerrainLevel &&
+            distanceToPlayer >
+            bossSlamRadius *
+            1.30f &&
+            enemy.bossBombardmentCooldownTimer <=
+            0.0f
+            )
+        {
+            StartBossBombardment(
+                enemy
+            );
+
+            UpdateBossAnimation(
+                enemy,
+                dt
+            );
+
+            return;
+        }
+
+        // Additional 30% section of the roll for charge.
+        if (
+            attackRoll >= 25 &&
+            attackRoll < 55 &&
+            chargeRangeValid &&
+            sameTerrainLevel &&
+            enemy.bossChargeCooldownTimer <=
+            0.0f
+            )
+        {
+            StartBossCharge(
+                enemy
+            );
+
+            UpdateBossAnimation(
+                enemy,
+                dt
+            );
+
+            return;
+        }
+    }
 
     if (
         sameTerrainLevel &&
@@ -28022,6 +29270,8 @@ void Game::StartBossForwardDash(
         enemy,
         direction
     );
+    enemy.bossDashPurpose =
+        BossDashPurpose::ChaseSlam;
 
     SpawnBossDashAfterimage(
         enemy
@@ -29051,6 +30301,168 @@ void Game::DrawBossSlamDomeHybrid3D() const
     EndMode3D();
 }
 
+float Game::GetBossInterruptThreshold(
+    const Enemy& enemy
+) const
+{
+    return
+        static_cast<float>(
+            std::max(
+                1,
+                enemy.maxHp
+            )
+            ) *
+        bossInterruptHealthRatio;
+}
+
+float Game::GetBossSpecialStunDuration(
+    const Enemy& enemy
+) const
+{
+    switch (
+        GetBossPowerTier(
+            enemy
+        )
+        )
+    {
+    case 0:
+        return 4.50f;
+
+    case 1:
+        return 3.50f;
+
+    case 2:
+        return 2.20f;
+
+        // At 25% HP and below, damage can no longer
+        // stagger the Boss.
+    case 3:
+    default:
+        return 0.0f;
+    }
+}
+
+bool Game::StartBossStunned(
+    Enemy& enemy,
+    float requestedDuration,
+    bool forcedStun
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        !enemy.active
+        )
+    {
+        return false;
+    }
+
+    // Ordinary damage-based stagger is disabled
+    // at the final 25% HP tier.
+    if (
+        !forcedStun &&
+        GetBossPowerTier(enemy) >= 3
+        )
+    {
+        enemy.bossInterruptDamage =
+            0.0f;
+
+        return false;
+    }
+
+    const float duration =
+        std::max(
+            0.10f,
+            requestedDuration
+        );
+
+    enemy.bossActionState =
+        BossActionState::Stunned;
+
+    enemy.bossStunnedTimer =
+        duration;
+
+    enemy.bossInterruptDamage =
+        0.0f;
+
+    // Cancel all attacks and movement.
+    enemy.bossDashCharging = false;
+    enemy.bossDashChargeTimer = 0.0f;
+    enemy.bossDashTimer = 0.0f;
+    enemy.bossDashVelocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.bossDashPurpose =
+        BossDashPurpose::None;
+
+    enemy.bossDashIsForward =
+        false;
+
+    enemy.bossLaserWindupTimer =
+        0.0f;
+
+    enemy.bossLaserActiveTimer =
+        0.0f;
+
+    enemy.bossLaserDamageTimer =
+        0.0f;
+
+    enemy.bossBombardmentTimer =
+        0.0f;
+
+    enemy.bossBombardmentSpawnTimer =
+        0.0f;
+
+    enemy.bossChargeWindupTimer =
+        0.0f;
+
+    enemy.bossChargeRemainingTimer =
+        0.0f;
+
+    enemy.bossChargeHitPlayer =
+        false;
+
+    enemy.attackTimer =
+        0.0f;
+
+    enemy.stunTimer =
+        0.0f;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    enemy.animationState =
+        EnemyAnimationState::Attacking;
+
+    enemy.bossAnimationFrame = 0;
+    enemy.bossAnimationTimer = 0.0f;
+
+    // Interrupting the roar also removes rocks that
+    // have not reached the ground yet.
+    for (
+        BossFallingRock& rock :
+        bossFallingRocks
+        )
+    {
+        if (
+            rock.active &&
+            rock.ownerBossId ==
+            enemy.id
+            )
+        {
+            rock.active = false;
+        }
+    }
+
+    SpawnHitSpark(
+        enemy.pos
+    );
+
+    return true;
+}
+
 int Game::GetBossPowerTier(
     const Enemy& enemy
 ) const
@@ -29203,4 +30615,1122 @@ Color Game::GetBossTierTint(
     return WHITE;
 }
 
+void Game::StartBossBombardment(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        enemy.bossActionState !=
+        BossActionState::None ||
+        enemy.bossDashCharging ||
+        enemy.bossDashTimer > 0.0f ||
+        enemy.bossBombardmentCooldownTimer >
+        0.0f
+        )
+    {
+        return;
+    }
+
+    Vector2 awayDirection =
+        Vector2Subtract(
+            enemy.pos,
+            playerPosition
+        );
+
+    if (
+        Vector2Length(
+            awayDirection
+        ) <= 0.01f
+        )
+    {
+        awayDirection = {
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        awayDirection =
+            Vector2Normalize(
+                awayDirection
+            );
+    }
+
+    enemy.bossDashPurpose =
+        BossDashPurpose::BombardmentEscape;
+
+    // Keep this true so your existing Boss dash
+    // afterimage system remains active.
+    enemy.bossDashIsForward =
+        true;
+
+    enemy.bossDashTimer =
+        bossBombardmentRetreatDuration *
+        GetBossDashDurationMultiplier(
+            enemy
+        );
+
+    enemy.bossDashVelocity =
+        Vector2Scale(
+            awayDirection,
+            bossBombardmentRetreatSpeed *
+            GetBossDashPowerMultiplier(
+                enemy
+            )
+        );
+
+    enemy.bossBombardmentCooldownTimer =
+        bossBombardmentCooldown;
+
+    enemy.bossDashAfterimageTimer =
+        0.0f;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    enemy.animationState =
+        EnemyAnimationState::Walking;
+
+    SetEnemyFacingFromWorldDirection(
+        enemy,
+        awayDirection
+    );
+
+    SpawnBossDashAfterimage(
+        enemy
+    );
+}
+
+void Game::StartBossBombardmentRoar(
+    Enemy& enemy
+)
+{
+    enemy.bossActionState =
+        BossActionState::BombardmentRoar;
+
+    enemy.bossBombardmentTimer =
+        bossBombardmentDuration;
+
+    enemy.bossBombardmentSpawnTimer =
+        0.15f;
+
+    enemy.bossInterruptDamage =
+        0.0f;
+
+    enemy.animationState =
+        EnemyAnimationState::Attacking;
+
+    enemy.bossAnimationFrame = 0;
+    enemy.bossAnimationTimer = 0.0f;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    SetEnemyFacingFromWorldDirection(
+        enemy,
+        Vector2Subtract(
+            playerPosition,
+            enemy.pos
+        )
+    );
+}
+
+void Game::UpdateBossBombardment(
+    Enemy& enemy,
+    float dt
+)
+{
+    if (
+        enemy.bossActionState !=
+        BossActionState::BombardmentRoar
+        )
+    {
+        return;
+    }
+
+    const float attackSpeed =
+        GetBossAttackSpeedMultiplier(
+            enemy
+        );
+
+    enemy.bossBombardmentTimer -=
+        dt;
+
+    enemy.bossBombardmentSpawnTimer -=
+        dt *
+        attackSpeed;
+
+    while (
+        enemy.bossBombardmentSpawnTimer <=
+        0.0f &&
+        enemy.bossBombardmentTimer >
+        0.0f
+        )
+    {
+        SpawnBossFallingRock(
+            enemy
+        );
+
+        // At tier 2 and above, occasionally create
+        // a second simultaneous rock.
+        if (
+            GetBossPowerTier(enemy) >= 2 &&
+            GetRandomValue(0, 99) < 35
+            )
+        {
+            SpawnBossFallingRock(
+                enemy
+            );
+        }
+
+        enemy.bossBombardmentSpawnTimer +=
+            bossBombardmentRockInterval;
+    }
+
+    if (
+        enemy.bossBombardmentTimer <=
+        0.0f
+        )
+    {
+        enemy.bossBombardmentTimer =
+            0.0f;
+
+        enemy.bossActionState =
+            BossActionState::None;
+
+        enemy.animationState =
+            EnemyAnimationState::Idle;
+
+        enemy.bossAnimationFrame = 0;
+        enemy.bossAnimationTimer = 0.0f;
+
+        enemy.bossInterruptDamage =
+            0.0f;
+
+        RefreshEnemyPath(
+            enemy
+        );
+    }
+}
+
+void Game::SpawnBossFallingRock(
+    const Enemy& enemy
+)
+{
+    const float randomAngle =
+        static_cast<float>(
+            GetRandomValue(
+                0,
+                359
+            )
+            ) *
+        DEG2RAD;
+
+    // Square root gives a more even distribution
+    // across the target area.
+    const float randomRatio =
+        sqrtf(
+            static_cast<float>(
+                GetRandomValue(
+                    0,
+                    1000
+                )
+                ) /
+            1000.0f
+        );
+
+    const float randomDistance =
+        randomRatio *
+        bossBombardmentTargetSpread;
+
+    Vector2 requestedPosition{
+        playerPosition.x +
+            cosf(randomAngle) *
+            randomDistance,
+
+        playerPosition.y +
+            sinf(randomAngle) *
+            randomDistance
+    };
+
+    int cellX = 0;
+    int cellY = 0;
+
+    if (
+        FindNearestWalkableCell(
+            requestedPosition,
+            cellX,
+            cellY
+        )
+        )
+    {
+        requestedPosition =
+            CellToWorld(
+                cellX,
+                cellY
+            );
+    }
+
+    BossFallingRock rock;
+
+    rock.ownerBossId =
+        enemy.id;
+
+    rock.position =
+        requestedPosition;
+
+    rock.terrainElevation =
+        GetTerrainElevationAtWorld(
+            requestedPosition
+        );
+
+    const float randomFallDuration =
+        static_cast<float>(
+            GetRandomValue(
+                static_cast<int>(
+                    bossRockFallDurationMin *
+                    1000.0f
+                    ),
+                static_cast<int>(
+                    bossRockFallDurationMax *
+                    1000.0f
+                    )
+            )
+            ) /
+        1000.0f;
+
+    rock.fallDuration =
+        randomFallDuration;
+
+    rock.timer =
+        randomFallDuration;
+
+    rock.startHeight =
+        bossRockStartHeight;
+
+    rock.visualRadius =
+        bossRockVisualRadius +
+        static_cast<float>(
+            GetRandomValue(
+                -7,
+                9
+            )
+            );
+
+    rock.damageRadius =
+        static_cast<float>(
+            GetRandomValue(
+                static_cast<int>(
+                    bossRockDamageRadiusMin
+                    ),
+                static_cast<int>(
+                    bossRockDamageRadiusMax
+                    )
+            )
+            );
+
+    rock.damage =
+        std::max(
+            1,
+            enemy.bulletDamage *
+            2
+        );
+
+    rock.active =
+        true;
+
+    bossFallingRocks.push_back(
+        rock
+    );
+}
+
+void Game::UpdateBossFallingRocks(
+    float dt
+)
+{
+    for (
+        BossFallingRock& rock :
+        bossFallingRocks
+        )
+    {
+        if (!rock.active)
+        {
+            continue;
+        }
+
+        rock.timer -=
+            dt;
+
+        if (rock.timer > 0.0f)
+        {
+            continue;
+        }
+
+        rock.timer =
+            0.0f;
+
+        const bool sameTerrainLevel =
+            GetTerrainElevationAtWorld(
+                playerPosition
+            ) ==
+            rock.terrainElevation;
+
+        const float hitDistance =
+            Vector2Distance(
+                playerPosition,
+                rock.position
+            );
+
+        if (
+            sameTerrainLevel &&
+            hitDistance <=
+            rock.damageRadius +
+            player.radius &&
+            !IsPlayerAirborne() &&
+            !IsPlayerInvulnerable()
+            )
+        {
+            ApplyKnockbackToPlayer(
+                rock.position,
+                850.0f,
+                0.30f
+            );
+
+            DamagePlayer(
+                rock.damage
+            );
+        }
+
+        VfxParticle impact;
+
+        impact.type =
+            VfxType::Explosion;
+
+        impact.pos =
+            rock.position;
+
+        impact.radius =
+            rock.damageRadius;
+
+        impact.life =
+            0.32f;
+
+        impact.maxLife =
+            impact.life;
+
+        impact.color = {
+            150,
+            125,
+            95,
+            220
+        };
+
+        impact.active =
+            true;
+
+        vfxParticles.push_back(
+            impact
+        );
+
+        rock.active =
+            false;
+    }
+}
+
+void Game::DrawBossFallingRockTelegraphsHybrid3D() const
+{
+    // Draw a solid circular ground area using hybridCircleTexture.
+    auto DrawDamageArea =
+        [this](
+            Vector2 worldPosition,
+            float radiusPixels,
+            Color color,
+            float additionalHeightPixels
+            )
+        {
+            if (
+                radiusPixels <= 0.0f ||
+                hybridCircleTexture.id == 0
+                )
+            {
+                return;
+            }
+
+            const Vector3 center =
+                WorldToHybrid3D(
+                    worldPosition,
+                    additionalHeightPixels +
+                    0.65f
+                );
+
+            const float radius =
+                PixelsToHybridUnits(
+                    radiusPixels
+                );
+
+            const Vector3 northWest{
+                center.x - radius,
+                center.y,
+                center.z - radius
+            };
+
+            const Vector3 northEast{
+                center.x + radius,
+                center.y,
+                center.z - radius
+            };
+
+            const Vector3 southEast{
+                center.x + radius,
+                center.y,
+                center.z + radius
+            };
+
+            const Vector3 southWest{
+                center.x - radius,
+                center.y,
+                center.z + radius
+            };
+
+            rlSetTexture(
+                hybridCircleTexture.id
+            );
+
+            rlBegin(
+                RL_QUADS
+            );
+
+            rlColor4ub(
+                color.r,
+                color.g,
+                color.b,
+                color.a
+            );
+
+            rlTexCoord2f(
+                0.0f,
+                0.0f
+            );
+
+            rlVertex3f(
+                northWest.x,
+                northWest.y,
+                northWest.z
+            );
+
+            rlTexCoord2f(
+                0.0f,
+                1.0f
+            );
+
+            rlVertex3f(
+                southWest.x,
+                southWest.y,
+                southWest.z
+            );
+
+            rlTexCoord2f(
+                1.0f,
+                1.0f
+            );
+
+            rlVertex3f(
+                southEast.x,
+                southEast.y,
+                southEast.z
+            );
+
+            rlTexCoord2f(
+                1.0f,
+                0.0f
+            );
+
+            rlVertex3f(
+                northEast.x,
+                northEast.y,
+                northEast.z
+            );
+
+            rlEnd();
+
+            rlSetTexture(
+                0
+            );
+        };
+
+    for (
+        const BossFallingRock& rock :
+        bossFallingRocks
+        )
+    {
+        if (!rock.active)
+        {
+            continue;
+        }
+
+        const float progress =
+            1.0f -
+            Clamp(
+                rock.timer /
+                std::max(
+                    0.01f,
+                    rock.fallDuration
+                ),
+                0.0f,
+                1.0f
+            );
+
+        // --------------------------------------------------
+        // Full damage radius
+        //
+        // Uses the hard circle texture so the entire affected
+        // area remains visible instead of fading away like a
+        // normal soft shadow.
+        // --------------------------------------------------
+
+        DrawDamageArea(
+            rock.position,
+            rock.damageRadius,
+            Color{
+                35,
+                12,
+                12,
+                static_cast<unsigned char>(
+                    105.0f +
+                    progress *
+                        35.0f
+                )
+            },
+            1.0f
+        );
+
+        // Slightly smaller secondary layer helps the dangerous
+        // area remain readable over bright terrain.
+        DrawDamageArea(
+            rock.position,
+            rock.damageRadius *
+            0.92f,
+            Color{
+                65,
+                15,
+                12,
+                static_cast<unsigned char>(
+                    35.0f +
+                    progress *
+                        30.0f
+                )
+            },
+            1.2f
+        );
+
+        // --------------------------------------------------
+        // Falling-rock shadow
+        //
+        // This remains soft and grows as the rock approaches.
+        // --------------------------------------------------
+
+        const float shadowRadius =
+            rock.visualRadius *
+            (
+                0.45f +
+                progress *
+                1.15f
+                );
+
+        DrawHybridGroundDisc(
+            rock.position,
+            shadowRadius,
+            Color{
+                0,
+                0,
+                0,
+                static_cast<unsigned char>(
+                    110.0f +
+                    progress *
+                        125.0f
+                )
+            },
+            1.8f,
+            24
+        );
+    }
+}
+
+void Game::DrawBossFallingRockTelegraphs2D() const
+{
+    for (
+        const BossFallingRock& rock :
+        bossFallingRocks
+        )
+    {
+        if (!rock.active)
+        {
+            continue;
+        }
+
+        const float progress =
+            1.0f -
+            Clamp(
+                rock.timer /
+                std::max(
+                    0.01f,
+                    rock.fallDuration
+                ),
+                0.0f,
+                1.0f
+            );
+
+        DrawGroundCircle(
+            rock.position,
+            rock.damageRadius,
+            Color{
+                20,
+                15,
+                15,
+                static_cast<unsigned char>(
+                    65.0f +
+                    progress *
+                    55.0f
+                )
+            }
+        );
+
+        DrawGroundCircle(
+            rock.position,
+            rock.visualRadius *
+            (
+                0.45f +
+                progress *
+                1.15f
+                ),
+            Color{
+                0,
+                0,
+                0,
+                static_cast<unsigned char>(
+                    100.0f +
+                    progress *
+                    120.0f
+                )
+            }
+        );
+    }
+}
+void Game::DrawBossFallingRocksHybrid3D() const
+{
+    for (
+        const BossFallingRock& rock :
+        bossFallingRocks
+        )
+    {
+        if (!rock.active)
+        {
+            continue;
+        }
+
+        const float heightRatio =
+            Clamp(
+                rock.timer /
+                std::max(
+                    0.01f,
+                    rock.fallDuration
+                ),
+                0.0f,
+                1.0f
+            );
+
+        // Accelerating fall.
+        const float curvedHeightRatio =
+            heightRatio *
+            heightRatio;
+
+        const float height =
+            rock.startHeight *
+            curvedHeightRatio +
+            rock.visualRadius;
+
+        const Vector3 rockPosition =
+            WorldToHybrid3D(
+                rock.position,
+                height
+            );
+
+        DrawSphere(
+            rockPosition,
+            PixelsToHybridUnits(
+                rock.visualRadius
+            ),
+            Color{
+                95,
+                82,
+                70,
+                255
+            }
+        );
+
+        // Smaller offset sphere makes the rock less perfectly round.
+        DrawSphere(
+            Vector3{
+                rockPosition.x +
+                    PixelsToHybridUnits(
+                        rock.visualRadius *
+                        0.28f
+                    ),
+
+                rockPosition.y +
+                    PixelsToHybridUnits(
+                        rock.visualRadius *
+                        0.14f
+                    ),
+
+                rockPosition.z -
+                    PixelsToHybridUnits(
+                        rock.visualRadius *
+                        0.18f
+                    )
+            },
+            PixelsToHybridUnits(
+                rock.visualRadius *
+                0.62f
+            ),
+            Color{
+                72,
+                62,
+                54,
+                255
+            }
+        );
+    }
+}
+
+void Game::DrawBossFallingRocks2D() const
+{
+    for (
+        const BossFallingRock& rock :
+        bossFallingRocks
+        )
+    {
+        if (!rock.active)
+        {
+            continue;
+        }
+
+        const float heightRatio =
+            Clamp(
+                rock.timer /
+                std::max(
+                    0.01f,
+                    rock.fallDuration
+                ),
+                0.0f,
+                1.0f
+            );
+
+        const float height =
+            rock.startHeight *
+            heightRatio *
+            heightRatio;
+
+        const Vector2 drawPosition =
+            WorldToViewElevated(
+                rock.position,
+                height
+            );
+
+        DrawCircleV(
+            drawPosition,
+            rock.visualRadius,
+            Color{
+                95,
+                82,
+                70,
+                255
+            }
+        );
+
+        DrawCircleV(
+            Vector2Add(
+                drawPosition,
+                {
+                    rock.visualRadius *
+                        0.25f,
+
+                    -rock.visualRadius *
+                        0.18f
+                }
+            ),
+            rock.visualRadius *
+            0.55f,
+            Color{
+                70,
+                60,
+                52,
+                255
+            }
+        );
+    }
+}
+
+void Game::StartBossCharge(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        enemy.bossActionState !=
+        BossActionState::None ||
+        enemy.bossDashCharging ||
+        enemy.bossDashTimer > 0.0f ||
+        enemy.bossChargeCooldownTimer >
+        0.0f
+        )
+    {
+        return;
+    }
+
+    Vector2 direction =
+        Vector2Subtract(
+            playerPosition,
+            enemy.pos
+        );
+
+    if (
+        Vector2Length(
+            direction
+        ) <= 0.01f
+        )
+    {
+        direction = {
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        direction =
+            Vector2Normalize(
+                direction
+            );
+    }
+
+    enemy.bossChargeDirection =
+        direction;
+
+    enemy.bossActionState =
+        BossActionState::ChargeWindup;
+
+    // The pre-charge duration is now controlled by
+    // completing the animation exactly twice.
+    enemy.bossChargeWindupTimer =
+        0.0f;
+
+    enemy.bossPreChargeLoopsCompleted =
+        0;
+
+    enemy.bossChargeRemainingTimer =
+        bossChargeMaximumDuration;
+
+    enemy.bossChargeCooldownTimer =
+        bossChargeCooldown;
+
+    enemy.bossChargeHitPlayer =
+        false;
+
+    enemy.bossDashAfterimageTimer =
+        0.0f;
+
+    enemy.animationState =
+        EnemyAnimationState::Attacking;
+
+    // Begin the directional pre-charge animation.
+    enemy.bossAnimationFrame = 0;
+    enemy.bossAnimationTimer = 0.0f;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    SetEnemyFacingFromWorldDirection(
+        enemy,
+        direction
+    );
+}
+
+void Game::UpdateBossCharge(
+    Enemy& enemy,
+    float dt
+)
+{
+    if (
+        enemy.bossActionState ==
+        BossActionState::ChargeWindup
+        )
+    {
+        // UpdateBossAnimation() controls the pre-charge
+        // frames and changes the state after two loops.
+        return;
+    }
+
+    if (
+        enemy.bossActionState !=
+        BossActionState::ChargeActive
+        )
+    {
+        return;
+    }
+
+    enemy.bossChargeRemainingTimer -=
+        dt;
+
+    const float chargeSpeed =
+        bossChargeSpeed *
+        GetBossDashPowerMultiplier(
+            enemy
+        );
+
+    const Vector2 totalMovement =
+        Vector2Scale(
+            enemy.bossChargeDirection,
+            chargeSpeed *
+            dt
+        );
+
+    const int stepCount =
+        std::max(
+            1,
+            static_cast<int>(
+                std::ceil(
+                    Vector2Length(
+                        totalMovement
+                    ) /
+                    7.0f
+                )
+                )
+        );
+
+    const Vector2 movementStep =
+        Vector2Scale(
+            totalMovement,
+            1.0f /
+            static_cast<float>(
+                stepCount
+                )
+        );
+
+    bool hitWall = false;
+
+    for (
+        int stepIndex = 0;
+        stepIndex < stepCount;
+        ++stepIndex
+        )
+    {
+        const Vector2 candidatePosition =
+            Vector2Add(
+                enemy.pos,
+                movementStep
+            );
+
+        if (
+            !CanEnemyStandAt(
+                enemy.pos,
+                candidatePosition,
+                std::max(
+                    8.0f,
+                    enemy.radius *
+                    0.60f
+                )
+            )
+            )
+        {
+            hitWall = true;
+            break;
+        }
+
+        enemy.pos =
+            candidatePosition;
+
+        const bool sameTerrainLevel =
+            GetTerrainElevationAtWorld(
+                enemy.pos
+            ) ==
+            GetTerrainElevationAtWorld(
+                playerPosition
+            );
+
+        if (
+            !enemy.bossChargeHitPlayer &&
+            sameTerrainLevel &&
+            CheckCollisionCircles(
+                enemy.pos,
+                enemy.radius *
+                0.72f,
+                playerPosition,
+                player.radius
+            ) &&
+            !IsPlayerInvulnerable()
+            )
+        {
+            ApplyKnockbackToPlayer(
+                enemy.pos,
+                bossChargePlayerKnockbackForce,
+                bossChargePlayerKnockbackDuration
+            );
+
+            DamagePlayer(
+                std::max(
+                    1,
+                    enemy.contactDamage *
+                    2
+                )
+            );
+
+            enemy.bossChargeHitPlayer =
+                true;
+        }
+    }
+
+    enemy.bossDashAfterimageTimer -=
+        dt *
+        GetBossDashPowerMultiplier(
+            enemy
+        );
+
+    while (
+        enemy.bossDashAfterimageTimer <=
+        0.0f
+        )
+    {
+        SpawnBossDashAfterimage(
+            enemy
+        );
+
+        enemy.bossDashAfterimageTimer +=
+            bossDashAfterimageInterval;
+    }
+
+    // Normally this triggers because the collision test
+    // found an obstacle or terrain wall.
+    //
+    // The timer is an emergency guard against the Boss
+    // travelling indefinitely on a malformed map.
+    if (
+        hitWall ||
+        enemy.bossChargeRemainingTimer <=
+        0.0f
+        )
+    {
+        SpawnHitSpark(
+            enemy.pos
+        );
+
+        StartBossStunned(
+            enemy,
+            bossChargeWallStunDuration,
+            true
+        );
+    }
+}
 

@@ -193,14 +193,32 @@ enum class BossActionState
 {
     None = 0,
 
-    // Boss remains idle while the white warning circle appears.
     SlamWindup,
-
-    // Attack sprite starts only after the wind-up finishes.
     Slam,
 
     LaserWindup,
-    LaserActive
+    LaserActive,
+
+    BombardmentRoar,
+
+    ChargeWindup,
+    ChargeActive,
+
+    Stunned
+};
+
+enum class BossDashPurpose
+{
+    None = 0,
+
+    // 75% and 25% escape dash with radial bullets.
+    PhaseEscape,
+
+    // Forward dash toward player, followed by slam.
+    ChaseSlam,
+
+    // Retreat dash, followed by bombardment roar.
+    BombardmentEscape
 };
 
 enum class ProjectileOwner
@@ -566,6 +584,77 @@ struct Enemy
     };
 
 
+    BossDashPurpose bossDashPurpose =
+        BossDashPurpose::None;
+
+    // --------------------------------------------------
+    // Bombardment
+    // --------------------------------------------------
+
+    float bossBombardmentTimer = 0.0f;
+    float bossBombardmentSpawnTimer = 0.0f;
+    float bossBombardmentCooldownTimer = 0.0f;
+
+    // --------------------------------------------------
+    // Break / special stun
+    // --------------------------------------------------
+
+    // Damage accumulated while the Boss is using
+    // a breakable channelled attack.
+    float bossInterruptDamage = 0.0f;
+
+    float bossStunnedTimer = 0.0f;
+
+    // --------------------------------------------------
+    // Straight-line charge
+    // --------------------------------------------------
+
+    float bossChargeWindupTimer = 0.0f;
+    float bossChargeRemainingTimer = 0.0f;
+    float bossChargeCooldownTimer = 0.0f;
+
+    // Number of completed pre-charge animation loops.
+    int bossPreChargeLoopsCompleted = 0;
+
+    Vector2 bossChargeDirection{
+        1.0f,
+        0.0f
+    };
+
+    bool bossChargeHitPlayer = false;
+
+    // Prevents random attack selection every frame.
+    float bossDecisionTimer = 0.0f;
+
+
+};
+
+struct BossFallingRock
+{
+    int ownerBossId = 0;
+
+    Vector2 position{
+        0.0f,
+        0.0f
+    };
+
+    int terrainElevation = 0;
+
+    float timer = 1.0f;
+    float fallDuration = 1.0f;
+
+    // Height at the beginning of the fall.
+    float startHeight = 700.0f;
+
+    // Visual rock size.
+    float visualRadius = 38.0f;
+
+    // Actual ground damage radius.
+    float damageRadius = 145.0f;
+
+    int damage = 12;
+
+    bool active = true;
 };
 
 struct Projectile
@@ -915,6 +1004,18 @@ private:
     void UpdateAttackButton();
     void UpdateAttackButtonRect();
     void DrawAttackButton();
+
+    // --------------------------------------------------
+// Debug/test controls
+// --------------------------------------------------
+
+    void UpdateDebugControls();
+
+    void OpenManualUpgradeMenu();
+
+    void UpdateDebugUpgradeButtonRect();
+
+    void DrawDebugUpgradeButton() const;
 
     void UpdateDashButton();
     void UpdateDashButtonRect();
@@ -1604,9 +1705,22 @@ private:
     std::vector<Projectile> projectiles;
     std::vector<VfxParticle> vfxParticles;
 
+    std::vector<BossFallingRock>
+        bossFallingRocks;
+
     SkillSlot skills[3];
 
     WaveManager wave;
+
+    // Stops only automatic wave spawning.
+// Existing enemies continue updating normally.
+    bool waveSpawningPaused = false;
+
+    // True when the upgrade menu was opened through
+    // the debug key or the on-screen button.
+    bool upgradeMenuOpenedManually = false;
+
+    Rectangle debugUpgradeButtonRect{};
 
     GameState gameState = GameState::Playing;
 
@@ -2012,6 +2126,106 @@ private:
     void DrawBossLasers2D() const;
     void DrawBossLasersHybrid3D() const;
 
+    void StartBossBombardment(
+        Enemy& enemy
+    );
+
+    void StartBossBombardmentRoar(
+        Enemy& enemy
+    );
+
+    void UpdateBossBombardment(
+        Enemy& enemy,
+        float dt
+    );
+
+    void SpawnBossFallingRock(
+        const Enemy& enemy
+    );
+
+    void UpdateBossFallingRocks(
+        float dt
+    );
+
+    void DrawBossFallingRockTelegraphs2D() const;
+    void DrawBossFallingRockTelegraphsHybrid3D() const;
+
+    void DrawBossFallingRocks2D() const;
+    void DrawBossFallingRocksHybrid3D() const;
+
+    float GetBossInterruptThreshold(
+        const Enemy& enemy
+    ) const;
+
+    float GetBossSpecialStunDuration(
+        const Enemy& enemy
+    ) const;
+
+    bool StartBossStunned(
+        Enemy& enemy,
+        float requestedDuration,
+        bool forcedStun
+    );
+
+    void StartBossCharge(
+        Enemy& enemy
+    );
+
+    void UpdateBossCharge(
+        Enemy& enemy,
+        float dt
+    );
+
+    // --------------------------------------------------
+// Boss bombardment
+// --------------------------------------------------
+
+    float bossBombardmentDuration = 10.0f;
+    float bossBombardmentCooldown = 16.0f;
+
+    float bossBombardmentRetreatDuration = 0.42f;
+    float bossBombardmentRetreatSpeed = 850.0f;
+
+    // Base interval. Later HP tiers reduce this interval.
+    float bossBombardmentRockInterval = 0.34f;
+
+    // Rocks primarily target the area around the player.
+    float bossBombardmentTargetSpread = 430.0f;
+
+    float bossRockFallDurationMin = 0.90f;
+    float bossRockFallDurationMax = 1.40f;
+
+    float bossRockDamageRadiusMin = 70.0f;
+    float bossRockDamageRadiusMax = 120.0f;
+
+    float bossRockStartHeight = 700.0f;
+    float bossRockVisualRadius = 38.0f;
+
+    // --------------------------------------------------
+    // Boss stagger
+    // --------------------------------------------------
+
+    // Percentage of maximum HP that must be dealt during
+    // one laser or roar to interrupt the Boss.
+    float bossInterruptHealthRatio = 0.12f;
+
+    // --------------------------------------------------
+    // Boss straight-line charge
+    // --------------------------------------------------
+
+    float bossChargeWindupDuration = 0.90f;
+    float bossChargeSpeed = 1050.0f;
+
+    // Safety limit. Normally the charge ends by hitting a wall.
+    float bossChargeMaximumDuration = 3.50f;
+
+    float bossChargeCooldown = 8.0f;
+
+    float bossChargeWallStunDuration = 2.60f;
+
+    float bossChargePlayerKnockbackForce = 1500.0f;
+    float bossChargePlayerKnockbackDuration = 0.45f;
+
     Texture2D bossAttackSpriteSheet{};
 
     bool bossAttackSpriteLoaded = false;
@@ -2083,6 +2297,45 @@ private:
 
     float bossLaserForwardOffset = 42.0f;
 
+    Texture2D bossRoarSpriteSheet{};
+    Texture2D bossStunnedSpriteSheet{};
+
+    // Stationary preparation animation.
+    Texture2D bossPreChargeSpriteSheet{};
+
+    // Moving charge animation.
+    Texture2D bossChargeSpriteSheet{};
+
+    bool bossRoarSpriteLoaded = false;
+    bool bossStunnedSpriteLoaded = false;
+    bool bossPreChargeSpriteLoaded = false;
+    bool bossChargeSpriteLoaded = false;
+
+    int bossRoarFramesPerRow = 9;
+    int bossStunnedFramesPerRow = 9;
+
+    // Uploaded animation currently has 9 frames.
+    int bossPreChargeFramesPerRow = 9;
+
+    int bossChargeFramesPerRow = 9;
+
+    int bossRoarDirectionRows = 1;
+    int bossStunnedDirectionRows = 1;
+
+    // Both charge-related sheets are directional.
+    int bossPreChargeDirectionRows = 8;
+    int bossChargeDirectionRows = 8;
+
+    float bossRoarFrameDuration = 0.11f;
+    float bossStunnedFrameDuration = 0.13f;
+
+    // Two full pre-charge loops before movement starts.
+    int bossPreChargeLoopCount = 2;
+
+    float bossPreChargeFrameDuration = 0.09f;
+    float bossChargeFrameDuration = 0.075f;
+
+
     // Previously 20.
     float bossLaserWidth = 170.0f;
     int GetBossPowerTier(
@@ -2132,5 +2385,6 @@ private:
     void DrawBossSlamDomeHybrid3D() const;
 
     float GetPlayerVisualHeight() const;
+
 
 };
