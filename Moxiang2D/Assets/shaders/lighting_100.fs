@@ -111,7 +111,7 @@ void main()
     gl_FragColor = vec4(
         clamp(
             color,
-            0.96,
+            0.0,
             1.0
         ),
         sceneColor.a

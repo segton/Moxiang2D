@@ -46,8 +46,20 @@ enum class VfxType
 
 enum class TerrainCliffFace
 {
-    East = 0,
-    South
+    North = 0,
+    East,
+    South,
+    West
+};
+
+enum class TerrainWallFace
+{
+    None = -1,
+
+    North = 0,
+    East,
+    South,
+    West
 };
 
 struct Light2D
@@ -143,7 +155,7 @@ struct OrbitalBlade
 
     float life = 5.0f;
     float hitTimer = 0.0f;
-    float hitInterval = 0.18f;
+    float hitInterval = 0.6f;
 
     bool active = false;
 };
@@ -189,6 +201,21 @@ enum class EnemyAnimationState
     Attacking
 };
 
+enum class EnemySpawnState
+{
+    GroundEffect = 0,
+
+    // Enemy rises from underground.
+    // Spawn circle and enemy tint remain fully visible.
+    Emerging,
+
+    // Enemy is fully above ground and active.
+    // Spawn circle and enemy tint now fade away.
+    FadeOut,
+
+    Ready
+};
+
 enum class BossActionState
 {
     None = 0,
@@ -200,6 +227,9 @@ enum class BossActionState
     LaserActive,
 
     BombardmentRoar,
+
+    HealingWindup,
+    HealingActive,
 
     ChargeWindup,
     ChargeActive,
@@ -257,6 +287,12 @@ enum class EditorTool
     LowerTerrain,
     FlattenTerrain,
 
+    PaintWall,
+    ClearWall,
+
+    PaintChamber,
+    EraseMapCell,
+
     PlaceRamp,
     RemoveRamp,
 
@@ -273,15 +309,45 @@ enum class CollisionShape
 
 struct TileBrush
 {
+    // Used only by ordinary standalone tile textures.
     std::string imagePath;
+
     Texture2D texture{};
     bool hasTexture = false;
     bool autoFitToTile = true;
+
+    // Atlas configuration.
+    bool usesAtlas = false;
+
+    // Pixel rectangle inside terrainTileSheet.
+    Rectangle source{
+        0.0f,
+        0.0f,
+        1.0f,
+        1.0f
+    };
+
+    // Controls pathfinding and movement.
+    bool walkable = true;
+
     Color fallbackColor = WHITE;
 };
 
 struct TerrainCell
 {
+    // False means this cell is outside the playable map shape.
+    // Void cells are neither rendered nor walkable.
+    bool enabled = true;
+
+    // Exact chamber membership. -1 means no chamber.
+    int chamberId = 0;
+
+    // -1 means inherit the floor tile of this cell.
+    int northWallTile = -1;
+    int eastWallTile = -1;
+    int southWallTile = -1;
+    int westWallTile = -1;
+
     // Walkable terrain height.
     int elevation = 0;
 
@@ -312,8 +378,53 @@ struct HybridTerrainBatch
 {
     Mesh mesh{};
     Model model{};
+
+    // Terrain is split by chamber and tile texture so hidden
+    // chambers do not submit any terrain draw calls.
+    int chamberId = -1;
     int tileIndex = -1;
+
     bool ready = false;
+};
+
+// --------------------------------------------------
+// Dungeon chamber foundation
+//
+// Step 1 only tracks which chamber contains the player.
+// Rendering, encounter waves and gates will use this data later.
+// --------------------------------------------------
+struct DungeonChamber
+{
+    int id = -1;
+    std::string name;
+
+    // Inclusive terrain-cell bounds.
+    int minCellX = 0;
+    int minCellY = 0;
+    int maxCellX = 0;
+    int maxCellY = 0;
+
+    // Cached world-space rectangle for rendering/culling later.
+    Rectangle worldBounds{};
+
+    // True when at least one enabled map cell belongs to this chamber.
+    bool hasCells = false;
+
+    bool discovered = false;
+    bool active = false;
+    bool cleared = false;
+
+    // Every chamber contains two encounter waves. The exit remains
+    // locked until both waves have spawned and all owned enemies die.
+    bool encounterStarted = false;
+    int wavesRequired = 2;
+    int wavesCompleted = 0;
+    int currentWave = 0;
+
+    // Hybrid terrain fades between chambers. Legacy rendering swaps
+    // chambers immediately because its ground is stored in one cache.
+    float visibility = 0.0f;
+    float targetVisibility = 0.0f;
 };
 
 struct Obstacle
@@ -422,6 +533,10 @@ struct Enemy
 {
     int id = 0;
 
+    // Chamber encounter that owns this enemy. Debug and boss-healing
+    // spawns inherit the currently active/owning chamber.
+    int chamberId = -1;
+
     EnemyType type = EnemyType::Grunt;
 
     Vector2 pos{};
@@ -511,6 +626,28 @@ struct Enemy
     EnemyAnimationState animationState =
         EnemyAnimationState::Idle;
 
+    // --------------------------------------------------
+// Boss healing-wave ownership
+//
+// Zero means this is an ordinary enemy.
+// --------------------------------------------------
+
+    int bossHealingSummonerId =
+        0;
+
+    int bossHealingSummonWave =
+        0;
+
+    // --------------------------------------------------
+// Enemy spawning sequence
+// --------------------------------------------------
+
+    EnemySpawnState spawnState =
+        EnemySpawnState::Ready;
+
+    float spawnStateTimer =
+        0.0f;
+
     int shooterAnimationFrame = 0;
     float shooterAnimationTimer = 0.0f;
 
@@ -594,6 +731,22 @@ struct Enemy
     float bossBombardmentTimer = 0.0f;
     float bossBombardmentSpawnTimer = 0.0f;
     float bossBombardmentCooldownTimer = 0.0f;
+
+
+    // --------------------------------------------------
+// Boss healing phase
+// --------------------------------------------------
+
+    int bossHealingUseCount = 0;
+
+    float bossHealingTimer = 0.0f;
+    float bossHealingWaveTimer = 0.0f;
+    float bossHealingCooldownTimer = 0.0f;
+
+    int bossHealingWavesSpawned = 0;
+
+    int bossHealingAmountApplied = 0;
+    int bossHealingTargetAmount = 0;
 
     // --------------------------------------------------
     // Break / special stun
@@ -692,18 +845,45 @@ struct SkillSlot
 };
 
 
+struct PendingEnemySpawn
+{
+    EnemyType type =
+        EnemyType::Grunt;
+
+    int chamberId = -1;
+
+    Vector2 position{
+        0.0f,
+        0.0f
+    };
+
+    // Boss-healing summon information.
+    // Both remain zero for ordinary queued spawns.
+    int bossHealingSummonerId =
+        0;
+
+    int bossHealingSummonWave =
+        0;
+};
 
 struct WaveManager
 {
+    // Combat scaling index retained for the existing enemy stats.
     int wave = 1;
 
-    int enemiesToSpawn = 10;
+    int chamberId = -1;
+    int chamberWave = 0;
+    int chamberWavesRequired = 2;
+
+    int enemiesToSpawn = 0;
     int enemiesSpawned = 0;
 
     float spawnTimer = 0.0f;
     float spawnInterval = 0.8f;
 
-    bool waveActive = true;
+    bool waveActive = false;
+    bool waitingForNextWave = false;
+    float nextWaveTimer = 0.0f;
 };
 
 struct NPC
@@ -729,8 +909,12 @@ public:
         float endDrawingMs
     );
 private:
-    static constexpr int MapWidth = 40;
-    static constexpr int MapHeight = 30;
+    // Runtime dimensions: every saved level may use a different canvas size.
+    // Irregular level shapes are represented by disabled/void TerrainCells.
+    int MapWidth = 40;
+    int MapHeight = 30;
+
+    static constexpr int MaximumMapDimension = 512;
     static constexpr float TileSize = 64.0f;
 
     static constexpr const char* DefaultLevelPath = "levels/level01.mox";
@@ -739,10 +923,70 @@ private:
     void InitTileBrushes();
     void LoadDefaultLevel();
 
+    // Dungeon chamber foundation.
+    void InitializeTestChambers();
+    void UpdateActiveChamber(bool forceUpdate = false);
+    void UpdateChamberVisibility(float dt);
+    void ResetChamberEncounterProgress();
+    void StartChamberEncounter(int chamberId);
+    void StartChamberWave(int chamberId, int chamberWave);
+
+    int FindChamberAtWorld(Vector2 worldPosition) const;
+    float GetChamberVisibility(int chamberId) const;
+    bool IsChamberVisible(int chamberId) const;
+    bool IsWorldPositionInVisibleChamber(Vector2 worldPosition) const;
+
+    bool HasLivingEnemiesInChamber(int chamberId) const;
+    bool HasPendingEnemiesInChamber(int chamberId) const;
+
+    void CreateNewMap(
+        int width,
+        int height,
+        bool startEmpty
+    );
+
+    bool IsCellEnabled(
+        int cellX,
+        int cellY
+    ) const;
+
+    void EnsureChamberExists(
+        int chamberId
+    );
+
+    void RebuildChamberBounds();
+
+    DungeonChamber* FindChamberById(int chamberId);
+    const DungeonChamber* FindChamberById(int chamberId) const;
+
+    Rectangle MakeChamberWorldBounds(
+        int minCellX,
+        int minCellY,
+        int maxCellX,
+        int maxCellY
+    ) const;
+
     bool SaveLevel(const char* path) const;
     bool LoadLevel(const char* path);
 
     bool LoadTileBrushTexture(int tileIndex, const std::string& path);
+
+    bool LoadTerrainTileSheet(
+        const std::string& path,
+        int columns,
+        int rows
+    );
+
+    void ConfigureTileBrushesFromSheet();
+
+    Texture2D GetTileBrushTexture(
+        int tileIndex
+    ) const;
+
+    Rectangle GetTileBrushSourceRect(
+        int tileIndex
+    ) const;
+
     bool LoadCurrentObstacleTexture(const std::string& path);
     bool LoadObstacleTexture(Obstacle& obstacle, const std::string& path);
 
@@ -915,7 +1159,45 @@ private:
     void UpdateVfx(float dt);
 
     void SpawnEnemy(EnemyType type);
+    void SpawnEnemyInChamber(
+        EnemyType type,
+        int chamberId
+    );
+
     Vector2 GetRandomSpawnPosition() const;
+    Vector2 GetRandomSpawnPositionInChamber(
+        int chamberId
+    ) const;
+
+    void UpdateEnemySpawnState(
+        Enemy& enemy,
+        float dt
+    );
+
+    bool IsEnemySpawnProtected(
+        const Enemy& enemy
+    ) const;
+
+    float GetEnemySpawnDepth(
+        const Enemy& enemy
+    ) const;
+
+    float GetEnemySpawnVisualOffset(
+        const Enemy& enemy
+    ) const;
+
+    float GetEnemySpawnFlashAmount(
+        const Enemy& enemy
+    ) const;
+
+    void LoadEnemySpawnEffectSpriteSheet();
+
+    Rectangle GetEnemySpawnEffectSourceRect(
+        int frame
+    ) const;
+
+    void DrawEnemySpawnGroundEffects2D() const;
+    void DrawEnemySpawnGroundEffects3D() const;
 
     Enemy* FindNearestEnemy(Vector2 fromPos, float range);
     Enemy* FindEnemyById(int enemyId);
@@ -1113,11 +1395,13 @@ private:
 
     enum class WorldDrawKind
     {
-        // Raised terrain parts are independently sorted.
         TerrainTop,
         TerrainRamp,
+
+        TerrainNorthCliff,
         TerrainEastCliff,
         TerrainSouthCliff,
+        TerrainWestCliff,
 
         Obstacle,
         NPC,
@@ -1290,6 +1574,19 @@ private:
         int* outCellY = nullptr
     ) const;
 
+    bool ScreenToTerrainWall3D(
+        Vector2 screenPosition,
+        int& outCellX,
+        int& outCellY,
+        TerrainWallFace& outFace
+    ) const;
+
+    int GetTerrainWallTileIndex(
+        int cellX,
+        int cellY,
+        TerrainWallFace face
+    ) const;
+
     void DrawHybridWorld3D();
     void DrawHybridTerrain3D();
     void DrawHybridGroundEffects3D();
@@ -1391,6 +1688,26 @@ private:
     std::vector<TerrainCell> terrainCells;
     std::vector<TileBrush> tileBrushes;
 
+    Texture2D terrainTileSheet{};
+
+    std::string terrainTileSheetPath =
+        "Assets/tiles/dungeon_tilesheet.png";
+
+    int terrainTileSheetColumns = 4;
+    int terrainTileSheetRows = 4;
+
+    char terrainTileSheetPathInput[512] =
+        "Assets/tiles/dungeon_tilesheet.png";
+
+    // Dungeon chamber runtime state.
+    std::vector<DungeonChamber> chambers;
+    int activeChamberId = -1;
+    int previousChamberId = -1;
+
+    float chamberFadeSpeed = 2.6f;
+    float chamberWaveStartDelay = 1.10f;
+    float chamberClearedMessageTimer = 0.0f;
+
 
     // Reused every frame for painter-style depth sorting.
     std::vector<WorldDrawItem> worldDrawItems;
@@ -1427,6 +1744,8 @@ private:
     // Shared visual scale for walking, idle, attack and dash sprites.
     // 0.65f was the previous size.
     float playerSpriteDrawScale = 0.52f;
+    // Transparent pixels underneath the visible feet
+
 
     float playerSpeed = 320.0f;
 
@@ -1483,7 +1802,7 @@ private:
     bool groundCacheDirty = true;
 
 
-   
+
 
     // Delay between the third and later burst arrows.
 //
@@ -1634,8 +1953,16 @@ private:
 
     bool buildMode = false;
     bool showGrid = true;
+    bool showChamberOverlay = true;
 
     int editorTool = static_cast<int>(EditorTool::PaintTile);
+
+    int editorNewMapWidth = 40;
+    int editorNewMapHeight = 30;
+    bool editorNewMapStartsEmpty = true;
+
+    int editorSelectedChamberId = 0;
+    char editorChamberNameInput[64] = "Chamber 0";
 
     // Terrain elevation is independent from obstacle-local stacking.
     float terrainElevationStep = 48.0f;
@@ -1699,10 +2026,27 @@ private:
 
     bool useBlobForMissingEnemySprites = true;
 
+    // Transparent padding at the bottom of each sprite frame.
+//
+// This padding is removed before drawing so the visible feet
+// can touch the ground without putting the billboard below it.
+    float playerSpriteBottomTrim =
+        10.0f;
+
+    float shooterSpriteBottomTrim =
+        14.0f;
+
+    float bossSpriteBottomTrim =
+        18.0f;
+
     Player player;
 
     std::vector<Enemy> enemies;
     std::vector<Projectile> projectiles;
+
+    std::vector<PendingEnemySpawn>
+        pendingEnemySpawns;
+
     std::vector<VfxParticle> vfxParticles;
 
     std::vector<BossFallingRock>
@@ -1816,6 +2160,41 @@ private:
 
     int huashanImpactFlashMaxAlpha =
         150;
+
+
+    // --------------------------------------------------
+// Normal enemy spawning effect
+// --------------------------------------------------
+
+    Texture2D enemySpawnEffectSpriteSheet{};
+
+    bool enemySpawnEffectSpriteLoaded =
+        false;
+
+    // Change these to match the final sprite-sheet layout.
+    int enemySpawnEffectColumns = 4;
+    int enemySpawnEffectRows = 4;
+    int enemySpawnEffectFrameCount = 16;
+
+    int enemySpawnEffectFrameWidth = 512;
+    int enemySpawnEffectFrameHeight = 512;
+
+    // Circle animation before the enemy starts emerging.
+    float enemySpawnGroundEffectDuration =
+        0.70f;
+
+    // Time taken for the enemy to rise fully from underground.
+    float enemySpawnEmergenceDuration =
+        1.40f;
+
+    // After the enemy is fully above ground and active,
+    // fade both the circle and bright enemy tint.
+    float enemySpawnFadeDuration =
+        0.45f;
+
+    // Ground-effect diameter in world pixels.
+    float enemySpawnEffectVisualSize =
+        130.0f;
 
     bool dongfengCasting = false;
     float dongfengCastTimer = 0.0f;
@@ -2176,6 +2555,28 @@ private:
         float dt
     );
 
+    void StartBossHealing(
+        Enemy& enemy
+    );
+
+    void UpdateBossHealing(
+        Enemy& enemy,
+        float dt
+    );
+
+    void QueueBossHealingMinionWave(
+        const Enemy& boss,
+        int waveNumber
+    );
+
+    bool HasLivingBossHealingMinions(
+        const Enemy& boss,
+        int waveNumber
+    ) const;
+
+    void ProcessPendingEnemySpawns();
+
+
     // --------------------------------------------------
 // Boss bombardment
 // --------------------------------------------------
@@ -2287,6 +2688,18 @@ private:
     float bossDashPowerPerTier = 0.2f;
     float bossDashDurationPerTier = 0.09f;
 
+    // Additional ability-frequency increase once the Boss
+    // reaches 50% HP or lower.
+    float bossLowHealthAbilityFrequencyMultiplier =
+        1.35f;
+
+    // How frequently the Boss rolls for roar and charge.
+    float bossDecisionInterval =
+        0.80f;
+
+    float bossLowHealthDecisionInterval =
+        0.45f;
+
     // --------------------------------------------------
     // Laser
     // --------------------------------------------------
@@ -2299,6 +2712,21 @@ private:
 
     Texture2D bossRoarSpriteSheet{};
     Texture2D bossStunnedSpriteSheet{};
+
+    Texture2D bossPreHealSpriteSheet{};
+    Texture2D bossHealingLoopSpriteSheet{};
+
+    bool bossPreHealSpriteLoaded = false;
+    bool bossHealingLoopSpriteLoaded = false;
+
+    int bossPreHealFramesPerRow = 9;
+    int bossHealingLoopFramesPerRow = 9;
+
+    int bossPreHealDirectionRows = 1;
+    int bossHealingLoopDirectionRows = 1;
+
+    float bossPreHealFrameDuration = 0.10f;
+    float bossHealingLoopFrameDuration = 0.11f;
 
     // Stationary preparation animation.
     Texture2D bossPreChargeSpriteSheet{};
@@ -2335,6 +2763,59 @@ private:
     float bossPreChargeFrameDuration = 0.09f;
     float bossChargeFrameDuration = 0.075f;
 
+
+    // --------------------------------------------------
+// Boss healing ability
+// --------------------------------------------------
+
+// May activate only below this health percentage.
+    float bossHealingTriggerHealthRatio =
+        0.50f;
+
+    // Maximum number of healing phases per Boss.
+    int bossHealingMaximumUses =
+        3;
+
+    // Restores 20% of maximum HP during each phase.
+    float bossHealingAmountRatio =
+        0.20f;
+
+    // Active healing duration.
+    float bossHealingDuration =
+        20.0f;
+
+    // Boss takes only 20% of incoming damage while
+    // preparing or actively healing.
+    float bossHealingDamageTakenMultiplier =
+        0.20f;
+
+    // Prevents repeated healing phases immediately after
+    // the ending stun.
+    float bossHealingCooldown =
+        8.0f;
+
+    // Three waves, five enemies per wave.
+    int bossHealingMinionWaveCount =
+        3;
+
+    int bossHealingMinionsPerWave =
+        5;
+
+    // Wave 1 occurs immediately, then waves at
+    // approximately 2.5 and 5 seconds.
+    float bossHealingMinionWaveInterval =
+        2.50f;
+
+    float bossHealingMinionSpawnRadius =
+        185.0f;
+
+    // Ending stun is double the Boss's usual special stun.
+    float bossHealingEndStunMultiplier =
+        2.0f;
+
+    // Ensures the healing stun is always substantial.
+    float bossHealingMinimumEndStunDuration =
+        6.0f;
 
     // Previously 20.
     float bossLaserWidth = 170.0f;

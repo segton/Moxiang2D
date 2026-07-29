@@ -6,12 +6,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <utility>
 
 #ifndef MOXIANG_USE_IMGUI
 #define MOXIANG_USE_IMGUI 0
@@ -495,6 +497,132 @@ static void DrawTextureFrameOnQuad2D(
     rlSetTexture(0);
 }
 
+static void DrawTextureFrameOnWallQuad2D(
+    Texture2D texture,
+    Rectangle source,
+    Vector2 upperStart,
+    Vector2 upperEnd,
+    Vector2 lowerEnd,
+    Vector2 lowerStart,
+    Color tint,
+    bool flipHorizontal
+)
+{
+    if (
+        texture.id == 0 ||
+        texture.width <= 0 ||
+        texture.height <= 0
+        )
+    {
+        return;
+    }
+
+    const float inverseWidth =
+        1.0f /
+        static_cast<float>(
+            texture.width
+            );
+
+    const float inverseHeight =
+        1.0f /
+        static_cast<float>(
+            texture.height
+            );
+
+    float uStart =
+        source.x *
+        inverseWidth;
+
+    float uEnd =
+        (
+            source.x +
+            source.width
+            ) *
+        inverseWidth;
+
+    const float vTop =
+        source.y *
+        inverseHeight;
+
+    const float vBottom =
+        (
+            source.y +
+            source.height
+            ) *
+        inverseHeight;
+
+    if (flipHorizontal)
+    {
+        std::swap(
+            uStart,
+            uEnd
+        );
+    }
+
+    rlSetTexture(
+        texture.id
+    );
+
+    rlBegin(
+        RL_QUADS
+    );
+
+    rlColor4ub(
+        tint.r,
+        tint.g,
+        tint.b,
+        tint.a
+    );
+
+    // Upper start.
+    rlTexCoord2f(
+        uStart,
+        vTop
+    );
+
+    rlVertex2f(
+        upperStart.x,
+        upperStart.y
+    );
+
+    // Lower start.
+    rlTexCoord2f(
+        uStart,
+        vBottom
+    );
+
+    rlVertex2f(
+        lowerStart.x,
+        lowerStart.y
+    );
+
+    // Lower end.
+    rlTexCoord2f(
+        uEnd,
+        vBottom
+    );
+
+    rlVertex2f(
+        lowerEnd.x,
+        lowerEnd.y
+    );
+
+    // Upper end.
+    rlTexCoord2f(
+        uEnd,
+        vTop
+    );
+
+    rlVertex2f(
+        upperEnd.x,
+        upperEnd.y
+    );
+
+    rlEnd();
+
+    rlSetTexture(0);
+}
+
 static void DrawTextureOnQuad(
     Texture2D texture,
     Vector2 topLeft,
@@ -625,6 +753,41 @@ static bool GetRampDirectionOffset(
 }
 
 
+
+static Color GetChamberDebugColor(
+    int chamberId,
+    unsigned char alpha
+)
+{
+    const Color colors[] = {
+        Color{ 75, 170, 255, 255 },
+        Color{ 255, 155, 70, 255 },
+        Color{ 130, 220, 120, 255 },
+        Color{ 210, 110, 255, 255 },
+        Color{ 255, 220, 80, 255 },
+        Color{ 80, 220, 210, 255 },
+        Color{ 255, 110, 145, 255 },
+        Color{ 175, 175, 255, 255 }
+    };
+
+    constexpr int colorCount =
+        static_cast<int>(
+            sizeof(colors) /
+            sizeof(colors[0])
+            );
+
+    const int safeIndex =
+        chamberId >= 0
+        ? chamberId % colorCount
+        : 0;
+
+    Color result =
+        colors[safeIndex];
+
+    result.a = alpha;
+    return result;
+}
+
 namespace
 {
     struct HybridMeshBuilder
@@ -704,6 +867,43 @@ namespace
                 normal,
                 color
             );
+        }
+
+        void RemapUv(
+            float u0,
+            float v0,
+            float u1,
+            float v1
+        )
+        {
+            for (
+                size_t index = 0;
+                index + 1 < texcoords.size();
+                index += 2
+                )
+            {
+                const float originalU =
+                    texcoords[index];
+
+                const float originalV =
+                    texcoords[index + 1];
+
+                texcoords[index] =
+                    u0 +
+                    originalU *
+                    (
+                        u1 -
+                        u0
+                        );
+
+                texcoords[index + 1] =
+                    v0 +
+                    originalV *
+                    (
+                        v1 -
+                        v0
+                        );
+            }
         }
 
         Mesh BuildMesh() const
@@ -906,10 +1106,62 @@ void Game::Init()
         LoadDefaultLevel();
     }
 
-    playerPosition = CellToWorld(
-        MapWidth / 2,
-        MapHeight / 2
-    );
+    if (
+        terrainTileSheet.id == 0 &&
+        FileExists(
+            terrainTileSheetPath.c_str()
+        )
+        )
+    {
+        LoadTerrainTileSheet(
+            terrainTileSheetPath,
+            4,
+            4
+        );
+    }
+
+
+    // Older/default maps may not contain chamber information yet.
+    if (chambers.empty())
+    {
+        InitializeTestChambers();
+    }
+    else
+    {
+        RebuildChamberBounds();
+    }
+
+    Vector2 requestedSpawn =
+        CellToWorld(
+            MapWidth / 2,
+            MapHeight / 2
+        );
+
+    int spawnCellX = MapWidth / 2;
+    int spawnCellY = MapHeight / 2;
+
+    if (
+        FindNearestWalkableCell(
+            requestedSpawn,
+            spawnCellX,
+            spawnCellY
+        )
+        )
+    {
+        playerPosition =
+            CellToWorld(
+                spawnCellX,
+                spawnCellY
+            );
+    }
+    else
+    {
+        playerPosition =
+            requestedSpawn;
+    }
+
+    // Resolve the initial chamber immediately.
+    UpdateActiveChamber(true);
 
     if (rendererMode == WorldRendererMode::Legacy2D)
     {
@@ -928,6 +1180,8 @@ void Game::Init()
 
 
     LoadHuashanImpactSpriteSheet();
+
+    LoadEnemySpawnEffectSpriteSheet();
 
     InitCombat();
     LoadPlayerSpriteSheet();
@@ -1037,12 +1291,36 @@ void Game::Shutdown()
         currentObstacleTexture = {};
     }
 
+    if (terrainTileSheet.id != 0)
+    {
+        UnloadTexture(
+            terrainTileSheet
+        );
+
+        terrainTileSheet = {};
+    }
+
     if (huashanImpactSpriteSheet.id != 0)
     {
         UnloadTexture(huashanImpactSpriteSheet);
         huashanImpactSpriteSheet = {};
         huashanImpactSpriteLoaded = false;
     }
+
+    if (
+        enemySpawnEffectSpriteSheet.id !=
+        0
+        )
+    {
+        UnloadTexture(
+            enemySpawnEffectSpriteSheet
+        );
+
+        enemySpawnEffectSpriteSheet = {};
+    }
+
+    enemySpawnEffectSpriteLoaded =
+        false;
 
     if (shooterIdleSpriteSheet.id != 0)
     {
@@ -1145,6 +1423,35 @@ void Game::Shutdown()
 
         bossAttackSpriteSheet = {};
     }
+    if (
+        bossPreHealSpriteSheet.id !=
+        0
+        )
+    {
+        UnloadTexture(
+            bossPreHealSpriteSheet
+        );
+
+        bossPreHealSpriteSheet = {};
+    }
+
+    if (
+        bossHealingLoopSpriteSheet.id !=
+        0
+        )
+    {
+        UnloadTexture(
+            bossHealingLoopSpriteSheet
+        );
+
+        bossHealingLoopSpriteSheet = {};
+    }
+
+    bossPreHealSpriteLoaded =
+        false;
+
+    bossHealingLoopSpriteLoaded =
+        false;
 
     bossAttackSpriteLoaded = false;
     for (Obstacle& obstacle : obstacles)
@@ -1159,12 +1466,18 @@ void Game::Shutdown()
 
     for (TileBrush& brush : tileBrushes)
     {
-        if (brush.texture.id != 0)
+        if (
+            !brush.usesAtlas &&
+            brush.texture.id != 0
+            )
         {
-            UnloadTexture(brush.texture);
-            brush.texture = {};
-            brush.hasTexture = false;
+            UnloadTexture(
+                brush.texture
+            );
         }
+
+        brush.texture = {};
+        brush.hasTexture = false;
     }
 }
 
@@ -1406,6 +1719,947 @@ void Game::LoadDefaultLevel()
             "Monsters are gathering ahead. Choose your martial skill wisely."
         }
     };
+}
+
+Rectangle Game::MakeChamberWorldBounds(
+    int minCellX,
+    int minCellY,
+    int maxCellX,
+    int maxCellY
+) const
+{
+    minCellX = std::max(0, std::min(MapWidth - 1, minCellX));
+    minCellY = std::max(0, std::min(MapHeight - 1, minCellY));
+    maxCellX = std::max(0, std::min(MapWidth - 1, maxCellX));
+    maxCellY = std::max(0, std::min(MapHeight - 1, maxCellY));
+
+    if (maxCellX < minCellX)
+    {
+        std::swap(minCellX, maxCellX);
+    }
+
+    if (maxCellY < minCellY)
+    {
+        std::swap(minCellY, maxCellY);
+    }
+
+    const float mapOriginX =
+        -static_cast<float>(MapWidth) *
+        TileSize *
+        0.5f;
+
+    const float mapOriginY =
+        -static_cast<float>(MapHeight) *
+        TileSize *
+        0.5f;
+
+    return Rectangle{
+        mapOriginX +
+            static_cast<float>(minCellX) *
+            TileSize,
+
+        mapOriginY +
+            static_cast<float>(minCellY) *
+            TileSize,
+
+        static_cast<float>(
+            maxCellX -
+            minCellX +
+            1
+        ) *
+            TileSize,
+
+        static_cast<float>(
+            maxCellY -
+            minCellY +
+            1
+        ) *
+            TileSize
+    };
+}
+
+void Game::InitializeTestChambers()
+{
+    const size_t expectedCellCount =
+        static_cast<size_t>(
+            MapWidth *
+            MapHeight
+            );
+
+    if (
+        terrainCells.size() !=
+        expectedCellCount
+        )
+    {
+        terrainCells.assign(
+            expectedCellCount,
+            TerrainCell{}
+        );
+    }
+
+    chambers.clear();
+
+    EnsureChamberExists(0);
+    EnsureChamberExists(1);
+
+    DungeonChamber* westChamber =
+        FindChamberById(0);
+
+    DungeonChamber* eastChamber =
+        FindChamberById(1);
+
+    if (westChamber != nullptr)
+    {
+        westChamber->name =
+            "West Chamber";
+    }
+
+    if (eastChamber != nullptr)
+    {
+        eastChamber->name =
+            "East Chamber";
+    }
+
+    const int splitX =
+        MapWidth /
+        2;
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            TerrainCell& cell =
+                terrainCells[
+                    CellIndex(x, y)
+                ];
+
+            cell.enabled = true;
+            cell.chamberId =
+                x < splitX
+                ? 0
+                : 1;
+        }
+    }
+
+    RebuildChamberBounds();
+
+    activeChamberId = -1;
+    previousChamberId = -1;
+
+    TraceLog(
+        LOG_INFO,
+        "[CHAMBER] Initialized %d test chambers.",
+        static_cast<int>(
+            chambers.size()
+            )
+    );
+}
+
+int Game::FindChamberAtWorld(
+    Vector2 worldPosition
+) const
+{
+    int cellX = 0;
+    int cellY = 0;
+
+    if (
+        !WorldToCell(
+            worldPosition,
+            cellX,
+            cellY
+        ) ||
+        !IsCellEnabled(
+            cellX,
+            cellY
+        )
+        )
+    {
+        return -1;
+    }
+
+    return
+        terrainCells[
+            CellIndex(
+                cellX,
+                cellY
+            )
+        ].chamberId;
+}
+
+bool Game::IsCellEnabled(
+    int cellX,
+    int cellY
+) const
+{
+    if (
+        !IsCellInside(
+            cellX,
+            cellY
+        )
+        )
+    {
+        return false;
+    }
+
+    const int index =
+        CellIndex(
+            cellX,
+            cellY
+        );
+
+    if (
+        index < 0 ||
+        index >=
+        static_cast<int>(
+            terrainCells.size()
+            )
+        )
+    {
+        return false;
+    }
+
+    return terrainCells[index].enabled;
+}
+
+void Game::EnsureChamberExists(
+    int chamberId
+)
+{
+    if (chamberId < 0)
+    {
+        return;
+    }
+
+    if (
+        FindChamberById(
+            chamberId
+        ) != nullptr
+        )
+    {
+        return;
+    }
+
+    DungeonChamber chamber;
+
+    chamber.id = chamberId;
+    chamber.name =
+        "Chamber " +
+        std::to_string(
+            chamberId
+        );
+
+    chamber.minCellX = MapWidth;
+    chamber.minCellY = MapHeight;
+    chamber.maxCellX = -1;
+    chamber.maxCellY = -1;
+    chamber.hasCells = false;
+
+    chambers.push_back(
+        chamber
+    );
+}
+
+void Game::RebuildChamberBounds()
+{
+    for (DungeonChamber& chamber : chambers)
+    {
+        chamber.minCellX = MapWidth;
+        chamber.minCellY = MapHeight;
+        chamber.maxCellX = -1;
+        chamber.maxCellY = -1;
+        chamber.hasCells = false;
+        chamber.worldBounds = {};
+    }
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            if (!IsCellEnabled(x, y))
+            {
+                continue;
+            }
+
+            const int chamberId =
+                terrainCells[
+                    CellIndex(x, y)
+                ].chamberId;
+
+            if (chamberId < 0)
+            {
+                continue;
+            }
+
+            EnsureChamberExists(
+                chamberId
+            );
+
+            DungeonChamber* chamber =
+                FindChamberById(
+                    chamberId
+                );
+
+            if (chamber == nullptr)
+            {
+                continue;
+            }
+
+            chamber->hasCells = true;
+
+            chamber->minCellX =
+                std::min(
+                    chamber->minCellX,
+                    x
+                );
+
+            chamber->minCellY =
+                std::min(
+                    chamber->minCellY,
+                    y
+                );
+
+            chamber->maxCellX =
+                std::max(
+                    chamber->maxCellX,
+                    x
+                );
+
+            chamber->maxCellY =
+                std::max(
+                    chamber->maxCellY,
+                    y
+                );
+        }
+    }
+
+    for (DungeonChamber& chamber : chambers)
+    {
+        if (!chamber.hasCells)
+        {
+            chamber.worldBounds = {};
+            continue;
+        }
+
+        chamber.worldBounds =
+            MakeChamberWorldBounds(
+                chamber.minCellX,
+                chamber.minCellY,
+                chamber.maxCellX,
+                chamber.maxCellY
+            );
+    }
+}
+
+void Game::CreateNewMap(
+    int width,
+    int height,
+    bool startEmpty
+)
+{
+    width =
+        std::max(
+            4,
+            std::min(
+                MaximumMapDimension,
+                width
+            )
+        );
+
+    height =
+        std::max(
+            4,
+            std::min(
+                MaximumMapDimension,
+                height
+            )
+        );
+
+    MapWidth = width;
+    MapHeight = height;
+
+    editorNewMapWidth = MapWidth;
+    editorNewMapHeight = MapHeight;
+
+    tiles.assign(
+        MapWidth * MapHeight,
+        static_cast<int>(
+            TileType::Grass
+            )
+    );
+
+    terrainCells.assign(
+        MapWidth * MapHeight,
+        TerrainCell{}
+    );
+
+    for (TerrainCell& cell : terrainCells)
+    {
+        cell.enabled =
+            !startEmpty;
+
+        cell.chamberId =
+            startEmpty
+            ? -1
+            : 0;
+
+        cell.elevation = 0;
+        cell.rampDirection =
+            RampDirection::None;
+    }
+
+    chambers.clear();
+    EnsureChamberExists(0);
+
+    DungeonChamber* firstChamber =
+        FindChamberById(0);
+
+    if (firstChamber != nullptr)
+    {
+        firstChamber->name =
+            "Chamber 0";
+    }
+
+    // Keep a small starting platform on an otherwise empty map.
+    if (startEmpty)
+    {
+        const int centerX = MapWidth / 2;
+        const int centerY = MapHeight / 2;
+
+        for (int offsetY = -1; offsetY <= 1; ++offsetY)
+        {
+            for (int offsetX = -1; offsetX <= 1; ++offsetX)
+            {
+                const int cellX = centerX + offsetX;
+                const int cellY = centerY + offsetY;
+
+                if (!IsCellInside(cellX, cellY))
+                {
+                    continue;
+                }
+
+                TerrainCell& cell =
+                    terrainCells[
+                        CellIndex(
+                            cellX,
+                            cellY
+                        )
+                    ];
+
+                cell.enabled = true;
+                cell.chamberId = 0;
+            }
+        }
+    }
+
+    for (Obstacle& obstacle : obstacles)
+    {
+        if (obstacle.texture.id != 0)
+        {
+            UnloadTexture(
+                obstacle.texture
+            );
+
+            obstacle.texture = {};
+        }
+    }
+
+    obstacles.clear();
+    npcs.clear();
+
+    currentPath.clear();
+    pathIndex = 0;
+    hasPath = false;
+
+    pendingNpc = -1;
+    activeDialogueNpc = -1;
+
+    playerPosition =
+        CellToWorld(
+            MapWidth / 2,
+            MapHeight / 2
+        );
+
+    player.pos = playerPosition;
+    player.moveTarget = playerPosition;
+    player.hasMoveTarget = false;
+
+    RebuildChamberBounds();
+    UpdateActiveChamber(true);
+
+    InitCombat();
+
+    // Keep the construction canvas quiet until gameplay is restarted.
+    waveSpawningPaused = true;
+
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        hybridCameraTargetWorld =
+            playerPosition;
+
+        UpdateHybridCamera(0.0f);
+    }
+    else
+    {
+        camera.target =
+            WorldToViewElevated(
+                playerPosition
+            );
+    }
+
+    InvalidateGroundCache();
+
+    TraceLog(
+        LOG_INFO,
+        "[MAP] Created new map: %dx%d, empty=%d.",
+        MapWidth,
+        MapHeight,
+        startEmpty ? 1 : 0
+    );
+}
+
+DungeonChamber* Game::FindChamberById(
+    int chamberId
+)
+{
+    for (DungeonChamber& chamber : chambers)
+    {
+        if (chamber.id == chamberId)
+        {
+            return &chamber;
+        }
+    }
+
+    return nullptr;
+}
+
+const DungeonChamber* Game::FindChamberById(
+    int chamberId
+) const
+{
+    for (const DungeonChamber& chamber : chambers)
+    {
+        if (chamber.id == chamberId)
+        {
+            return &chamber;
+        }
+    }
+
+    return nullptr;
+}
+
+void Game::UpdateActiveChamber(
+    bool forceUpdate
+)
+{
+    const int detectedChamberId =
+        FindChamberAtWorld(
+            playerPosition
+        );
+
+    // Chamber -1 is reserved for shared transition floor/corridors.
+    // Walking across one keeps the last real chamber active until the
+    // player reaches another painted chamber.
+    if (detectedChamberId < 0)
+    {
+        return;
+    }
+
+    if (
+        !forceUpdate &&
+        detectedChamberId == activeChamberId
+        )
+    {
+        return;
+    }
+
+    const int oldChamberId =
+        activeChamberId;
+
+    previousChamberId =
+        oldChamberId;
+
+    activeChamberId =
+        detectedChamberId;
+
+    for (DungeonChamber& chamber : chambers)
+    {
+        const bool isActive =
+            chamber.id == activeChamberId;
+
+        chamber.active =
+            isActive;
+
+        chamber.targetVisibility =
+            isActive
+            ? 1.0f
+            : 0.0f;
+
+        if (isActive)
+        {
+            chamber.discovered = true;
+        }
+
+        // Initial placement and the legacy cached renderer switch
+        // immediately. Hybrid 3D uses UpdateChamberVisibility().
+        if (
+            forceUpdate ||
+            rendererMode == WorldRendererMode::Legacy2D
+            )
+        {
+            chamber.visibility =
+                chamber.targetVisibility;
+        }
+    }
+
+    // All combat objects from the cleared room disappear when the next
+    // room becomes active. Persistent player skills remain untouched.
+    if (
+        oldChamberId >= 0 &&
+        oldChamberId != activeChamberId
+        )
+    {
+        projectiles.clear();
+        pendingEnemySpawns.clear();
+        vfxParticles.clear();
+        bossFallingRocks.clear();
+        huashanGroundMarks.clear();
+
+        dongfengCasting = false;
+        dongfengWaveActive = false;
+    }
+
+    InvalidateGroundCache();
+
+    DungeonChamber* newChamber =
+        FindChamberById(
+            activeChamberId
+        );
+
+    if (
+        newChamber != nullptr &&
+        !newChamber->cleared &&
+        !newChamber->encounterStarted &&
+        !buildMode &&
+        gameState == GameState::Playing
+        )
+    {
+        StartChamberEncounter(
+            activeChamberId
+        );
+    }
+    else if (
+        newChamber != nullptr &&
+        newChamber->cleared
+        )
+    {
+        wave.chamberId =
+            newChamber->id;
+
+        wave.chamberWave =
+            newChamber->wavesRequired;
+
+        wave.chamberWavesRequired =
+            newChamber->wavesRequired;
+
+        wave.enemiesSpawned = 0;
+        wave.enemiesToSpawn = 0;
+        wave.waveActive = false;
+        wave.waitingForNextWave = false;
+    }
+
+    TraceLog(
+        LOG_INFO,
+        "[CHAMBER] Player moved from %d to %d (%s).",
+        oldChamberId,
+        activeChamberId,
+        newChamber != nullptr
+        ? newChamber->name.c_str()
+        : "no chamber"
+    );
+}
+
+void Game::UpdateChamberVisibility(
+    float dt
+)
+{
+    if (rendererMode == WorldRendererMode::Legacy2D)
+    {
+        return;
+    }
+
+    const float maximumChange =
+        std::max(
+            0.0f,
+            chamberFadeSpeed * dt
+        );
+
+    for (DungeonChamber& chamber : chambers)
+    {
+        const float difference =
+            chamber.targetVisibility -
+            chamber.visibility;
+
+        if (std::fabs(difference) <= maximumChange)
+        {
+            chamber.visibility =
+                chamber.targetVisibility;
+        }
+        else
+        {
+            chamber.visibility +=
+                difference > 0.0f
+                ? maximumChange
+                : -maximumChange;
+        }
+
+        chamber.visibility =
+            Clamp(
+                chamber.visibility,
+                0.0f,
+                1.0f
+            );
+    }
+}
+
+float Game::GetChamberVisibility(
+    int chamberId
+) const
+{
+    if (buildMode || chamberId < 0)
+    {
+        return 1.0f;
+    }
+
+    const DungeonChamber* chamber =
+        FindChamberById(
+            chamberId
+        );
+
+    return
+        chamber != nullptr
+        ? Clamp(
+            chamber->visibility,
+            0.0f,
+            1.0f
+        )
+        : 0.0f;
+}
+
+bool Game::IsChamberVisible(
+    int chamberId
+) const
+{
+    return
+        GetChamberVisibility(
+            chamberId
+        ) > 0.01f;
+}
+
+bool Game::IsWorldPositionInVisibleChamber(
+    Vector2 worldPosition
+) const
+{
+    int cellX = 0;
+    int cellY = 0;
+
+    if (
+        !WorldToCell(
+            worldPosition,
+            cellX,
+            cellY
+        ) ||
+        !IsCellEnabled(
+            cellX,
+            cellY
+        )
+        )
+    {
+        return false;
+    }
+
+    const int chamberId =
+        terrainCells[
+            CellIndex(
+                cellX,
+                cellY
+            )
+        ].chamberId;
+
+    return
+        chamberId < 0 ||
+        IsChamberVisible(
+            chamberId
+        );
+}
+
+void Game::ResetChamberEncounterProgress()
+{
+    for (DungeonChamber& chamber : chambers)
+    {
+        chamber.cleared = false;
+        chamber.encounterStarted = false;
+        chamber.wavesRequired = 2;
+        chamber.wavesCompleted = 0;
+        chamber.currentWave = 0;
+
+        chamber.active =
+            chamber.id == activeChamberId;
+
+        chamber.discovered =
+            chamber.active;
+
+        chamber.targetVisibility =
+            chamber.active
+            ? 1.0f
+            : 0.0f;
+
+        chamber.visibility =
+            chamber.targetVisibility;
+    }
+
+    wave = {};
+    wave.chamberWavesRequired = 2;
+
+    previousChamberId = -1;
+    chamberClearedMessageTimer = 0.0f;
+
+    InvalidateGroundCache();
+}
+
+void Game::StartChamberEncounter(
+    int chamberId
+)
+{
+    DungeonChamber* chamber =
+        FindChamberById(
+            chamberId
+        );
+
+    if (
+        chamber == nullptr ||
+        !chamber->hasCells ||
+        chamber->cleared
+        )
+    {
+        return;
+    }
+
+    chamber->encounterStarted = true;
+    chamber->wavesRequired = 2;
+    chamber->wavesCompleted = 0;
+    chamber->currentWave = 1;
+
+    StartChamberWave(
+        chamberId,
+        1
+    );
+}
+
+bool Game::HasLivingEnemiesInChamber(
+    int chamberId
+) const
+{
+    for (const Enemy& enemy : enemies)
+    {
+        if (
+            enemy.active &&
+            enemy.chamberId == chamberId
+            )
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool Game::HasPendingEnemiesInChamber(
+    int chamberId
+) const
+{
+    for (
+        const PendingEnemySpawn& pending :
+        pendingEnemySpawns
+        )
+    {
+        if (pending.chamberId == chamberId)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void Game::LoadEnemySpawnEffectSpriteSheet()
+{
+    enemySpawnEffectSpriteSheet =
+        LoadTexture(
+            "Assets/vfx/enemy_spawn_circle.png"
+        );
+
+    if (
+        enemySpawnEffectSpriteSheet.id ==
+        0
+        )
+    {
+        enemySpawnEffectSpriteLoaded =
+            false;
+
+        TraceLog(
+            LOG_WARNING,
+            "[ENEMY SPAWN VFX] Failed to load "
+            "Assets/vfx/enemy_spawn_circle.png"
+        );
+
+        return;
+    }
+
+    enemySpawnEffectSpriteLoaded =
+        true;
+
+    SetTextureFilter(
+        enemySpawnEffectSpriteSheet,
+        TEXTURE_FILTER_BILINEAR
+    );
+
+    const int safeColumns =
+        std::max(
+            1,
+            enemySpawnEffectColumns
+        );
+
+    const int safeRows =
+        std::max(
+            1,
+            enemySpawnEffectRows
+        );
+
+    enemySpawnEffectFrameWidth =
+        enemySpawnEffectSpriteSheet.width /
+        safeColumns;
+
+    enemySpawnEffectFrameHeight =
+        enemySpawnEffectSpriteSheet.height /
+        safeRows;
+
+    enemySpawnEffectFrameCount =
+        safeColumns *
+        safeRows;
+
+    TraceLog(
+        LOG_INFO,
+        "[ENEMY SPAWN VFX] Loaded: %dx%d | "
+        "frame=%dx%d | frames=%d",
+        enemySpawnEffectSpriteSheet.width,
+        enemySpawnEffectSpriteSheet.height,
+        enemySpawnEffectFrameWidth,
+        enemySpawnEffectFrameHeight,
+        enemySpawnEffectFrameCount
+    );
 }
 
 void Game::LoadHuashanImpactSpriteSheet()
@@ -1840,7 +3094,7 @@ bool Game::SaveLevel(const char* path) const
         return false;
     }
 
-    out << "MOXIANG_LEVEL 4\n";
+    out << "MOXIANG_LEVEL 7\n";
 
     out << "TILES " << MapWidth << " " << MapHeight << "\n";
 
@@ -1893,6 +3147,122 @@ bool Game::SaveLevel(const char* path) const
         }
 
         out << "\n";
+    }
+
+    out
+        << "WALL_TILES "
+        << MapWidth
+        << " "
+        << MapHeight
+        << "\n";
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(
+                        x,
+                        y
+                    )
+                ];
+
+            out
+                << cell.northWallTile
+                << " "
+                << cell.eastWallTile
+                << " "
+                << cell.southWallTile
+                << " "
+                << cell.westWallTile
+                << " ";
+        }
+
+        out << "\n";
+    }
+
+    out
+        << "CHAMBERS "
+        << chambers.size()
+        << "\n";
+
+    for (
+        const DungeonChamber& chamber :
+        chambers
+        )
+    {
+        out
+            << chamber.id
+            << " "
+            << std::quoted(
+                chamber.name
+            )
+            << "\n";
+    }
+
+    out
+        << "CELL_LAYOUT "
+        << MapWidth
+        << " "
+        << MapHeight
+        << "\n";
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(x, y)
+                ];
+
+            out
+                << (cell.enabled ? 1 : 0)
+                << " "
+                << cell.chamberId
+                << " ";
+        }
+
+        out << "\n";
+    }
+
+    out
+        << "TERRAIN_ATLAS "
+        << std::quoted(
+            ToPortableAssetPath(
+                terrainTileSheetPath
+            )
+        )
+        << " "
+        << terrainTileSheetColumns
+        << " "
+        << terrainTileSheetRows
+        << "\n";
+
+    out
+        << "TILE_WALKABILITY "
+        << tileBrushes.size()
+        << "\n";
+
+    for (
+        int index = 0;
+        index <
+        static_cast<int>(
+            tileBrushes.size()
+            );
+        ++index
+        )
+    {
+        out
+            << index
+            << " "
+            << (
+                tileBrushes[index].walkable
+                ? 1
+                : 0
+                )
+            << "\n";
     }
 
     out << "TILE_BRUSHES " << tileBrushes.size() << "\n";
@@ -2088,29 +3458,71 @@ bool Game::LoadLevel(const char* path)
     }
 
     InitTileBrushes();
-    terrainCells.assign(MapWidth * MapHeight, TerrainCell{});
+
+    chambers.clear();
+
+    bool loadedCellLayout =
+        false;
 
     while (in >> tag)
     {
         if (tag == "TILES")
         {
-            int width = 0;
-            int height = 0;
+            int savedWidth = 0;
+            int savedHeight = 0;
 
-            in >> width >> height;
+            in
+                >> savedWidth
+                >> savedHeight;
 
-            tiles.assign(MapWidth * MapHeight, static_cast<int>(TileType::Grass));
+            MapWidth =
+                std::max(
+                    1,
+                    std::min(
+                        MaximumMapDimension,
+                        savedWidth
+                    )
+                );
 
-            for (int y = 0; y < height; ++y)
+            MapHeight =
+                std::max(
+                    1,
+                    std::min(
+                        MaximumMapDimension,
+                        savedHeight
+                    )
+                );
+
+            editorNewMapWidth = MapWidth;
+            editorNewMapHeight = MapHeight;
+
+            tiles.assign(
+                MapWidth * MapHeight,
+                static_cast<int>(
+                    TileType::Grass
+                    )
+            );
+
+            terrainCells.assign(
+                MapWidth * MapHeight,
+                TerrainCell{}
+            );
+
+            for (int y = 0; y < savedHeight; ++y)
             {
-                for (int x = 0; x < width; ++x)
+                for (int x = 0; x < savedWidth; ++x)
                 {
                     int tile = 0;
                     in >> tile;
 
-                    if (x < MapWidth && y < MapHeight)
+                    if (
+                        x < MapWidth &&
+                        y < MapHeight
+                        )
                     {
-                        tiles[CellIndex(x, y)] = tile;
+                        tiles[
+                            CellIndex(x, y)
+                        ] = tile;
                     }
                 }
             }
@@ -2202,7 +3614,216 @@ bool Game::LoadLevel(const char* path)
                 }
             }
         }
+        else if (tag == "WALL_TILES")
+        {
+            int width = 0;
+            int height = 0;
 
+            in
+                >> width
+                >> height;
+
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    int northTile = -1;
+                    int eastTile = -1;
+                    int southTile = -1;
+                    int westTile = -1;
+
+                    in
+                        >> northTile
+                        >> eastTile
+                        >> southTile
+                        >> westTile;
+
+                    if (
+                        x >= MapWidth ||
+                        y >= MapHeight
+                        )
+                    {
+                        continue;
+                    }
+
+                    TerrainCell& cell =
+                        terrainCells[
+                            CellIndex(
+                                x,
+                                y
+                            )
+                        ];
+
+                    cell.northWallTile =
+                        northTile;
+
+                    cell.eastWallTile =
+                        eastTile;
+
+                    cell.southWallTile =
+                        southTile;
+
+                    cell.westWallTile =
+                        westTile;
+                }
+            }
+            }
+
+        else if (tag == "CHAMBERS")
+        {
+            int count = 0;
+            in >> count;
+
+            chambers.clear();
+
+            for (int i = 0; i < count; ++i)
+            {
+                DungeonChamber chamber;
+
+                in
+                    >> chamber.id
+                    >> std::quoted(
+                        chamber.name
+                    );
+
+                chambers.push_back(
+                    chamber
+                );
+            }
+        }
+        else if (tag == "CELL_LAYOUT")
+        {
+            int savedWidth = 0;
+            int savedHeight = 0;
+
+            in
+                >> savedWidth
+                >> savedHeight;
+
+            for (int y = 0; y < savedHeight; ++y)
+            {
+                for (int x = 0; x < savedWidth; ++x)
+                {
+                    int enabledValue = 1;
+                    int chamberId = 0;
+
+                    in
+                        >> enabledValue
+                        >> chamberId;
+
+                    if (
+                        x >= MapWidth ||
+                        y >= MapHeight
+                        )
+                    {
+                        continue;
+                    }
+
+                    TerrainCell& cell =
+                        terrainCells[
+                            CellIndex(x, y)
+                        ];
+
+                    cell.enabled =
+                        enabledValue != 0;
+
+                    cell.chamberId =
+                        chamberId;
+                }
+            }
+
+            loadedCellLayout = true;
+        }
+        else if (tag == "TERRAIN_ATLAS")
+        {
+            std::string savedPath;
+
+            int columns = 4;
+            int rows = 4;
+
+            in
+                >> std::quoted(
+                    savedPath
+                )
+                >> columns
+                >> rows;
+
+            const std::string portablePath =
+                ToPortableAssetPath(
+                    savedPath
+                );
+
+            const std::string loadPath =
+                ResolveAssetPathForLoad(
+                    savedPath
+                );
+
+            if (
+                !loadPath.empty() &&
+                LoadTerrainTileSheet(
+                    loadPath,
+                    columns,
+                    rows
+                )
+                )
+            {
+                terrainTileSheetPath =
+                    portablePath;
+
+                std::snprintf(
+                    terrainTileSheetPathInput,
+                    sizeof(
+                        terrainTileSheetPathInput
+                        ),
+                    "%s",
+                    terrainTileSheetPath.c_str()
+                );
+            }
+            else
+            {
+                TraceLog(
+                    LOG_WARNING,
+                    "[TERRAIN ATLAS] Could not load saved atlas: %s",
+                    savedPath.c_str()
+                );
+            }
+            }
+        else if (tag == "TILE_WALKABILITY")
+        {
+            int count = 0;
+
+            in >> count;
+
+            for (
+                int itemIndex = 0;
+                itemIndex < count;
+                ++itemIndex
+                )
+            {
+                int tileIndex = -1;
+                int walkableValue = 1;
+
+                in
+                    >> tileIndex
+                    >> walkableValue;
+
+                if (
+                    tileIndex < 0 ||
+                    tileIndex >=
+                    static_cast<int>(
+                        tileBrushes.size()
+                        )
+                    )
+                {
+                    continue;
+                }
+
+                tileBrushes[
+                    tileIndex
+                ].walkable =
+                    walkableValue != 0;
+            }
+            }
         else if (tag == "TILE_BRUSHES")
         {
             int count = 0;
@@ -2421,6 +4042,37 @@ bool Game::LoadLevel(const char* path)
         }
     }
 
+    if (!loadedCellLayout)
+    {
+        // Version 4 and earlier receive the temporary west/east layout.
+        InitializeTestChambers();
+    }
+    else
+    {
+        for (
+            const TerrainCell& cell :
+            terrainCells
+            )
+        {
+            if (
+                cell.enabled &&
+                cell.chamberId >= 0
+                )
+            {
+                EnsureChamberExists(
+                    cell.chamberId
+                );
+            }
+        }
+
+        RebuildChamberBounds();
+    }
+
+    editorNewMapWidth = MapWidth;
+    editorNewMapHeight = MapHeight;
+
+    InvalidateGroundCache();
+
     return true;
 }
 
@@ -2521,7 +4173,417 @@ bool Game::LoadTileBrushTexture(
     return true;
 }
 
+bool Game::LoadTerrainTileSheet(
+    const std::string& path,
+    int columns,
+    int rows
+)
+{
+    if (
+        path.empty() ||
+        columns <= 0 ||
+        rows <= 0
+        )
+    {
+        return false;
+    }
 
+    const std::string loadPath =
+        ResolveAssetPathForLoad(
+            path
+        );
+
+    if (
+        loadPath.empty() ||
+        !FileExists(
+            loadPath.c_str()
+        )
+        )
+    {
+        TraceLog(
+            LOG_WARNING,
+            "[TERRAIN ATLAS] File not found: %s",
+            path.c_str()
+        );
+
+        return false;
+    }
+
+    Texture2D newTexture =
+        LoadTexture(
+            loadPath.c_str()
+        );
+
+    if (newTexture.id == 0)
+    {
+        TraceLog(
+            LOG_WARNING,
+            "[TERRAIN ATLAS] Failed to load: %s",
+            loadPath.c_str()
+        );
+
+        return false;
+    }
+
+    if (
+        newTexture.width < columns ||
+        newTexture.height < rows
+        )
+    {
+        UnloadTexture(
+            newTexture
+        );
+
+        return false;
+    }
+
+    if (terrainTileSheet.id != 0)
+    {
+        UnloadTexture(
+            terrainTileSheet
+        );
+    }
+
+    terrainTileSheet =
+        newTexture;
+
+    terrainTileSheetPath =
+        ToPortableAssetPath(
+            path
+        );
+
+    terrainTileSheetColumns =
+        std::max(
+            1,
+            columns
+        );
+
+    terrainTileSheetRows =
+        std::max(
+            1,
+            rows
+        );
+
+    // This atlas is painted rather than pixel art.
+    SetTextureFilter(
+        terrainTileSheet,
+        TEXTURE_FILTER_BILINEAR
+    );
+
+    ConfigureTileBrushesFromSheet();
+
+    selectedTile =
+        std::max(
+            0,
+            std::min(
+                selectedTile,
+                static_cast<int>(
+                    tileBrushes.size()
+                    ) - 1
+            )
+        );
+
+    InvalidateGroundCache();
+    MarkHybridTerrainDirty();
+
+    TraceLog(
+        LOG_INFO,
+        "[TERRAIN ATLAS] Loaded %s | %dx%d | grid=%dx%d | tiles=%d",
+        terrainTileSheetPath.c_str(),
+        terrainTileSheet.width,
+        terrainTileSheet.height,
+        terrainTileSheetColumns,
+        terrainTileSheetRows,
+        terrainTileSheetColumns *
+        terrainTileSheetRows
+    );
+
+    return true;
+}
+
+void Game::ConfigureTileBrushesFromSheet()
+{
+    if (
+        terrainTileSheet.id == 0 ||
+        terrainTileSheetColumns <= 0 ||
+        terrainTileSheetRows <= 0
+        )
+    {
+        return;
+    }
+
+    // Remove old standalone brush textures.
+    for (TileBrush& brush : tileBrushes)
+    {
+        if (
+            !brush.usesAtlas &&
+            brush.hasTexture &&
+            brush.texture.id != 0
+            )
+        {
+            UnloadTexture(
+                brush.texture
+            );
+        }
+    }
+
+    tileBrushes.clear();
+
+    const float sourceWidth =
+        static_cast<float>(
+            terrainTileSheet.width
+            ) /
+        static_cast<float>(
+            terrainTileSheetColumns
+            );
+
+    const float sourceHeight =
+        static_cast<float>(
+            terrainTileSheet.height
+            ) /
+        static_cast<float>(
+            terrainTileSheetRows
+            );
+
+    const int tileCount =
+        terrainTileSheetColumns *
+        terrainTileSheetRows;
+
+    tileBrushes.reserve(
+        tileCount
+    );
+
+    for (int index = 0; index < tileCount; ++index)
+    {
+        const int column =
+            index %
+            terrainTileSheetColumns;
+
+        const int row =
+            index /
+            terrainTileSheetColumns;
+
+        TileBrush brush;
+
+        brush.imagePath.clear();
+        brush.texture = {};
+        brush.hasTexture = false;
+        brush.autoFitToTile = true;
+
+        brush.usesAtlas = true;
+
+        brush.source = {
+            static_cast<float>(
+                column
+            ) *
+                sourceWidth,
+
+            static_cast<float>(
+                row
+            ) *
+                sourceHeight,
+
+            sourceWidth,
+            sourceHeight
+        };
+
+        brush.walkable = true;
+
+        brush.fallbackColor = {
+            90,
+            90,
+            94,
+            255
+        };
+
+        tileBrushes.push_back(
+            brush
+        );
+    }
+}
+
+Texture2D Game::GetTileBrushTexture(
+    int tileIndex
+) const
+{
+    if (
+        tileIndex < 0 ||
+        tileIndex >=
+        static_cast<int>(
+            tileBrushes.size()
+            )
+        )
+    {
+        return {};
+    }
+
+    const TileBrush& brush =
+        tileBrushes[
+            tileIndex
+        ];
+
+    if (brush.usesAtlas)
+    {
+        return
+            terrainTileSheet;
+    }
+
+    return
+        brush.texture;
+}
+
+int Game::GetTerrainWallTileIndex(
+    int cellX,
+    int cellY,
+    TerrainWallFace face
+) const
+{
+    if (
+        !IsCellInside(
+            cellX,
+            cellY
+        )
+        )
+    {
+        return 0;
+    }
+
+    const int cellIndex =
+        CellIndex(
+            cellX,
+            cellY
+        );
+
+    const TerrainCell& cell =
+        terrainCells[
+            cellIndex
+        ];
+
+    int wallTileIndex = -1;
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        wallTileIndex =
+            cell.northWallTile;
+        break;
+
+    case TerrainWallFace::East:
+        wallTileIndex =
+            cell.eastWallTile;
+        break;
+
+    case TerrainWallFace::South:
+        wallTileIndex =
+            cell.southWallTile;
+        break;
+
+    case TerrainWallFace::West:
+        wallTileIndex =
+            cell.westWallTile;
+        break;
+
+    case TerrainWallFace::None:
+    default:
+        break;
+    }
+
+    if (
+        wallTileIndex >= 0 &&
+        wallTileIndex <
+        static_cast<int>(
+            tileBrushes.size()
+            )
+        )
+    {
+        return wallTileIndex;
+    }
+
+    int floorTileIndex =
+        tiles[
+            cellIndex
+        ];
+
+    if (
+        floorTileIndex < 0 ||
+        floorTileIndex >=
+        static_cast<int>(
+            tileBrushes.size()
+            )
+        )
+    {
+        floorTileIndex = 0;
+    }
+
+    return floorTileIndex;
+}
+
+Rectangle Game::GetTileBrushSourceRect(
+    int tileIndex
+) const
+{
+    if (
+        tileIndex < 0 ||
+        tileIndex >=
+        static_cast<int>(
+            tileBrushes.size()
+            )
+        )
+    {
+        return {};
+    }
+
+    const TileBrush& brush =
+        tileBrushes[
+            tileIndex
+        ];
+
+    if (brush.usesAtlas)
+    {
+        // Half-pixel inset prevents neighbouring atlas tiles
+        // from bleeding into one another during filtering.
+        constexpr float inset =
+            0.5f;
+
+        return Rectangle{
+            brush.source.x +
+                inset,
+
+            brush.source.y +
+                inset,
+
+            std::max(
+                1.0f,
+                brush.source.width -
+                inset *
+                2.0f
+            ),
+
+            std::max(
+                1.0f,
+                brush.source.height -
+                inset *
+                2.0f
+            )
+        };
+    }
+
+    if (brush.texture.id == 0)
+    {
+        return {};
+    }
+
+    return Rectangle{
+        0.0f,
+        0.0f,
+        static_cast<float>(
+            brush.texture.width
+        ),
+        static_cast<float>(
+            brush.texture.height
+        )
+    };
+}
 
 bool Game::LoadCurrentObstacleTexture(
     const std::string& path
@@ -2990,6 +5052,12 @@ void Game::Update(float dt)
             camera.target = WorldToViewElevated(playerPosition);
         }
 
+        for (DungeonChamber& chamber : chambers)
+        {
+            chamber.visibility =
+                chamber.targetVisibility;
+        }
+
         TraceLog(
             LOG_WARNING,
             "[RENDERER] mode=%s",
@@ -3153,6 +5221,20 @@ void Game::Update(float dt)
     }
 
     UpdatePlayerAnimation(dt);
+
+    // Chamber membership is updated after every movement source:
+    // path movement, joystick movement, dash and knockback.
+    UpdateActiveChamber();
+    UpdateChamberVisibility(dt);
+
+    if (chamberClearedMessageTimer > 0.0f)
+    {
+        chamberClearedMessageTimer =
+            std::max(
+                0.0f,
+                chamberClearedMessageTimer - dt
+            );
+    }
 
     player.pos = playerPosition;
 
@@ -3562,7 +5644,7 @@ void Game::HandleDroppedFiles()
             const std::string& path
             )
         {
-            std::string importedPath =
+            const std::string importedPath =
                 ImportDroppedAssetToProject(
                     path,
                     "tiles"
@@ -3573,20 +5655,28 @@ void Game::HandleDroppedFiles()
                 return false;
             }
 
-            if (!LoadTileBrushTexture(
-                selectedTile,
-                importedPath
-            ))
+            if (
+                !LoadTerrainTileSheet(
+                    importedPath,
+                    terrainTileSheetColumns,
+                    terrainTileSheetRows
+                )
+                )
             {
                 return false;
             }
 
             std::snprintf(
-                tileImagePathInput,
-                sizeof(tileImagePathInput),
+                terrainTileSheetPathInput,
+                sizeof(
+                    terrainTileSheetPathInput
+                    ),
                 "%s",
                 importedPath.c_str()
             );
+
+            terrainTileSheetPath =
+                importedPath;
 
             return true;
         };
@@ -3877,6 +5967,128 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         return;
     }
 
+    const bool usingWallTool =
+        editorTool ==
+        static_cast<int>(
+            EditorTool::PaintWall
+            ) ||
+        editorTool ==
+        static_cast<int>(
+            EditorTool::ClearWall
+            );
+
+    if (usingWallTool)
+    {
+        if (
+            rendererMode !=
+            WorldRendererMode::Hybrid3D
+            )
+        {
+            return;
+        }
+
+        int wallCellX = -1;
+        int wallCellY = -1;
+
+        TerrainWallFace wallFace =
+            TerrainWallFace::None;
+
+        if (
+            !ScreenToTerrainWall3D(
+                screenPosition,
+                wallCellX,
+                wallCellY,
+                wallFace
+            )
+            )
+        {
+            return;
+        }
+
+        if (
+            !IsCellEnabled(
+                wallCellX,
+                wallCellY
+            )
+            )
+        {
+            return;
+        }
+
+        TerrainCell& wallCell =
+            terrainCells[
+                CellIndex(
+                    wallCellX,
+                    wallCellY
+                )
+            ];
+
+        int* wallTileOverride =
+            nullptr;
+
+        switch (wallFace)
+        {
+        case TerrainWallFace::North:
+            wallTileOverride =
+                &wallCell.northWallTile;
+            break;
+
+        case TerrainWallFace::East:
+            wallTileOverride =
+                &wallCell.eastWallTile;
+            break;
+
+        case TerrainWallFace::South:
+            wallTileOverride =
+                &wallCell.southWallTile;
+            break;
+
+        case TerrainWallFace::West:
+            wallTileOverride =
+                &wallCell.westWallTile;
+            break;
+
+        case TerrainWallFace::None:
+        default:
+            break;
+        }
+
+        if (wallTileOverride == nullptr)
+        {
+            return;
+        }
+
+        if (
+            editorTool ==
+            static_cast<int>(
+                EditorTool::PaintWall
+                )
+            )
+        {
+            if (
+                selectedTile >= 0 &&
+                selectedTile <
+                static_cast<int>(
+                    tileBrushes.size()
+                    )
+                )
+            {
+                *wallTileOverride =
+                    selectedTile;
+            }
+        }
+        else
+        {
+            // Return to inheriting the floor tile.
+            *wallTileOverride =
+                -1;
+        }
+
+        InvalidateGroundCache();
+
+        return;
+    }
+
     int pickedCellX = 0;
     int pickedCellY = 0;
     Vector2 worldPosition{};
@@ -3922,19 +6134,146 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         }
     }
 
-    if (editorTool == static_cast<int>(EditorTool::PaintTile))
+    if (
+        editorTool ==
+        static_cast<int>(EditorTool::PaintTile)
+        )
     {
         int cellX = 0;
         int cellY = 0;
 
-        if (WorldToCell(worldPosition, cellX, cellY))
+        if (
+            WorldToCell(
+                worldPosition,
+                cellX,
+                cellY
+            )
+            )
         {
-            int index = CellIndex(cellX, cellY);
+            const int index =
+                CellIndex(
+                    cellX,
+                    cellY
+                );
+
+            TerrainCell& cell =
+                terrainCells[index];
+
+            bool changed = false;
+
+            if (!cell.enabled)
+            {
+                cell.enabled = true;
+                cell.chamberId =
+                    editorSelectedChamberId;
+
+                EnsureChamberExists(
+                    editorSelectedChamberId
+                );
+
+                changed = true;
+            }
 
             if (tiles[index] != selectedTile)
             {
                 tiles[index] = selectedTile;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                RebuildChamberBounds();
                 InvalidateGroundCache();
+            }
+        }
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::PaintChamber)
+        )
+    {
+        int cellX = 0;
+        int cellY = 0;
+
+        if (
+            WorldToCell(
+                worldPosition,
+                cellX,
+                cellY
+            )
+            )
+        {
+            TerrainCell& cell =
+                terrainCells[
+                    CellIndex(
+                        cellX,
+                        cellY
+                    )
+                ];
+
+            const bool changed =
+                !cell.enabled ||
+                cell.chamberId !=
+                editorSelectedChamberId;
+
+            if (changed)
+            {
+                cell.enabled = true;
+                cell.chamberId =
+                    editorSelectedChamberId;
+
+                EnsureChamberExists(
+                    editorSelectedChamberId
+                );
+
+                RebuildChamberBounds();
+                InvalidateGroundCache();
+            }
+        }
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::EraseMapCell)
+        )
+    {
+        int cellX = 0;
+        int cellY = 0;
+
+        if (
+            WorldToCell(
+                worldPosition,
+                cellX,
+                cellY
+            )
+            )
+        {
+            TerrainCell& cell =
+                terrainCells[
+                    CellIndex(
+                        cellX,
+                        cellY
+                    )
+                ];
+
+            if (cell.enabled)
+            {
+                cell.enabled = false;
+                cell.chamberId = -1;
+                cell.northWallTile = -1;
+                cell.eastWallTile = -1;
+                cell.southWallTile = -1;
+                cell.westWallTile = -1;
+
+                cell.elevation = 0;
+                cell.rampDirection =
+                    RampDirection::None;
+
+                RebuildChamberBounds();
+                InvalidateGroundCache();
+
+                currentPath.clear();
+                pathIndex = 0;
+                hasPath = false;
             }
         }
     }
@@ -3951,7 +6290,17 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         int cellX = 0;
         int cellY = 0;
 
-        if (WorldToCell(worldPosition, cellX, cellY))
+        if (
+            WorldToCell(
+                worldPosition,
+                cellX,
+                cellY
+            ) &&
+            IsCellEnabled(
+                cellX,
+                cellY
+            )
+            )
         {
             TerrainCell& cell =
                 terrainCells[CellIndex(cellX, cellY)];
@@ -3980,7 +6329,17 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         int cellX = 0;
         int cellY = 0;
 
-        if (WorldToCell(worldPosition, cellX, cellY))
+        if (
+            WorldToCell(
+                worldPosition,
+                cellX,
+                cellY
+            ) &&
+            IsCellEnabled(
+                cellX,
+                cellY
+            )
+            )
         {
             TerrainCell& cell =
                 terrainCells[CellIndex(cellX, cellY)];
@@ -4009,7 +6368,17 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         int cellX = 0;
         int cellY = 0;
 
-        if (WorldToCell(worldPosition, cellX, cellY))
+        if (
+            WorldToCell(
+                worldPosition,
+                cellX,
+                cellY
+            ) &&
+            IsCellEnabled(
+                cellX,
+                cellY
+            )
+            )
         {
             TerrainCell& cell =
                 terrainCells[CellIndex(cellX, cellY)];
@@ -4046,6 +6415,10 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         if (
             !WorldToCell(
                 worldPosition,
+                cellX,
+                cellY
+            ) ||
+            !IsCellEnabled(
                 cellX,
                 cellY
             )
@@ -4088,6 +6461,10 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
 
         if (
             !IsCellInside(
+                higherX,
+                higherY
+            ) ||
+            !IsCellEnabled(
                 higherX,
                 higherY
             )
@@ -4162,6 +6539,10 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
                 worldPosition,
                 cellX,
                 cellY
+            ) &&
+            IsCellEnabled(
+                cellX,
+                cellY
             )
             )
         {
@@ -4189,15 +6570,31 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
 
         Vector2 placePosition = worldPosition;
 
+        int placementCellX = 0;
+        int placementCellY = 0;
+
+        if (
+            !WorldToCell(
+                worldPosition,
+                placementCellX,
+                placementCellY
+            ) ||
+            !IsCellEnabled(
+                placementCellX,
+                placementCellY
+            )
+            )
+        {
+            return;
+        }
+
         if (obstacleSnapToGrid)
         {
-            int cellX = 0;
-            int cellY = 0;
-
-            if (WorldToCell(worldPosition, cellX, cellY))
-            {
-                placePosition = CellToWorld(cellX, cellY);
-            }
+            placePosition =
+                CellToWorld(
+                    placementCellX,
+                    placementCellY
+                );
         }
 
         Obstacle obstacle;
@@ -4565,16 +6962,32 @@ int Game::GetTerrainElevation(
     int cellY
 ) const
 {
-    if (!IsCellInside(cellX, cellY))
+    if (
+        !IsCellInside(
+            cellX,
+            cellY
+        ) ||
+        !IsCellEnabled(
+            cellX,
+            cellY
+        )
+        )
     {
         return 0;
     }
 
-    int index = CellIndex(cellX, cellY);
+    const int index =
+        CellIndex(
+            cellX,
+            cellY
+        );
 
     if (
         index < 0 ||
-        index >= static_cast<int>(terrainCells.size())
+        index >=
+        static_cast<int>(
+            terrainCells.size()
+            )
         )
     {
         return 0;
@@ -4783,10 +7196,55 @@ bool Game::CanTraverseTerrainEdge(
         !IsCellInside(
             toX,
             toY
+        ) ||
+        !IsCellEnabled(
+            fromX,
+            fromY
+        ) ||
+        !IsCellEnabled(
+            toX,
+            toY
         )
         )
     {
         return false;
+    }
+
+    if (!buildMode)
+    {
+        const int fromChamberId =
+            terrainCells[
+                CellIndex(
+                    fromX,
+                    fromY
+                )
+            ].chamberId;
+
+        const int toChamberId =
+            terrainCells[
+                CellIndex(
+                    toX,
+                    toY
+                )
+            ].chamberId;
+
+        if (fromChamberId != toChamberId)
+        {
+            const DungeonChamber* activeChamber =
+                FindChamberById(
+                    activeChamberId
+                );
+
+            // The current chamber behaves as though its exits are sealed
+            // until both encounter waves have been defeated.
+            if (
+                activeChamber != nullptr &&
+                !activeChamber->cleared
+                )
+            {
+                return false;
+            }
+        }
     }
 
     int deltaX =
@@ -4939,6 +7397,10 @@ bool Game::IsTerrainCircleBlocked(
         {
             if (
                 !IsCellInside(
+                    cellX,
+                    cellY
+                ) ||
+                !IsCellEnabled(
                     cellX,
                     cellY
                 )
@@ -5854,7 +8316,9 @@ bool Game::IsRampConnectionBetweenCells(
 {
     if (
         !IsCellInside(cellAX, cellAY) ||
-        !IsCellInside(cellBX, cellBY)
+        !IsCellInside(cellBX, cellBY) ||
+        !IsCellEnabled(cellAX, cellAY) ||
+        !IsCellEnabled(cellBX, cellBY)
         )
     {
         return false;
@@ -5948,22 +8412,31 @@ float Game::GetTerrainCliffDepth(
             cellY
         );
 
-    if (
-        face ==
-        TerrainCliffFace::East
-        )
+    switch (face)
     {
-        // Centre of the east shared edge.
+    case TerrainCliffFace::North:
+        edgePosition.y -=
+            TileSize *
+            0.5f;
+        break;
+
+    case TerrainCliffFace::East:
         edgePosition.x +=
             TileSize *
             0.5f;
-    }
-    else
-    {
-        // Centre of the south shared edge.
+        break;
+
+    case TerrainCliffFace::South:
         edgePosition.y +=
             TileSize *
             0.5f;
+        break;
+
+    case TerrainCliffFace::West:
+        edgePosition.x -=
+            TileSize *
+            0.5f;
+        break;
     }
 
     return
@@ -5981,6 +8454,10 @@ void Game::DrawTerrainCliffSegment(
 {
     if (
         !IsCellInside(
+            cellX,
+            cellY
+        ) ||
+        !IsCellEnabled(
             cellX,
             cellY
         )
@@ -6001,16 +8478,73 @@ void Game::DrawTerrainCliffSegment(
     int neighbourY =
         cellY;
 
-    if (
-        face ==
-        TerrainCliffFace::East
-        )
+    TerrainWallFace wallFace =
+        TerrainWallFace::None;
+
+    Color wallTint{
+        205,
+        205,
+        205,
+        255
+    };
+
+    switch (face)
     {
+    case TerrainCliffFace::North:
+        neighbourY -= 1;
+
+        wallFace =
+            TerrainWallFace::North;
+
+        wallTint = {
+            164,
+            164,
+            170,
+            255
+        };
+        break;
+
+    case TerrainCliffFace::East:
         neighbourX += 1;
-    }
-    else
-    {
+
+        wallFace =
+            TerrainWallFace::East;
+
+        wallTint = {
+            178,
+            178,
+            184,
+            255
+        };
+        break;
+
+    case TerrainCliffFace::South:
         neighbourY += 1;
+
+        wallFace =
+            TerrainWallFace::South;
+
+        wallTint = {
+            216,
+            216,
+            222,
+            255
+        };
+        break;
+
+    case TerrainCliffFace::West:
+        neighbourX -= 1;
+
+        wallFace =
+            TerrainWallFace::West;
+
+        wallTint = {
+            192,
+            192,
+            198,
+            255
+        };
+        break;
     }
 
     const int neighbourElevation =
@@ -6071,128 +8605,182 @@ void Game::DrawTerrainCliffSegment(
         lowerLeft
     );
 
-    int tileIndex =
-        tiles[
-            CellIndex(
-                cellX,
-                cellY
-            )
-        ];
+    Vector2 upperStart{};
+    Vector2 upperEnd{};
+    Vector2 lowerEnd{};
+    Vector2 lowerStart{};
 
-    Color southColor{
-        105,
-        78,
-        50,
-        255
-    };
-
-    Color eastColor{
-        70,
-        61,
-        48,
-        255
-    };
-
-    switch (
-        static_cast<TileType>(
-            tileIndex
-            )
-        )
+    switch (face)
     {
-    case TileType::Dirt:
-        southColor =
-            Color{
-                112,
-                82,
-                50,
-                255
-        };
+    case TerrainCliffFace::North:
+        upperStart =
+            upperTop;
 
-        eastColor =
-            Color{
-                82,
-                61,
-                43,
-                255
-        };
+        upperEnd =
+            upperRight;
+
+        lowerEnd =
+            lowerRight;
+
+        lowerStart =
+            lowerTop;
         break;
 
-    case TileType::Stone:
-        southColor =
-            Color{
-                108,
-                110,
-                116,
-                255
-        };
+    case TerrainCliffFace::East:
+        upperStart =
+            upperRight;
 
-        eastColor =
-            Color{
-                74,
-                79,
-                88,
-                255
-        };
+        upperEnd =
+            upperBottom;
+
+        lowerEnd =
+            lowerBottom;
+
+        lowerStart =
+            lowerRight;
         break;
 
-    case TileType::Water:
-        southColor =
-            Color{
-                45,
-                73,
-                108,
-                255
-        };
+    case TerrainCliffFace::South:
+        upperStart =
+            upperLeft;
 
-        eastColor =
-            Color{
-                32,
-                52,
-                84,
-                255
-        };
+        upperEnd =
+            upperBottom;
+
+        lowerEnd =
+            lowerBottom;
+
+        lowerStart =
+            lowerLeft;
         break;
 
-    case TileType::Grass:
-    default:
+    case TerrainCliffFace::West:
+        upperStart =
+            upperTop;
+
+        upperEnd =
+            upperLeft;
+
+        lowerEnd =
+            lowerLeft;
+
+        lowerStart =
+            lowerTop;
         break;
     }
+
+    const int wallTileIndex =
+        GetTerrainWallTileIndex(
+            cellX,
+            cellY,
+            wallFace
+        );
+
+    Texture2D wallTexture =
+        GetTileBrushTexture(
+            wallTileIndex
+        );
+
+    const Rectangle source =
+        GetTileBrushSourceRect(
+            wallTileIndex
+        );
+
+    if (wallTexture.id != 0)
+    {
+        // Keep the atlas facing consistently from the
+        // screen-left side toward the screen-right side.
+        const bool flipHorizontal =
+            upperEnd.x <
+            upperStart.x;
+
+        DrawTextureFrameOnWallQuad2D(
+            wallTexture,
+            source,
+            upperStart,
+            upperEnd,
+            lowerEnd,
+            lowerStart,
+            wallTint,
+            flipHorizontal
+        );
+
+        return;
+    }
+
+    Color fallback{
+        80,
+        80,
+        84,
+        255
+    };
 
     if (
-        face ==
-        TerrainCliffFace::East
+        wallTileIndex >= 0 &&
+        wallTileIndex <
+        static_cast<int>(
+            tileBrushes.size()
+            )
         )
     {
-        DrawTriangle(
-            upperBottom,
-            lowerBottom,
-            lowerRight,
-            eastColor
-        );
-
-        DrawTriangle(
-            upperBottom,
-            lowerRight,
-            upperRight,
-            eastColor
-        );
+        fallback =
+            tileBrushes[
+                wallTileIndex
+            ].fallbackColor;
     }
-    else
-    {
-        DrawTriangle(
-            upperLeft,
-            lowerLeft,
-            lowerBottom,
-            southColor
-        );
 
-        DrawTriangle(
-            upperLeft,
-            lowerBottom,
-            upperBottom,
-            southColor
-        );
-    }
+    fallback.r =
+        static_cast<unsigned char>(
+            static_cast<float>(
+                fallback.r
+                ) *
+            (
+                static_cast<float>(
+                    wallTint.r
+                    ) /
+                255.0f
+                )
+            );
+
+    fallback.g =
+        static_cast<unsigned char>(
+            static_cast<float>(
+                fallback.g
+                ) *
+            (
+                static_cast<float>(
+                    wallTint.g
+                    ) /
+                255.0f
+                )
+            );
+
+    fallback.b =
+        static_cast<unsigned char>(
+            static_cast<float>(
+                fallback.b
+                ) *
+            (
+                static_cast<float>(
+                    wallTint.b
+                    ) /
+                255.0f
+                )
+            );
+
+    DrawTriangle(
+        upperStart,
+        lowerStart,
+        lowerEnd,
+        fallback
+    );
+
+    DrawTriangle(
+        upperStart,
+        lowerEnd,
+        upperEnd,
+        fallback
+    );
 }
 
 void Game::DrawTerrainCliffFace(
@@ -6203,6 +8791,10 @@ void Game::DrawTerrainCliffFace(
 {
     if (
         !IsCellInside(
+            cellX,
+            cellY
+        ) ||
+        !IsCellEnabled(
             cellX,
             cellY
         )
@@ -6433,6 +9025,10 @@ void Game::DrawTerrainTopSurface(
             cellX,
             cellY
         ) ||
+        !IsCellEnabled(
+            cellX,
+            cellY
+        ) ||
         tileBrushes.empty()
         )
     {
@@ -6492,13 +9088,18 @@ void Game::DrawTerrainTopSurface(
             tileIndex
         ];
 
-    if (
-        brush.hasTexture &&
-        brush.texture.id != 0
-        )
+    Texture2D brushTexture =
+        GetTileBrushTexture(
+            tileIndex
+        );
+
+    if (brushTexture.id != 0)
     {
-        DrawTextureOnQuad(
-            brush.texture,
+        DrawTextureFrameOnQuad2D(
+            brushTexture,
+            GetTileBrushSourceRect(
+                tileIndex
+            ),
             top,
             right,
             bottom,
@@ -6597,6 +9198,10 @@ void Game::DrawTerrainRampSurface(
 {
     if (
         !IsCellInside(
+            cellX,
+            cellY
+        ) ||
+        !IsCellEnabled(
             cellX,
             cellY
         ) ||
@@ -6763,13 +9368,18 @@ void Game::DrawTerrainRampSurface(
             tileIndex
         ];
 
-    if (
-        brush.hasTexture &&
-        brush.texture.id != 0
-        )
+    Texture2D brushTexture =
+        GetTileBrushTexture(
+            tileIndex
+        );
+
+    if (brushTexture.id != 0)
     {
-        DrawTextureOnQuad(
-            brush.texture,
+        DrawTextureFrameOnQuad2D(
+            brushTexture,
+            GetTileBrushSourceRect(
+                tileIndex
+            ),
             rampTop,
             rampRight,
             rampBottom,
@@ -6990,16 +9600,39 @@ void Game::DrawGroundCellOutline(int cellX, int cellY, Color color, float thickn
     DrawLineEx(p3, p0, thickness, color);
 }
 
-bool Game::IsTileWalkable(int tileType) const
+bool Game::IsTileWalkable(
+    int tileType
+) const
 {
-    TileType type = static_cast<TileType>(tileType);
+    if (
+        tileType < 0 ||
+        tileType >=
+        static_cast<int>(
+            tileBrushes.size()
+            )
+        )
+    {
+        return false;
+    }
 
-    return type != TileType::Water;
+    return
+        tileBrushes[
+            tileType
+        ].walkable;
 }
 
 bool Game::IsCellBlocked(int cellX, int cellY) const
 {
-    if (!IsCellInside(cellX, cellY))
+    if (
+        !IsCellInside(
+            cellX,
+            cellY
+        ) ||
+        !IsCellEnabled(
+            cellX,
+            cellY
+        )
+        )
     {
         return true;
     }
@@ -8026,6 +10659,36 @@ void Game::DrawUi()
 #else
     DrawText("F6: toggle Hybrid 3D / Legacy 2D | Click/tap ground to move", 18, 36, 16, Color{ 225, 225, 225, 255 });
 #endif
+
+    std::string chamberLabel = "CHAMBER: NONE";
+
+    const DungeonChamber* activeChamber =
+        FindChamberById(activeChamberId);
+
+    if (activeChamber != nullptr)
+    {
+        chamberLabel =
+            "CHAMBER: " +
+            std::to_string(activeChamber->id) +
+            " - " +
+            activeChamber->name;
+    }
+
+    constexpr int chamberFontSize = 18;
+
+    const int chamberTextWidth =
+        MeasureText(
+            chamberLabel.c_str(),
+            chamberFontSize
+        );
+
+    DrawText(
+        chamberLabel.c_str(),
+        GetScreenWidth() - chamberTextWidth - 18,
+        20,
+        chamberFontSize,
+        Color{ 235, 210, 140, 255 }
+    );
 }
 void Game::DrawEditorWorldOverlay()
 {
@@ -8039,24 +10702,55 @@ void Game::DrawEditorWorldOverlay()
         return;
     }
 
-    if (showGrid)
+    if (
+        showGrid ||
+        showChamberOverlay
+        )
     {
-        Color gridColor{
-            255,
-            255,
-            255,
-            34
-        };
-
         for (int y = 0; y < MapHeight; ++y)
         {
             for (int x = 0; x < MapWidth; ++x)
             {
+                Color cellColor{
+                    255,
+                    255,
+                    255,
+                    34
+                };
+
+                float thickness = 1.0f;
+
+                if (!IsCellEnabled(x, y))
+                {
+                    cellColor =
+                        Color{
+                            255,
+                            70,
+                            70,
+                            70
+                    };
+                }
+                else if (showChamberOverlay)
+                {
+                    const int chamberId =
+                        terrainCells[
+                            CellIndex(x, y)
+                        ].chamberId;
+
+                    cellColor =
+                        GetChamberDebugColor(
+                            chamberId,
+                            150
+                        );
+
+                    thickness = 2.0f;
+                }
+
                 DrawTerrainCellOutline(
                     x,
                     y,
-                    gridColor,
-                    1.0f
+                    cellColor,
+                    thickness
                 );
             }
         }
@@ -8067,6 +10761,11 @@ void Game::DrawEditorWorldOverlay()
     {
         for (int x = 0; x < MapWidth; ++x)
         {
+            if (!IsCellEnabled(x, y))
+            {
+                continue;
+            }
+
             const TerrainCell& cell =
                 terrainCells[
                     CellIndex(
@@ -8175,12 +10874,24 @@ void Game::DrawEditorWorldOverlay()
 
         DrawText(
             TextFormat(
-                "H%d",
+                "H%d  C%d  %s",
                 GetTerrainElevation(
                     cellX,
                     cellY
+                ),
+                terrainCells[
+                    CellIndex(
+                        cellX,
+                        cellY
+                    )
+                ].chamberId,
+                IsCellEnabled(
+                    cellX,
+                    cellY
                 )
-            ),
+                        ? "ACTIVE"
+                        : "VOID"
+                        ),
             static_cast<int>(labelPosition.x - 10.0f),
             static_cast<int>(labelPosition.y - 24.0f),
             16,
@@ -8274,9 +10985,65 @@ void Game::DrawEditorUi()
         if (!LoadLevel(DefaultLevelPath))
         {
             LoadDefaultLevel();
+            InitializeTestChambers();
         }
 
+        Vector2 requestedSpawn =
+            CellToWorld(
+                MapWidth / 2,
+                MapHeight / 2
+            );
+
+        int spawnCellX = MapWidth / 2;
+        int spawnCellY = MapHeight / 2;
+
+        if (
+            FindNearestWalkableCell(
+                requestedSpawn,
+                spawnCellX,
+                spawnCellY
+            )
+            )
+        {
+            playerPosition =
+                CellToWorld(
+                    spawnCellX,
+                    spawnCellY
+                );
+        }
+        else
+        {
+            playerPosition = requestedSpawn;
+        }
+
+        player.pos = playerPosition;
+        player.moveTarget = playerPosition;
+        player.hasMoveTarget = false;
+
+        currentPath.clear();
+        pathIndex = 0;
+        hasPath = false;
+
+        UpdateActiveChamber(true);
         InvalidateGroundCache();
+
+        if (
+            rendererMode ==
+            WorldRendererMode::Hybrid3D
+            )
+        {
+            hybridCameraTargetWorld =
+                playerPosition;
+
+            UpdateHybridCamera(0.0f);
+        }
+        else
+        {
+            camera.target =
+                WorldToViewElevated(
+                    playerPosition
+                );
+        }
     }
 
     ImGui::SameLine();
@@ -8290,11 +11057,131 @@ void Game::DrawEditorUi()
 
     ImGui::Separator();
 
+    ImGui::Text("Map Canvas");
+
+    ImGui::InputInt(
+        "Map Width",
+        &editorNewMapWidth
+    );
+
+    ImGui::InputInt(
+        "Map Height",
+        &editorNewMapHeight
+    );
+
+    editorNewMapWidth =
+        std::max(
+            4,
+            std::min(
+                MaximumMapDimension,
+                editorNewMapWidth
+            )
+        );
+
+    editorNewMapHeight =
+        std::max(
+            4,
+            std::min(
+                MaximumMapDimension,
+                editorNewMapHeight
+            )
+        );
+
+    ImGui::Checkbox(
+        "Start With Empty Map",
+        &editorNewMapStartsEmpty
+    );
+
+    if (ImGui::Button("Create New Map"))
+    {
+        CreateNewMap(
+            editorNewMapWidth,
+            editorNewMapHeight,
+            editorNewMapStartsEmpty
+        );
+    }
+
+    ImGui::Text(
+        "Current map: %d x %d",
+        MapWidth,
+        MapHeight
+    );
+
+    ImGui::TextDisabled(
+        "Void cells define the irregular outer shape."
+    );
+
+    ImGui::Separator();
+
+    ImGui::Text("Chambers");
+
+    ImGui::InputInt(
+        "Selected Chamber ID",
+        &editorSelectedChamberId
+    );
+
+    editorSelectedChamberId =
+        std::max(
+            0,
+            editorSelectedChamberId
+        );
+
+    ImGui::InputText(
+        "Chamber Name",
+        editorChamberNameInput,
+        sizeof(editorChamberNameInput)
+    );
+
+    if (ImGui::Button("Add / Update Chamber"))
+    {
+        EnsureChamberExists(
+            editorSelectedChamberId
+        );
+
+        DungeonChamber* chamber =
+            FindChamberById(
+                editorSelectedChamberId
+            );
+
+        if (chamber != nullptr)
+        {
+            chamber->name =
+                editorChamberNameInput;
+        }
+
+        RebuildChamberBounds();
+    }
+
+    ImGui::Checkbox(
+        "Show Chamber Overlay",
+        &showChamberOverlay
+    );
+
+    for (const DungeonChamber& chamber : chambers)
+    {
+        ImGui::Text(
+            "ID %d: %s%s",
+            chamber.id,
+            chamber.name.c_str(),
+            chamber.hasCells
+            ? ""
+            : " (unused)"
+        );
+    }
+
+    ImGui::Separator();
+
     const char* tools[] = {
         "Paint Tile",
         "Raise Terrain",
         "Lower Terrain",
         "Flatten Terrain",
+
+        "Paint Wall",
+        "Clear Wall",
+
+        "Paint Chamber",
+        "Erase Map Cell",
 
         "Place Ramp",
         "Remove Ramp",
@@ -8308,8 +11195,31 @@ void Game::DrawEditorUi()
         "Tool",
         &editorTool,
         tools,
-        9
+        13
     );
+
+    if (
+        editorTool ==
+        static_cast<int>(
+            EditorTool::PaintWall
+            )
+        )
+    {
+        ImGui::TextDisabled(
+            "Hybrid 3D: click directly on a visible side wall."
+        );
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(
+            EditorTool::ClearWall
+            )
+        )
+    {
+        ImGui::TextDisabled(
+            "Click a wall to restore its inherited floor material."
+        );
+    }
 
     ImGui::Separator();
 
@@ -8429,27 +11339,169 @@ void Game::DrawEditorUi()
         editorHeightLevel
     );
 
-    const char* tileNames[] = {
-        "Grass",
-        "Dirt",
-        "Stone",
-        "Water / Blocked"
-    };
+    ImGui::Separator();
 
-    ImGui::Combo("Tile", &selectedTile, tileNames, 4);
+    ImGui::Text("Terrain Tilesheet");
 
-    if (selectedTile >= 0 && selectedTile < static_cast<int>(tileBrushes.size()))
+    ImGui::InputText(
+        "Tilesheet Path",
+        terrainTileSheetPathInput,
+        sizeof(
+            terrainTileSheetPathInput
+            )
+    );
+
+    ImGui::InputInt(
+        "Tilesheet Columns",
+        &terrainTileSheetColumns
+    );
+
+    ImGui::InputInt(
+        "Tilesheet Rows",
+        &terrainTileSheetRows
+    );
+
+    terrainTileSheetColumns =
+        std::max(
+            1,
+            terrainTileSheetColumns
+        );
+
+    terrainTileSheetRows =
+        std::max(
+            1,
+            terrainTileSheetRows
+        );
+
+    tileImageDropHovered =
+        DrawImageDropZone(
+            "Terrain Tilesheet Drop",
+            terrainTileSheetPathInput
+        );
+
+    if (
+        ImGui::Button(
+            "Load Terrain Tilesheet"
+        )
+        )
     {
-        ImGui::Checkbox("Auto Fit Tile Image", &tileBrushes[selectedTile].autoFitToTile);
+        LoadTerrainTileSheet(
+            terrainTileSheetPathInput,
+            terrainTileSheetColumns,
+            terrainTileSheetRows
+        );
+    }
 
-        tileImageDropHovered = DrawImageDropZone("Tile Image Slot", tileImagePathInput);
+    if (
+        terrainTileSheet.id != 0 &&
+        !tileBrushes.empty()
+        )
+    {
+        ImGui::Separator();
 
-        ImGui::InputText("Tile Image Path", tileImagePathInput, sizeof(tileImagePathInput));
+        selectedTile =
+            std::max(
+                0,
+                std::min(
+                    selectedTile,
+                    static_cast<int>(
+                        tileBrushes.size()
+                        ) - 1
+                )
+            );
 
-        if (ImGui::Button("Load Tile Image"))
-        {
-            LoadTileBrushTexture(selectedTile, tileImagePathInput);
-        }
+        ImGui::SliderInt(
+            "Selected Tile",
+            &selectedTile,
+            0,
+            static_cast<int>(
+                tileBrushes.size()
+                ) - 1
+        );
+
+        const int selectedColumn =
+            selectedTile %
+            terrainTileSheetColumns;
+
+        const int selectedRow =
+            selectedTile /
+            terrainTileSheetColumns;
+
+        ImGui::Text(
+            "Tile index: %d",
+            selectedTile
+        );
+
+        ImGui::Text(
+            "Atlas position: column %d, row %d",
+            selectedColumn,
+            selectedRow
+        );
+
+        ImGui::Checkbox(
+            "Selected Tile Walkable",
+            &tileBrushes[
+                selectedTile
+            ].walkable
+        );
+
+        const Rectangle source =
+            GetTileBrushSourceRect(
+                selectedTile
+            );
+
+        const ImVec2 uv0{
+            source.x /
+                static_cast<float>(
+                    terrainTileSheet.width
+                ),
+
+            source.y /
+                static_cast<float>(
+                    terrainTileSheet.height
+                )
+        };
+
+        const ImVec2 uv1{
+            (
+                source.x +
+                source.width
+            ) /
+                static_cast<float>(
+                    terrainTileSheet.width
+                ),
+
+            (
+                source.y +
+                source.height
+            ) /
+                static_cast<float>(
+                    terrainTileSheet.height
+                )
+        };
+
+        const ImTextureID previewTextureId =
+            (ImTextureID)(
+                intptr_t
+                )terrainTileSheet.id;
+
+        ImGui::Text("Selected Tile Preview");
+
+        ImGui::Image(
+            previewTextureId,
+            ImVec2{
+                128.0f,
+                128.0f
+            },
+            uv0,
+            uv1
+        );
+    }
+    else
+    {
+        ImGui::TextDisabled(
+            "Load a terrain tilesheet to select atlas tiles."
+        );
     }
 
     ImGui::Separator();
@@ -8694,6 +11746,8 @@ void Game::InitCombat()
     player.attackTimer = player.attackInterval;
 
     enemies.clear();
+    pendingEnemySpawns.clear();
+
     projectiles.clear();
     vfxParticles.clear();
     orbitalBlades.clear();
@@ -8764,7 +11818,10 @@ void Game::InitCombat()
 
     bossFallingRocks.clear();
 
-    StartWave(1);
+    ResetChamberEncounterProgress();
+    StartChamberEncounter(
+        activeChamberId
+    );
 }
 
 void Game::RestartGameplay()
@@ -8846,9 +11903,10 @@ void Game::RestartGameplay()
     playerAttackTargetId = 0;
 
     // --------------------------------------------------
-    // Reset combat, wave, enemies, projectiles and skills
+    // Reset combat, chamber ownership, enemies, projectiles and skills
     // --------------------------------------------------
 
+    UpdateActiveChamber(true);
     InitCombat();
 
     player.pos =
@@ -9128,25 +12186,100 @@ void Game::DrawPerformanceOverlay() const
 
 void Game::StartWave(int waveNumber)
 {
-    wave.wave = waveNumber;
-    wave.enemiesSpawned = 0;
-    wave.enemiesToSpawn = 8 + waveNumber * 3;
+    // Compatibility entry point used by the existing upgrade code.
+    // Chamber progression owns the actual encounter state.
+    StartChamberWave(
+        activeChamberId,
+        waveNumber
+    );
+}
 
-    if (waveNumber % 5 == 0)
+void Game::StartChamberWave(
+    int chamberId,
+    int chamberWave
+)
+{
+    DungeonChamber* chamber =
+        FindChamberById(
+            chamberId
+        );
+
+    if (
+        chamber == nullptr ||
+        chamber->cleared ||
+        chamberWave < 1 ||
+        chamberWave > chamber->wavesRequired
+        )
     {
-        wave.enemiesToSpawn += 1;
+        return;
     }
+
+    int chamberOrder = 0;
+
+    for (const DungeonChamber& candidate : chambers)
+    {
+        if (!candidate.hasCells)
+        {
+            continue;
+        }
+
+        if (candidate.id == chamberId)
+        {
+            break;
+        }
+
+        chamberOrder++;
+    }
+
+    chamber->encounterStarted = true;
+    chamber->currentWave = chamberWave;
+
+    wave.chamberId = chamberId;
+    wave.chamberWave = chamberWave;
+    wave.chamberWavesRequired = chamber->wavesRequired;
+
+    // Retain the original wave-based stat scaling without making a
+    // chamber ID such as 100 create absurd enemy health.
+    wave.wave =
+        1 +
+        chamberOrder * chamber->wavesRequired +
+        (chamberWave - 1);
+
+    wave.enemiesSpawned = 0;
+    wave.enemiesToSpawn =
+        5 +
+        std::min(
+            chamberOrder,
+            4
+        ) +
+        (chamberWave - 1) * 2;
 
     wave.spawnTimer = 0.0f;
-    wave.spawnInterval = 0.85f - waveNumber * 0.03f;
-
-    if (wave.spawnInterval < 0.25f)
-    {
-        wave.spawnInterval = 0.25f;
-    }
+    wave.spawnInterval =
+        std::max(
+            0.32f,
+            0.72f -
+            static_cast<float>(chamberOrder) * 0.035f -
+            static_cast<float>(chamberWave - 1) * 0.06f
+        );
 
     wave.waveActive = true;
+    wave.waitingForNextWave = true;
+    wave.nextWaveTimer =
+        chamberWave == 1
+        ? chamberWaveStartDelay
+        : 1.35f;
+
     gameState = GameState::Playing;
+
+    TraceLog(
+        LOG_INFO,
+        "[CHAMBER] Chamber %d starting wave %d/%d with %d enemies.",
+        chamberId,
+        chamberWave,
+        chamber->wavesRequired,
+        wave.enemiesToSpawn
+    );
 }
 
 void Game::UpdateWave(float dt)
@@ -9156,10 +12289,38 @@ void Game::UpdateWave(float dt)
         return;
     }
 
+    DungeonChamber* chamber =
+        FindChamberById(
+            wave.chamberId
+        );
+
+    if (
+        chamber == nullptr ||
+        chamber->cleared ||
+        wave.chamberId != activeChamberId
+        )
+    {
+        wave.waveActive = false;
+        wave.waitingForNextWave = false;
+        return;
+    }
+
+    if (wave.waitingForNextWave)
+    {
+        wave.nextWaveTimer -= dt;
+
+        if (wave.nextWaveTimer > 0.0f)
+        {
+            return;
+        }
+
+        wave.nextWaveTimer = 0.0f;
+        wave.waitingForNextWave = false;
+    }
+
     if (
         !waveSpawningPaused &&
-        wave.enemiesSpawned <
-        wave.enemiesToSpawn
+        wave.enemiesSpawned < wave.enemiesToSpawn
         )
     {
         wave.spawnTimer += dt;
@@ -9168,196 +12329,234 @@ void Game::UpdateWave(float dt)
         {
             wave.spawnTimer = 0.0f;
 
-            int roll = GetRandomValue(1, 100);
+            const int roll =
+                GetRandomValue(
+                    1,
+                    100
+                );
 
-            if (wave.wave % 5 == 0 &&
-                wave.enemiesSpawned == wave.enemiesToSpawn - 1)
+            EnemyType type =
+                EnemyType::Grunt;
+
+            if (roll <= 45)
             {
-                SpawnEnemy(EnemyType::Boss);
+                type = EnemyType::Grunt;
             }
-            else if (roll <= 50)
+            else if (roll <= 68)
             {
-                SpawnEnemy(EnemyType::Grunt);
-            }
-            else if (roll <= 70)
-            {
-                SpawnEnemy(EnemyType::Runner);
+                type = EnemyType::Runner;
             }
             else if (roll <= 88)
             {
-                SpawnEnemy(EnemyType::Shooter);
+                type = EnemyType::Shooter;
             }
             else
             {
-                SpawnEnemy(EnemyType::Tank);
+                type = EnemyType::Tank;
             }
+
+            SpawnEnemyInChamber(
+                type,
+                chamber->id
+            );
 
             wave.enemiesSpawned++;
         }
     }
 
-    bool anyEnemyAlive = false;
+    const bool finishedSpawning =
+        wave.enemiesSpawned >=
+        wave.enemiesToSpawn;
 
-    for (const Enemy& enemy : enemies)
+    if (!finishedSpawning)
     {
-        if (enemy.active)
-        {
-            anyEnemyAlive = true;
-            break;
-        }
+        return;
     }
 
     if (
-        wave.enemiesSpawned >=
-        wave.enemiesToSpawn &&
-        !anyEnemyAlive
+        HasLivingEnemiesInChamber(
+            chamber->id
+        ) ||
+        HasPendingEnemiesInChamber(
+            chamber->id
+        )
         )
     {
-        wave.waveActive =
-            false;
-
-        // This upgrade came from completing a wave,
-        // so selecting one should begin the next wave.
-        upgradeMenuOpenedManually =
-            false;
-
-        GenerateSkillChoices();
-
-        gameState =
-            GameState::ChoosingUpgrade;
+        return;
     }
+
+    chamber->wavesCompleted =
+        std::max(
+            chamber->wavesCompleted,
+            chamber->currentWave
+        );
+
+    if (
+        chamber->wavesCompleted <
+        chamber->wavesRequired
+        )
+    {
+        StartChamberWave(
+            chamber->id,
+            chamber->wavesCompleted + 1
+        );
+
+        return;
+    }
+
+    chamber->cleared = true;
+    chamber->currentWave =
+        chamber->wavesRequired;
+
+    wave.waveActive = false;
+    wave.waitingForNextWave = false;
+
+    chamberClearedMessageTimer = 3.5f;
+
+    currentPath.clear();
+    pathIndex = 0;
+    hasPath = false;
+
+    TraceLog(
+        LOG_INFO,
+        "[CHAMBER] Chamber %d (%s) cleared. Exit unlocked.",
+        chamber->id,
+        chamber->name.c_str()
+    );
 }
 
 Vector2 Game::GetRandomSpawnPosition() const
 {
-    int playerCellX = 0;
-    int playerCellY = 0;
+    return
+        GetRandomSpawnPositionInChamber(
+            activeChamberId
+        );
+}
 
-    int playerElevation = 0;
-
-    if (
-        WorldToCell(
-            playerPosition,
-            playerCellX,
-            playerCellY
-        )
-        )
+Vector2 Game::GetRandomSpawnPositionInChamber(
+    int chamberId
+) const
+{
+    for (int attempt = 0; attempt < 48; ++attempt)
     {
-        playerElevation =
-            GetTerrainElevation(
-                playerCellX,
-                playerCellY
-            );
-    }
-
-    for (
-        int attempt = 0;
-        attempt < 32;
-        ++attempt
-        )
-    {
-        float distance =
+        const float distance =
             static_cast<float>(
                 GetRandomValue(
-                    520,
-                    760
+                    360,
+                    720
                 )
                 );
 
-        float angle =
+        const float angle =
             static_cast<float>(
                 GetRandomValue(
                     0,
-                    360
+                    359
                 )
                 ) *
             DEG2RAD;
 
-        Vector2 candidate{
+        const Vector2 candidate{
             playerPosition.x +
-                cosf(angle) *
-                distance,
+                cosf(angle) * distance,
 
             playerPosition.y +
-                sinf(angle) *
-                distance
+                sinf(angle) * distance
         };
 
         int cellX = 0;
         int cellY = 0;
 
         if (
-            WorldToCell(
+            !WorldToCell(
                 candidate,
                 cellX,
                 cellY
-            ) &&
-            !IsCellBlocked(
+            ) ||
+            IsCellBlocked(
                 cellX,
                 cellY
+            ) ||
+            terrainCells[
+                CellIndex(
+                    cellX,
+                    cellY
+                )
+            ].chamberId != chamberId
+            )
+        {
+            continue;
+        }
+
+        std::vector<Vector2> connectionPath;
+
+        if (
+            Vector2Distance(
+                candidate,
+                playerPosition
+            ) >= TileSize * 2.5f &&
+            FindPath(
+                candidate,
+                playerPosition,
+                connectionPath
             )
             )
         {
-            std::vector<Vector2> connectionPath;
-
-            // Accept any elevation that is connected
-            // to the player through valid ramps.
-            if (
-                FindPath(
-                    candidate,
-                    playerPosition,
-                    connectionPath
-                )
-                )
-            {
-                return candidate;
-            }
+            return candidate;
         }
     }
 
-    // Small plateaus may not contain a valid position
-    // in the normal random distance range.
-    // Use the farthest valid cell on the same elevation.
     Vector2 bestPosition =
         playerPosition;
 
     float bestDistanceSquared =
         -1.0f;
 
-    for (
-        int y = 0;
-        y < MapHeight;
-        ++y
-        )
+    for (int y = 0; y < MapHeight; ++y)
     {
-        for (
-            int x = 0;
-            x < MapWidth;
-            ++x
-            )
+        for (int x = 0; x < MapWidth; ++x)
         {
             if (
-                GetTerrainElevation(
+                !IsCellEnabled(
                     x,
                     y
-                ) !=
-                playerElevation ||
+                ) ||
                 IsCellBlocked(
                     x,
                     y
+                ) ||
+                terrainCells[
+                    CellIndex(
+                        x,
+                        y
+                    )
+                ].chamberId != chamberId
+                )
+            {
+                continue;
+            }
+
+            const Vector2 candidate =
+                CellToWorld(
+                    x,
+                    y
+                );
+
+            std::vector<Vector2> connectionPath;
+
+            if (
+                chamberId == activeChamberId &&
+                !FindPath(
+                    candidate,
+                    playerPosition,
+                    connectionPath
                 )
                 )
             {
                 continue;
             }
 
-            Vector2 candidate =
-                CellToWorld(
-                    x,
-                    y
-                );
-
-            float distanceSquared =
+            const float distanceSquared =
                 DistanceSquared(
                     candidate,
                     playerPosition
@@ -9532,7 +12731,367 @@ void Game::SpawnTestBoss()
     );
 }
 
+bool Game::IsEnemySpawnProtected(
+    const Enemy& enemy
+) const
+{
+    if (!enemy.active)
+    {
+        return false;
+    }
+
+    // The enemy is protected only before it has
+    // completely emerged from the ground.
+    return
+        enemy.spawnState ==
+        EnemySpawnState::GroundEffect ||
+        enemy.spawnState ==
+        EnemySpawnState::Emerging;
+}
+
+float Game::GetEnemySpawnDepth(
+    const Enemy& enemy
+) const
+{
+    float spriteVisualHeight =
+        enemy.radius *
+        2.0f;
+
+    if (
+        enemy.type ==
+        EnemyType::Shooter
+        )
+    {
+        spriteVisualHeight =
+            static_cast<float>(
+                shooterFrameHeight
+                ) *
+            shooterVisualScale;
+    }
+    else if (
+        ShouldUseBlobEnemySprite(
+            enemy
+        )
+        )
+    {
+        spriteVisualHeight =
+            GetBlobEnemyVisualSize(
+                enemy
+            );
+    }
+
+    // Upright Hybrid billboards are physically enlarged to
+    // compensate for the angled camera projection.
+    //
+    // The previous 0.78/0.88 multipliers did not place the
+    // complete displayed sprite below the terrain.
+    const float projectionCompensation =
+        1.75f;
+
+    // Extra depth also accounts for transparent padding
+    // surrounding the character inside its sprite frame.
+    const float extraBurialDepth =
+        28.0f;
+
+    return
+        spriteVisualHeight *
+        projectionCompensation +
+        extraBurialDepth;
+}
+
+float Game::GetEnemySpawnVisualOffset(
+    const Enemy& enemy
+) const
+{
+    if (
+        enemy.spawnState !=
+        EnemySpawnState::Emerging
+        )
+    {
+        return 0.0f;
+    }
+
+    const float progress =
+        Clamp(
+            enemy.spawnStateTimer /
+            std::max(
+                0.01f,
+                enemySpawnEmergenceDuration
+            ),
+            0.0f,
+            1.0f
+        );
+
+    // Smooth start and finish, but unlike the previous
+    // cubic ease-out it does not reveal most of the enemy
+    // immediately.
+    const float smoothProgress =
+        progress *
+        progress *
+        (
+            3.0f -
+            2.0f *
+            progress
+            );
+
+    const float buriedDepth =
+        GetEnemySpawnDepth(
+            enemy
+        );
+
+    // At progress 0:
+    //     offset = -buriedDepth
+    //
+    // At progress 1:
+    //     offset = 0
+    return
+        -buriedDepth *
+        (
+            1.0f -
+            smoothProgress
+            );
+}
+
+float Game::GetEnemySpawnFlashAmount(
+    const Enemy& enemy
+) const
+{
+    // Keep the enemy completely tinted for the
+    // entire underground rising animation.
+    if (
+        enemy.spawnState ==
+        EnemySpawnState::Emerging
+        )
+    {
+        return 1.0f;
+    }
+
+    // Once fully emerged and active, gradually
+    // return to the enemy's original colours.
+    if (
+        enemy.spawnState ==
+        EnemySpawnState::FadeOut
+        )
+    {
+        const float progress =
+            Clamp(
+                enemy.spawnStateTimer /
+                std::max(
+                    0.01f,
+                    enemySpawnFadeDuration
+                ),
+                0.0f,
+                1.0f
+            );
+
+        const float smoothProgress =
+            progress *
+            progress *
+            (
+                3.0f -
+                2.0f *
+                progress
+                );
+
+        return
+            1.0f -
+            smoothProgress;
+    }
+
+    return 0.0f;
+}
+
+Rectangle Game::GetEnemySpawnEffectSourceRect(
+    int frame
+) const
+{
+    const int safeColumns =
+        std::max(
+            1,
+            enemySpawnEffectColumns
+        );
+
+    const int safeFrameCount =
+        std::max(
+            1,
+            enemySpawnEffectFrameCount
+        );
+
+    frame =
+        std::max(
+            0,
+            std::min(
+                frame,
+                safeFrameCount - 1
+            )
+        );
+
+    const int column =
+        frame %
+        safeColumns;
+
+    const int row =
+        frame /
+        safeColumns;
+
+    return Rectangle{
+        static_cast<float>(
+            column *
+            enemySpawnEffectFrameWidth
+        ),
+
+        static_cast<float>(
+            row *
+            enemySpawnEffectFrameHeight
+        ),
+
+        static_cast<float>(
+            enemySpawnEffectFrameWidth
+        ),
+
+        static_cast<float>(
+            enemySpawnEffectFrameHeight
+        )
+    };
+}
+
+void Game::UpdateEnemySpawnState(
+    Enemy& enemy,
+    float dt
+)
+{
+    if (
+        enemy.spawnState ==
+        EnemySpawnState::Ready
+        )
+    {
+        return;
+    }
+
+    enemy.spawnStateTimer +=
+        dt;
+
+    // --------------------------------------------------
+    // GroundEffect and Emerging are protected phases.
+    //
+    // Enemy remains stationary, immune and unable to act.
+    // --------------------------------------------------
+
+    if (
+        enemy.spawnState ==
+        EnemySpawnState::GroundEffect ||
+        enemy.spawnState ==
+        EnemySpawnState::Emerging
+        )
+    {
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+        enemy.pathRefreshTimer = 0.0f;
+
+        enemy.knockbackVelocity = {
+            0.0f,
+            0.0f
+        };
+
+        enemy.animationState =
+            EnemyAnimationState::Idle;
+    }
+
+    // --------------------------------------------------
+    // Circle animation completed.
+    // Hold its final frame and begin rising.
+    // --------------------------------------------------
+
+    if (
+        enemy.spawnState ==
+        EnemySpawnState::GroundEffect &&
+        enemy.spawnStateTimer >=
+        enemySpawnGroundEffectDuration
+        )
+    {
+        enemy.spawnStateTimer -=
+            enemySpawnGroundEffectDuration;
+
+        enemy.spawnState =
+            EnemySpawnState::Emerging;
+
+        enemy.animationState =
+            EnemyAnimationState::Idle;
+
+        enemy.shooterAnimationFrame =
+            0;
+
+        enemy.shooterAnimationTimer =
+            0.0f;
+    }
+
+    // --------------------------------------------------
+    // Enemy has fully emerged.
+    //
+    // It becomes active immediately, while the circle
+    // and bright tint begin fading.
+    // --------------------------------------------------
+
+    if (
+        enemy.spawnState ==
+        EnemySpawnState::Emerging &&
+        enemy.spawnStateTimer >=
+        enemySpawnEmergenceDuration
+        )
+    {
+        enemy.spawnStateTimer -=
+            enemySpawnEmergenceDuration;
+
+        enemy.spawnState =
+            EnemySpawnState::FadeOut;
+
+        enemy.previousAnimationPosition =
+            enemy.pos;
+
+        enemy.animationPositionInitialized =
+            true;
+
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+        enemy.pathRefreshTimer = 0.0f;
+
+        RefreshEnemyPath(
+            enemy
+        );
+    }
+
+    // --------------------------------------------------
+    // Visual fade has completed.
+    // --------------------------------------------------
+
+    if (
+        enemy.spawnState ==
+        EnemySpawnState::FadeOut &&
+        enemy.spawnStateTimer >=
+        enemySpawnFadeDuration
+        )
+    {
+        enemy.spawnState =
+            EnemySpawnState::Ready;
+
+        enemy.spawnStateTimer =
+            0.0f;
+    }
+}
+
+
 void Game::SpawnEnemy(EnemyType type)
+{
+    SpawnEnemyInChamber(
+        type,
+        activeChamberId
+    );
+}
+
+void Game::SpawnEnemyInChamber(
+    EnemyType type,
+    int chamberId
+)
 {
     if (enemies.size() >= 80)
     {
@@ -9541,8 +13100,12 @@ void Game::SpawnEnemy(EnemyType type)
 
     Enemy enemy;
     enemy.id = nextEnemyId++;
+    enemy.chamberId = chamberId;
     enemy.type = type;
-    enemy.pos = GetRandomSpawnPosition();
+    enemy.pos =
+        GetRandomSpawnPositionInChamber(
+            chamberId
+        );
     enemy.active = true;
 
     if (type == EnemyType::Grunt)
@@ -9712,9 +13275,41 @@ void Game::SpawnEnemy(EnemyType type)
             true;
     }
 
-    RefreshEnemyPath(enemy);
+    // Normal enemies use the underground spawning sequence.
+    // Bosses enter combat immediately.
+    if (
+        type !=
+        EnemyType::Boss
+        )
+    {
+        enemy.spawnState =
+            EnemySpawnState::GroundEffect;
 
-    enemies.push_back(enemy);
+        enemy.spawnStateTimer =
+            0.0f;
+
+        enemy.animationState =
+            EnemyAnimationState::Idle;
+
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+    }
+    else
+    {
+        enemy.spawnState =
+            EnemySpawnState::Ready;
+
+        enemy.spawnStateTimer =
+            0.0f;
+
+        RefreshEnemyPath(
+            enemy
+        );
+    }
+
+    enemies.push_back(
+        enemy
+    );
 }
 
 void Game::UpdateEnemies(float dt)
@@ -9725,6 +13320,52 @@ void Game::UpdateEnemies(float dt)
         {
             continue;
         }
+
+        if (
+            enemy.chamberId >= 0 &&
+            enemy.chamberId != activeChamberId
+            )
+        {
+            continue;
+        }
+
+        // --------------------------------------------------
+        // Normal enemy spawning sequence
+        //
+        // Spawning enemies cannot move, attack, receive physics,
+        // or interact with the player.
+        // --------------------------------------------------
+
+// Update all visual spawn phases, including FadeOut.
+        if (
+            enemy.spawnState !=
+            EnemySpawnState::Ready
+            )
+        {
+            UpdateEnemySpawnState(
+                enemy,
+                dt
+            );
+        }
+
+        // Protected enemies cannot move, attack or receive damage.
+        if (
+            IsEnemySpawnProtected(
+                enemy
+            )
+            )
+        {
+            UpdateSmallEnemyAnimation(
+                enemy,
+                dt
+            );
+
+            continue;
+        }
+
+        // FadeOut reaches this point, so the fully emerged enemy
+        // can move, attack and receive damage while its spawn
+        // visuals fade away.
 
         UpdateEnemyReactionTimers(
             enemy,
@@ -9884,6 +13525,11 @@ void Game::UpdateEnemies(float dt)
         );
     }
 
+    // Boss healing minions were queued while the enemy
+    // vector was being iterated. Add them only after the
+    // loop has finished.
+    ProcessPendingEnemySpawns();
+
     ResolveEnemySeparation();
 }
 
@@ -9894,7 +13540,7 @@ void Game::ResolveEnemySeparation()
 
 
     auto IsSeparationMovementLocked =
-        [](
+        [this](
             const Enemy& enemy
             )
         {
@@ -9923,8 +13569,13 @@ void Game::ResolveEnemySeparation()
                     enemy.bossDashTimer >
                     0.0f
                     );
+            const bool spawnLocked =
+                IsEnemySpawnProtected(
+                    enemy
+                );
 
             return
+                spawnLocked ||
                 shootingLocked ||
                 bossLocked ||
                 crowdControlLocked;
@@ -9943,7 +13594,10 @@ void Game::ResolveEnemySeparation()
         Enemy& first =
             enemies[firstIndex];
 
-        if (!first.active)
+        if (
+            !first.active ||
+            first.chamberId != activeChamberId
+            )
         {
             continue;
         }
@@ -9961,7 +13615,10 @@ void Game::ResolveEnemySeparation()
             Enemy& second =
                 enemies[secondIndex];
 
-            if (!second.active)
+            if (
+                !second.active ||
+                second.chamberId != activeChamberId
+                )
             {
                 continue;
             }
@@ -10498,7 +14155,12 @@ void Game::CheckProjectileEnemyCollisions()
         {
             for (Enemy& enemy : enemies)
             {
-                if (!enemy.active)
+                if (
+                    !enemy.active ||
+                    IsEnemySpawnProtected(
+                        enemy
+                    )
+                    )
                 {
                     continue;
                 }
@@ -11465,7 +15127,12 @@ void Game::ResolveDongfengWaveHits(
 {
     for (Enemy& enemy : enemies)
     {
-        if (!enemy.active)
+        if (
+            !enemy.active ||
+            IsEnemySpawnProtected(
+                enemy
+            )
+            )
         {
             continue;
         }
@@ -11991,19 +15658,23 @@ void Game::DrawVfx()
 }
 void Game::DrawCombatHud()
 {
-    const int y =
-        68;
+    const int y = 68;
+
+    const DungeonChamber* chamber =
+        FindChamberById(
+            activeChamberId
+        );
 
     DrawRectangle(
         0,
         y,
-        320,
-        82,
+        430,
+        110,
         Color{
             0,
             0,
             0,
-            120
+            140
         }
     );
 
@@ -12021,10 +15692,10 @@ void Game::DrawCombatHud()
 
     DrawText(
         TextFormat(
-            "Wave: %d  Spawned: %d/%d",
-            wave.wave,
-            wave.enemiesSpawned,
-            wave.enemiesToSpawn
+            "Chamber: %s",
+            chamber != nullptr
+            ? chamber->name.c_str()
+            : "None"
         ),
         18,
         y + 32,
@@ -12032,33 +15703,119 @@ void Game::DrawCombatHud()
         WHITE
     );
 
-    const Color spawnStatusColor =
-        waveSpawningPaused
-        ? Color{
-            255,
-            190,
-            70,
-            255
-    }
-        : Color{
-            130,
-            255,
-            150,
-            255
-    };
+    const int displayedWave =
+        chamber != nullptr
+        ? std::max(
+            1,
+            chamber->currentWave
+        )
+        : 0;
+
+    const int requiredWaves =
+        chamber != nullptr
+        ? chamber->wavesRequired
+        : 2;
 
     DrawText(
         TextFormat(
-            "Auto spawn: %s  [P]",
-            waveSpawningPaused
-            ? "PAUSED"
-            : "RUNNING"
+            "Encounter wave: %d/%d   Spawned: %d/%d",
+            displayedWave,
+            requiredWaves,
+            wave.enemiesSpawned,
+            wave.enemiesToSpawn
         ),
         18,
         y + 56,
         17,
-        spawnStatusColor
+        WHITE
     );
+
+    const bool chamberCleared =
+        chamber != nullptr &&
+        chamber->cleared;
+
+    const Color exitColor =
+        chamberCleared
+        ? Color{
+            120,
+            255,
+            145,
+            255
+    }
+        : Color{
+            255,
+            170,
+            80,
+            255
+    };
+
+    const char* encounterStatus =
+        chamberCleared
+        ? "EXIT UNLOCKED - enter the next chamber"
+        : (
+            wave.waitingForNextWave
+            ? "CHAMBER LOCKED - next wave incoming"
+            : "CHAMBER LOCKED - defeat all enemies"
+            );
+
+    DrawText(
+        encounterStatus,
+        18,
+        y + 80,
+        17,
+        exitColor
+    );
+
+    if (chamberClearedMessageTimer > 0.0f)
+    {
+        const char* message =
+            "CHAMBER CLEARED - EXIT UNLOCKED";
+
+        const int fontSize = 30;
+        const int textWidth =
+            MeasureText(
+                message,
+                fontSize
+            );
+
+        const int boxWidth =
+            textWidth + 48;
+
+        const int boxX =
+            GetScreenWidth() / 2 -
+            boxWidth / 2;
+
+        const int boxY = 86;
+
+        DrawRectangle(
+            boxX,
+            boxY,
+            boxWidth,
+            56,
+            Color{
+                0,
+                0,
+                0,
+                205
+            }
+        );
+
+        DrawRectangleLines(
+            boxX,
+            boxY,
+            boxWidth,
+            56,
+            GOLD
+        );
+
+        DrawText(
+            message,
+            boxX + 24,
+            boxY + 13,
+            fontSize,
+            GOLD
+        );
+    }
 }
 
 void Game::DrawSkillUi()
@@ -12705,10 +16462,14 @@ void Game::ApplyUpgradeChoice(int choiceIndex)
         return;
     }
 
-    // Normal wave-completion upgrade:
-    StartWave(
-        wave.wave + 1
-    );
+    // Chamber encounters start their own next wave. A non-manual
+    // upgrade therefore only returns to gameplay.
+    gameState =
+        GameState::Playing;
+
+    attackButtonDown = false;
+    dashButtonDown = false;
+    dashButtonPressed = false;
 }
 
 void Game::UnlockSkill(int slotIndex)
@@ -14379,7 +18140,12 @@ void Game::DealMeleeHit(Enemy& targetEnemy)
 
     for (Enemy& enemy : enemies)
     {
-        if (!enemy.active)
+        if (
+            !enemy.active ||
+            IsEnemySpawnProtected(
+                enemy
+            )
+            )
         {
             continue;
         }
@@ -14396,6 +18162,16 @@ void Game::DealMeleeHit(Enemy& targetEnemy)
         ApplyDamageToEnemy(enemy, damage, enemy.pos);
 
         if (!enemy.active)
+        {
+            continue;
+        }
+
+        // Bosses take damage and flash, but basic melee
+// attacks do not physically move them.
+        if (
+            enemy.type ==
+            EnemyType::Boss
+            )
         {
             continue;
         }
@@ -14928,7 +18704,28 @@ void Game::ApplyKnockbackToEnemy(
     float landingStunDuration
 )
 {
-    if (!enemy.active)
+    if (
+        !enemy.active ||
+        IsEnemySpawnProtected(
+            enemy
+        )
+        )
+    {
+        return;
+    }
+
+    // The healing Boss cannot be moved, launched or
+// interrupted by knockback skills.
+    if (
+        enemy.type ==
+        EnemyType::Boss &&
+        (
+            enemy.bossActionState ==
+            BossActionState::HealingWindup ||
+            enemy.bossActionState ==
+            BossActionState::HealingActive
+            )
+        )
     {
         return;
     }
@@ -14991,21 +18788,51 @@ void Game::ApplySkillDamageToEnemy(
     ApplyDamageToEnemy(enemy, adjustedDamage, hitPos);
 }
 
-int Game::GetModifiedDamageToEnemy(const Enemy& enemy, int baseDamage) const
+int Game::GetModifiedDamageToEnemy(
+    const Enemy& enemy,
+    int baseDamage
+) const
 {
-    float multiplier = 1.0f;
+    float multiplier =
+        1.0f;
 
-    // Frozen enemies take more damage.
+    // Frozen enemies normally take additional damage.
     if (enemy.frozenTimer > 0.0f)
     {
-        multiplier = 1.50f;
+        multiplier *=
+            1.50f;
     }
 
-    int finalDamage = static_cast<int>(baseDamage * multiplier);
+    // Boss remains damageable and still flashes, but
+    // receives heavy protection throughout both healing
+    // animations.
+    if (
+        enemy.type ==
+        EnemyType::Boss &&
+        (
+            enemy.bossActionState ==
+            BossActionState::HealingWindup ||
+            enemy.bossActionState ==
+            BossActionState::HealingActive
+            )
+        )
+    {
+        multiplier *=
+            bossHealingDamageTakenMultiplier;
+    }
+
+    int finalDamage =
+        static_cast<int>(
+            static_cast<float>(
+                baseDamage
+                ) *
+            multiplier
+            );
 
     if (finalDamage < 1)
     {
-        finalDamage = 1;
+        finalDamage =
+            1;
     }
 
     return finalDamage;
@@ -15047,7 +18874,13 @@ void Game::ApplyDamageToEnemy(
     Vector2 hitPos
 )
 {
-    if (!enemy.active)
+    if (
+        !enemy.active ||
+        enemy.chamberId != activeChamberId ||
+        IsEnemySpawnProtected(
+            enemy
+        )
+        )
     {
         return;
     }
@@ -15088,48 +18921,41 @@ void Game::ApplyDamageToEnemy(
     }
 
     // --------------------------------------------------
-    // Universal hit-stun
-    // --------------------------------------------------
-
-    float hitStunDuration =
-        normalEnemyHitStunDuration;
+ // Ordinary enemy hit-stun
+ //
+ // Bosses do not receive ordinary hit-stun from player
+ // attacks. Their dedicated interruption system below
+ // can still stun them during laser or bombardment.
+ // --------------------------------------------------
 
     if (
-        enemy.type ==
-        EnemyType::Shooter
-        )
-    {
-        hitStunDuration =
-            shooterHitStunDuration;
-    }
-    else if (
-        enemy.type ==
+        enemy.type !=
         EnemyType::Boss
         )
     {
-        const bool bossPerformingSpecialAction =
-            enemy.bossActionState !=
-            BossActionState::None;
+        float hitStunDuration =
+            normalEnemyHitStunDuration;
 
-        // Ordinary tiny hit-stun must not repeatedly pause
-        // laser, roar, charge, or slam.
-        hitStunDuration =
-            bossPerformingSpecialAction
-            ? 0.0f
-            : bossHitStunDuration;
+        if (
+            enemy.type ==
+            EnemyType::Shooter
+            )
+        {
+            hitStunDuration =
+                shooterHitStunDuration;
+        }
+
+        enemy.stunTimer =
+            std::max(
+                enemy.stunTimer,
+                hitStunDuration
+            );
+
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+        enemy.pathRefreshTimer = 0.0f;
     }
 
-    enemy.stunTimer =
-        std::max(
-            enemy.stunTimer,
-            hitStunDuration
-        );
-
-    enemy.path.clear();
-    enemy.pathIndex = 0;
-    enemy.pathRefreshTimer = 0.0f;
-
-    
     // --------------------------------------------------
 // Boss channelled-attack interruption
 // --------------------------------------------------
@@ -15278,7 +19104,13 @@ Enemy* Game::FindNearestEnemy(Vector2 fromPos, float range)
 
     for (Enemy& enemy : enemies)
     {
-        if (!enemy.active)
+        if (
+            !enemy.active ||
+            enemy.chamberId != activeChamberId ||
+            IsEnemySpawnProtected(
+                enemy
+            )
+            )
         {
             continue;
         }
@@ -15345,7 +19177,13 @@ Enemy* Game::FindNearestEnemyExcluding(
 
     for (Enemy& enemy : enemies)
     {
-        if (!enemy.active)
+        if (
+            !enemy.active ||
+            enemy.chamberId != activeChamberId ||
+            IsEnemySpawnProtected(
+                enemy
+            )
+            )
         {
             continue;
         }
@@ -16649,6 +20487,18 @@ void Game::BuildGroundCache()
         {
             for (int x = 0; x < MapWidth; ++x)
             {
+                if (
+                    !IsCellEnabled(x, y) ||
+                    !IsChamberVisible(
+                        terrainCells[
+                            CellIndex(x, y)
+                        ].chamberId
+                    )
+                    )
+                {
+                    continue;
+                }
+
                 int tileIndex =
                     GetValidTileIndex(
                         x,
@@ -16675,15 +20525,25 @@ void Game::BuildGroundCache()
                     TileSize
                 };
 
-                if (
-                    brush.hasTexture &&
-                    brush.texture.id != 0
-                    )
+                Texture2D brushTexture =
+                    GetTileBrushTexture(
+                        tileIndex
+                    );
+
+                if (brushTexture.id != 0)
                 {
-                    DrawTextureInRect(
-                        brush.texture,
+                    DrawTexturePro(
+                        brushTexture,
+                        GetTileBrushSourceRect(
+                            tileIndex
+                        ),
                         destination,
-                        brush.autoFitToTile
+                        {
+                            0.0f,
+                            0.0f
+                        },
+                        0.0f,
+                        WHITE
                     );
                 }
                 else
@@ -16812,13 +20672,18 @@ void Game::BuildGroundCache()
                         tileIndex
                     ];
 
-                if (
-                    brush.hasTexture &&
-                    brush.texture.id != 0
-                    )
+                Texture2D brushTexture =
+                    GetTileBrushTexture(
+                        tileIndex
+                    );
+
+                if (brushTexture.id != 0)
                 {
-                    DrawTextureOnQuad(
-                        brush.texture,
+                    DrawTextureFrameOnQuad2D(
+                        brushTexture,
+                        GetTileBrushSourceRect(
+                            tileIndex
+                        ),
                         top,
                         right,
                         bottom,
@@ -16870,6 +20735,18 @@ void Game::BuildGroundCache()
                     !IsCellInside(
                         x,
                         y
+                    ) ||
+                    !IsCellEnabled(
+                        x,
+                        y
+                    ) ||
+                    !IsChamberVisible(
+                        terrainCells[
+                            CellIndex(
+                                x,
+                                y
+                            )
+                        ].chamberId
                     )
                     )
                 {
@@ -17361,10 +21238,28 @@ void Game::DrawEnemyVisual(
     const Enemy& enemy
 )
 {
-    if (!enemy.active)
+    if (
+        !enemy.active ||
+        enemy.spawnState ==
+        EnemySpawnState::GroundEffect
+        )
     {
         return;
     }
+
+    const float enemySpawnVisualOffset =
+        GetEnemySpawnVisualOffset(
+            enemy
+        );
+
+    const float finalEnemyVisualHeight =
+        enemy.visualHeight +
+        enemySpawnVisualOffset;
+
+    const float enemySpawnFlashAmount =
+        GetEnemySpawnFlashAmount(
+            enemy
+        );
 
     // --------------------------------------------------
     // Choose the correct enemy rendering system
@@ -17662,13 +21557,13 @@ void Game::DrawEnemyVisual(
     const Vector2 shooterDrawPosition{
         groundPosition.x,
         groundPosition.y -
-            enemy.visualHeight
+            finalEnemyVisualHeight
     };
 
     const Vector2 bossDrawPosition{
         groundPosition.x,
         groundPosition.y -
-            enemy.visualHeight
+            finalEnemyVisualHeight
     };
 
     // Blob and circle enemies use a centre anchor.
@@ -17686,7 +21581,7 @@ void Game::DrawEnemyVisual(
         groundPosition.x,
 
         groundPosition.y -
-            enemy.visualHeight -
+            finalEnemyVisualHeight -
             centreVisualLift
     };
 
@@ -17838,38 +21733,84 @@ void Game::DrawEnemyVisual(
     // Enemy sprite
     // --------------------------------------------------
 
-    if (usesShooterEnemySprite)
+    auto DrawCurrentEnemyBody =
+        [&](
+            Color bodyTint,
+            Color circleTint
+            )
+        {
+            if (usesShooterEnemySprite)
+            {
+                DrawShooterEnemySprite(
+                    enemy,
+                    shooterDrawPosition,
+                    bodyTint
+                );
+            }
+            else if (usesBossEnemySprite)
+            {
+                DrawBossEnemySprite(
+                    enemy,
+                    bossDrawPosition,
+                    bodyTint
+                );
+            }
+            else if (usesBlobEnemySprite)
+            {
+                DrawSmallEnemySprite(
+                    enemy,
+                    centredDrawPosition,
+                    bodyTint
+                );
+            }
+            else
+            {
+                DrawCircleV(
+                    centredDrawPosition,
+                    enemy.radius,
+                    circleTint
+                );
+            }
+        };
+
+    // Draw the enemy using its normal colours.
+    DrawCurrentEnemyBody(
+        spriteTint,
+        fallbackColor
+    );
+
+    // Draw a second bright layer while the enemy emerges.
+    if (
+        enemySpawnFlashAmount >
+        0.001f
+        )
     {
-        DrawShooterEnemySprite(
-            enemy,
-            shooterDrawPosition,
-            spriteTint
+        const unsigned char glowAlpha =
+            static_cast<unsigned char>(
+                255.0f *
+                enemySpawnFlashAmount
+                );
+
+        const Color emergenceGlow{
+            255,
+            245,
+            190,
+            glowAlpha
+        };
+
+        BeginBlendMode(
+            BLEND_ADDITIVE
         );
-    }
-    else if (usesBossEnemySprite)
-    {
-        DrawBossEnemySprite(
-            enemy,
-            bossDrawPosition,
-            spriteTint
+
+        DrawCurrentEnemyBody(
+            emergenceGlow,
+            emergenceGlow
         );
+
+        EndBlendMode();
     }
-    else if (usesBlobEnemySprite)
-    {
-        DrawSmallEnemySprite(
-            enemy,
-            centredDrawPosition,
-            spriteTint
-        );
-    }
-    else
-    {
-        DrawCircleV(
-            centredDrawPosition,
-            enemy.radius,
-            fallbackColor
-        );
-    }
+
+
 
 
     // --------------------------------------------------
@@ -17877,10 +21818,15 @@ void Game::DrawEnemyVisual(
     // --------------------------------------------------
 
     if (
-        enemy.hp <
-        enemy.maxHp ||
-        enemy.type ==
-        EnemyType::Boss
+        !IsEnemySpawnProtected(
+            enemy
+        ) &&
+        (
+            enemy.hp <
+            enemy.maxHp ||
+            enemy.type ==
+            EnemyType::Boss
+            )
         )
     {
         const float hpRatio =
@@ -18361,6 +22307,16 @@ void Game::DrawWorldDepthSorted()
             int stableOrder
             )
         {
+            if (
+                kind != WorldDrawKind::Player &&
+                !IsWorldPositionInVisibleChamber(
+                    worldPosition
+                )
+                )
+            {
+                return;
+            }
+
             WorldDrawItem item;
 
             item.kind =
@@ -18445,6 +22401,18 @@ void Game::DrawWorldDepthSorted()
         {
             for (int x = 0; x < MapWidth; ++x)
             {
+                if (
+                    !IsCellEnabled(x, y) ||
+                    !IsChamberVisible(
+                        terrainCells[
+                            CellIndex(x, y)
+                        ].chamberId
+                    )
+                    )
+                {
+                    continue;
+                }
+
                 const int cellIndex =
                     CellIndex(
                         x,
@@ -18597,161 +22565,169 @@ void Game::DrawWorldDepthSorted()
                 }
 
                 // ------------------------------------------
-                // East wall segments
-                // ------------------------------------------
+ // All four terrain wall directions
+ // ------------------------------------------
 
-                const int eastElevation =
-                    GetTerrainElevation(
-                        x + 1,
-                        y
-                    );
+                const int faceStride =
+                    maxTerrainElevation +
+                    1;
 
-                const bool eastHasRamp =
-                    IsRampConnectionBetweenCells(
-                        x,
-                        y,
-                        x + 1,
-                        y
-                    );
+                const int terrainStableStride =
+                    faceStride *
+                    4 +
+                    8;
 
-                if (!eastHasRamp)
-                {
-                    Vector2 eastEdge =
-                        cellCenter;
-
-                    eastEdge.x +=
-                        TileSize * 0.5f;
-
-                    for (
-                        int segmentLevel =
-                        eastElevation;
-                        segmentLevel <
-                        elevation;
-                        ++segmentLevel
+                auto AddTerrainWallSegments =
+                    [&](
+                        TerrainCliffFace face,
+                        WorldDrawKind drawKind,
+                        int neighbourX,
+                        int neighbourY,
+                        Vector2 edgePosition,
+                        int tiePriority,
+                        int faceOrder
                         )
                     {
-                        WorldDrawItem item;
-
-                        item.kind =
-                            WorldDrawKind::
-                            TerrainEastCliff;
-
-                        item.cellX = x;
-                        item.cellY = y;
-
-                        item.segmentLevel =
-                            segmentLevel;
-
-                        // Each wall section belongs to the
-                        // terrain level at its bottom.
-                        item.elevationBand =
-                            segmentLevel;
-
-                        item.depth =
-                            GetWorldDepth(
-                                eastEdge
+                        const int neighbourElevation =
+                            GetTerrainElevation(
+                                neighbourX,
+                                neighbourY
                             );
 
-                        item.tiePriority = 12;
+                        if (
+                            IsRampConnectionBetweenCells(
+                                x,
+                                y,
+                                neighbourX,
+                                neighbourY
+                            )
+                            )
+                        {
+                            return;
+                        }
 
-                        item.secondaryDepth =
-                            WorldToView(
-                                eastEdge
-                            ).x;
+                        for (
+                            int segmentLevel =
+                            neighbourElevation;
+                            segmentLevel <
+                            elevation;
+                            ++segmentLevel
+                            )
+                        {
+                            WorldDrawItem item;
 
-                        item.stableOrder =
-                            cellIndex *
-                            (
-                                maxTerrainElevation *
-                                2 +
-                                4
-                                ) +
-                            2 +
-                            segmentLevel;
+                            item.kind =
+                                drawKind;
 
-                        worldDrawItems.push_back(
-                            item
-                        );
-                    }
-                }
+                            item.cellX =
+                                x;
 
-                // ------------------------------------------
-                // South wall segments
-                // ------------------------------------------
+                            item.cellY =
+                                y;
 
-                const int southElevation =
-                    GetTerrainElevation(
-                        x,
-                        y + 1
-                    );
+                            item.segmentLevel =
+                                segmentLevel;
 
-                const bool southHasRamp =
-                    IsRampConnectionBetweenCells(
-                        x,
-                        y,
-                        x,
-                        y + 1
-                    );
+                            item.elevationBand =
+                                segmentLevel;
 
-                if (!southHasRamp)
-                {
-                    Vector2 southEdge =
-                        cellCenter;
+                            item.depth =
+                                GetWorldDepth(
+                                    edgePosition
+                                );
 
-                    southEdge.y +=
-                        TileSize * 0.5f;
+                            item.tiePriority =
+                                tiePriority;
 
-                    for (
-                        int segmentLevel =
-                        southElevation;
-                        segmentLevel <
-                        elevation;
-                        ++segmentLevel
-                        )
-                    {
-                        WorldDrawItem item;
+                            item.secondaryDepth =
+                                WorldToView(
+                                    edgePosition
+                                ).x;
 
-                        item.kind =
-                            WorldDrawKind::
-                            TerrainSouthCliff;
+                            item.stableOrder =
+                                cellIndex *
+                                terrainStableStride +
+                                faceOrder *
+                                faceStride +
+                                segmentLevel;
 
-                        item.cellX = x;
-                        item.cellY = y;
-
-                        item.segmentLevel =
-                            segmentLevel;
-
-                        item.elevationBand =
-                            segmentLevel;
-
-                        item.depth =
-                            GetWorldDepth(
-                                southEdge
+                            worldDrawItems.push_back(
+                                item
                             );
+                        }
+                    };
 
-                        item.tiePriority = 13;
+                // North and west are the rear-facing walls.
+                // Draw them before the raised top surface.
+                Vector2 northEdge =
+                    cellCenter;
 
-                        item.secondaryDepth =
-                            WorldToView(
-                                southEdge
-                            ).x;
+                northEdge.y -=
+                    TileSize *
+                    0.5f;
 
-                        item.stableOrder =
-                            cellIndex *
-                            (
-                                maxTerrainElevation *
-                                2 +
-                                4
-                                ) +
-                            2 +
-                            maxTerrainElevation +
-                            segmentLevel;
+                AddTerrainWallSegments(
+                    TerrainCliffFace::North,
+                    WorldDrawKind::TerrainNorthCliff,
+                    x,
+                    y - 1,
+                    northEdge,
+                    2,
+                    0
+                );
 
-                        worldDrawItems.push_back(
-                            item
-                        );
-                    }
-                }
+                Vector2 westEdge =
+                    cellCenter;
+
+                westEdge.x -=
+                    TileSize *
+                    0.5f;
+
+                AddTerrainWallSegments(
+                    TerrainCliffFace::West,
+                    WorldDrawKind::TerrainWestCliff,
+                    x - 1,
+                    y,
+                    westEdge,
+                    3,
+                    1
+                );
+
+                // East and south are the foreground-facing walls.
+                // Draw them after the raised top.
+                Vector2 eastEdge =
+                    cellCenter;
+
+                eastEdge.x +=
+                    TileSize *
+                    0.5f;
+
+                AddTerrainWallSegments(
+                    TerrainCliffFace::East,
+                    WorldDrawKind::TerrainEastCliff,
+                    x + 1,
+                    y,
+                    eastEdge,
+                    12,
+                    2
+                );
+
+                Vector2 southEdge =
+                    cellCenter;
+
+                southEdge.y +=
+                    TileSize *
+                    0.5f;
+
+                AddTerrainWallSegments(
+                    TerrainCliffFace::South,
+                    WorldDrawKind::TerrainSouthCliff,
+                    x,
+                    y + 1,
+                    southEdge,
+                    13,
+                    3
+                );
             }
         }
     }
@@ -19225,6 +23201,29 @@ void Game::DrawWorldDepthSorted()
 
             break;
         }
+        case WorldDrawKind::TerrainNorthCliff:
+        {
+            DrawTerrainCliffSegment(
+                item.cellX,
+                item.cellY,
+                TerrainCliffFace::North,
+                item.segmentLevel
+            );
+
+            break;
+        }
+
+        case WorldDrawKind::TerrainWestCliff:
+        {
+            DrawTerrainCliffSegment(
+                item.cellX,
+                item.cellY,
+                TerrainCliffFace::West,
+                item.segmentLevel
+            );
+
+            break;
+        }
 
         case WorldDrawKind::TerrainEastCliff:
         {
@@ -19405,10 +23404,159 @@ void Game::DrawWorldDepthSorted()
     }
 }
 
+void Game::DrawEnemySpawnGroundEffects3D() const
+{
+    if (
+        !enemySpawnEffectSpriteLoaded ||
+        enemySpawnEffectSpriteSheet.id ==
+        0
+        )
+    {
+        return;
+    }
+
+    for (
+        const Enemy& enemy :
+        enemies
+        )
+    {
+        if (
+            !enemy.active ||
+            !IsChamberVisible(
+                enemy.chamberId
+            ) ||
+            enemy.type ==
+            EnemyType::Boss ||
+            enemy.spawnState ==
+            EnemySpawnState::Ready
+            )
+        {
+            continue;
+        }
+
+        // GroundEffect animates through the sheet.
+        // Emerging and FadeOut use the final frame.
+        int frame =
+            enemySpawnEffectFrameCount -
+            1;
+
+        unsigned char alpha =
+            255;
+
+        if (
+            enemy.spawnState ==
+            EnemySpawnState::GroundEffect
+            )
+        {
+            const float progress =
+                Clamp(
+                    enemy.spawnStateTimer /
+                    std::max(
+                        0.01f,
+                        enemySpawnGroundEffectDuration
+                    ),
+                    0.0f,
+                    1.0f
+                );
+
+            frame =
+                std::min(
+                    enemySpawnEffectFrameCount -
+                    1,
+
+                    static_cast<int>(
+                        progress *
+                        static_cast<float>(
+                            enemySpawnEffectFrameCount
+                            )
+                        )
+                );
+        }
+        else if (
+            enemy.spawnState ==
+            EnemySpawnState::Emerging
+            )
+        {
+            // Hold the final frame at full opacity while
+            // the enemy is still rising.
+            frame =
+                enemySpawnEffectFrameCount -
+                1;
+
+            alpha =
+                255;
+        }
+        else if (
+            enemy.spawnState ==
+            EnemySpawnState::FadeOut
+            )
+        {
+            frame =
+                enemySpawnEffectFrameCount -
+                1;
+
+            const float fadeProgress =
+                Clamp(
+                    enemy.spawnStateTimer /
+                    std::max(
+                        0.01f,
+                        enemySpawnFadeDuration
+                    ),
+                    0.0f,
+                    1.0f
+                );
+
+            const float smoothFade =
+                fadeProgress *
+                fadeProgress *
+                (
+                    3.0f -
+                    2.0f *
+                    fadeProgress
+                    );
+
+            alpha =
+                static_cast<unsigned char>(
+                    255.0f *
+                    (
+                        1.0f -
+                        smoothFade
+                        )
+                    );
+        }
+
+        const float visualSize =
+            std::max(
+                enemySpawnEffectVisualSize,
+                enemy.radius *
+                4.50f
+            );
+
+        DrawHybridGroundTextureFrame(
+            enemySpawnEffectSpriteSheet,
+            GetEnemySpawnEffectSourceRect(
+                frame
+            ),
+            enemy.pos,
+            visualSize,
+            2.4f,
+            Color{
+                255,
+                255,
+                255,
+                alpha
+            }
+        );
+    }
+}
+
 void Game::DrawWorldGroundEffects()
 {
 
     DrawWorldShadows();
+
+    DrawEnemySpawnGroundEffects2D();
+
     DrawBossFallingRockTelegraphs2D();
     DrawBossLasers2D();
 
@@ -19678,6 +23826,30 @@ void Game::DrawLightMap()
             continue;
         }
 
+        if (
+            !IsWorldPositionInVisibleChamber(
+                light.position
+            )
+            )
+        {
+            continue;
+        }
+
+        const int lightChamberId =
+            FindChamberAtWorld(
+                light.position
+            );
+
+        const float chamberVisibility =
+            GetChamberVisibility(
+                lightChamberId
+            );
+
+        if (chamberVisibility <= 0.01f)
+        {
+            continue;
+        }
+
         Vector2 viewPosition =
             WorldToViewElevated(
                 light.position
@@ -19734,7 +23906,8 @@ void Game::DrawLightMap()
 
         float strength =
             Clamp(
-                light.intensity,
+                light.intensity *
+                chamberVisibility,
                 0.0f,
                 1.0f
             );
@@ -20195,6 +24368,15 @@ void Game::DrawWorldShadows() const
 
     for (const Obstacle& obstacle : obstacles)
     {
+        if (
+            !IsWorldPositionInVisibleChamber(
+                obstacle.position
+            )
+            )
+        {
+            continue;
+        }
+
         DrawObstacleShadow(
             obstacle
         );
@@ -20667,8 +24849,8 @@ bool Game::GetShooterAnimationFrame(
             ) *
         shooterVisualScale;
 
-    outAnchorY = 0.98f;
-
+    outAnchorY =
+        0.98f;
     return true;
 }
 
@@ -22176,11 +26358,48 @@ void Game::RebuildHybridTerrain()
     }
 
     hybridTerrainBatches.clear();
-    hybridTerrainBatches.resize(tileBrushes.size());
 
-    std::vector<HybridMeshBuilder> builders(
-        tileBrushes.size()
-    );
+    struct ChamberTerrainBuilder
+    {
+        int chamberId = -1;
+        int tileIndex = -1;
+        HybridMeshBuilder meshBuilder;
+    };
+
+    std::vector<ChamberTerrainBuilder>
+        builders;
+
+    auto GetBuilder =
+        [&builders](
+            int chamberId,
+            int tileIndex
+            ) -> HybridMeshBuilder&
+        {
+            for (
+                ChamberTerrainBuilder& entry :
+                builders
+                )
+            {
+                if (
+                    entry.chamberId == chamberId &&
+                    entry.tileIndex == tileIndex
+                    )
+                {
+                    return entry.meshBuilder;
+                }
+            }
+
+            ChamberTerrainBuilder entry;
+            entry.chamberId = chamberId;
+            entry.tileIndex = tileIndex;
+
+            builders.push_back(
+                std::move(entry)
+            );
+
+            return
+                builders.back().meshBuilder;
+        };
 
     const float originX =
         -static_cast<float>(MapWidth) *
@@ -22237,7 +26456,16 @@ void Game::RebuildHybridTerrain()
         {
             CornerHeights heights{};
 
-            if (!IsCellInside(cellX, cellY))
+            if (
+                !IsCellInside(
+                    cellX,
+                    cellY
+                ) ||
+                !IsCellEnabled(
+                    cellX,
+                    cellY
+                )
+                )
             {
                 return heights;
             }
@@ -22330,11 +26558,27 @@ void Game::RebuildHybridTerrain()
     {
         for (int x = 0; x < MapWidth; ++x)
         {
+            if (!IsCellEnabled(x, y))
+            {
+                continue;
+            }
+
             const int tileIndex =
                 GetValidTileIndex(x, y);
 
-            HybridMeshBuilder& builder =
-                builders[tileIndex];
+            const int chamberId =
+                terrainCells[
+                    CellIndex(
+                        x,
+                        y
+                    )
+                ].chamberId;
+
+            HybridMeshBuilder& topBuilder =
+                GetBuilder(
+                    chamberId,
+                    tileIndex
+                );
 
             const CornerHeights current =
                 GetCornerHeights(x, y);
@@ -22383,7 +26627,7 @@ void Game::RebuildHybridTerrain()
                 z1
             };
 
-            builder.AddQuad(
+            topBuilder.AddQuad(
                 nw,
                 sw,
                 se,
@@ -22416,13 +26660,41 @@ void Game::RebuildHybridTerrain()
                     current.se - lowerSe > wallEpsilon
                     )
                 {
-                    builder.AddQuad(
+                    const int eastWallTile =
+                        GetTerrainWallTileIndex(
+                            x,
+                            y,
+                            TerrainWallFace::East
+                        );
+
+                    HybridMeshBuilder& eastWallBuilder =
+                        GetBuilder(
+                            chamberId,
+                            eastWallTile
+                        );
+
+                    eastWallBuilder.AddQuad(
                         ne,
                         se,
-                        { x1, lowerSe, z1 },
-                        { x1, lowerNe, z0 },
-                        { 1.0f, 0.0f, 0.0f },
-                        ScaleHybridColor(WHITE, 0.70f)
+                        {
+                            x1,
+                            lowerSe,
+                            z1
+                        },
+                        {
+                            x1,
+                            lowerNe,
+                            z0
+                        },
+                        {
+                            1.0f,
+                            0.0f,
+                            0.0f
+                        },
+                        ScaleHybridColor(
+                            WHITE,
+                            0.70f
+                        )
                     );
                 }
             }
@@ -22451,13 +26723,41 @@ void Game::RebuildHybridTerrain()
                     current.sw - lowerSw > wallEpsilon
                     )
                 {
-                    builder.AddQuad(
+                    const int westWallTile =
+                        GetTerrainWallTileIndex(
+                            x,
+                            y,
+                            TerrainWallFace::West
+                        );
+
+                    HybridMeshBuilder& westWallBuilder =
+                        GetBuilder(
+                            chamberId,
+                            westWallTile
+                        );
+
+                    westWallBuilder.AddQuad(
                         sw,
                         nw,
-                        { x0, lowerNw, z0 },
-                        { x0, lowerSw, z1 },
-                        { -1.0f, 0.0f, 0.0f },
-                        ScaleHybridColor(WHITE, 0.62f)
+                        {
+                            x0,
+                            lowerNw,
+                            z0
+                        },
+                        {
+                            x0,
+                            lowerSw,
+                            z1
+                        },
+                        {
+                            -1.0f,
+                            0.0f,
+                            0.0f
+                        },
+                        ScaleHybridColor(
+                            WHITE,
+                            0.62f
+                        )
                     );
                 }
             }
@@ -22486,13 +26786,41 @@ void Game::RebuildHybridTerrain()
                     current.se - lowerSe > wallEpsilon
                     )
                 {
-                    builder.AddQuad(
+                    const int southWallTile =
+                        GetTerrainWallTileIndex(
+                            x,
+                            y,
+                            TerrainWallFace::South
+                        );
+
+                    HybridMeshBuilder& southWallBuilder =
+                        GetBuilder(
+                            chamberId,
+                            southWallTile
+                        );
+
+                    southWallBuilder.AddQuad(
                         se,
                         sw,
-                        { x0, lowerSw, z1 },
-                        { x1, lowerSe, z1 },
-                        { 0.0f, 0.0f, 1.0f },
-                        ScaleHybridColor(WHITE, 0.82f)
+                        {
+                            x0,
+                            lowerSw,
+                            z1
+                        },
+                        {
+                            x1,
+                            lowerSe,
+                            z1
+                        },
+                        {
+                            0.0f,
+                            0.0f,
+                            1.0f
+                        },
+                        ScaleHybridColor(
+                            WHITE,
+                            0.82f
+                        )
                     );
                 }
             }
@@ -22521,13 +26849,41 @@ void Game::RebuildHybridTerrain()
                     current.ne - lowerNe > wallEpsilon
                     )
                 {
-                    builder.AddQuad(
+                    const int northWallTile =
+                        GetTerrainWallTileIndex(
+                            x,
+                            y,
+                            TerrainWallFace::North
+                        );
+
+                    HybridMeshBuilder& northWallBuilder =
+                        GetBuilder(
+                            chamberId,
+                            northWallTile
+                        );
+
+                    northWallBuilder.AddQuad(
                         nw,
                         ne,
-                        { x1, lowerNe, z0 },
-                        { x0, lowerNw, z0 },
-                        { 0.0f, 0.0f, -1.0f },
-                        ScaleHybridColor(WHITE, 0.74f)
+                        {
+                            x1,
+                            lowerNe,
+                            z0
+                        },
+                        {
+                            x0,
+                            lowerNw,
+                            z0
+                        },
+                        {
+                            0.0f,
+                            0.0f,
+                            -1.0f
+                        },
+                        ScaleHybridColor(
+                            WHITE,
+                            0.74f
+                        )
                     );
                 }
             }
@@ -22537,27 +26893,91 @@ void Game::RebuildHybridTerrain()
     bool builtAnyBatch = false;
 
     for (
-        int tileIndex = 0;
-        tileIndex < static_cast<int>(builders.size());
-        ++tileIndex
+        ChamberTerrainBuilder& builderEntry :
+        builders
         )
     {
+        const int tileIndex =
+            builderEntry.tileIndex;
+
+        Texture2D brushTexture =
+            GetTileBrushTexture(
+                tileIndex
+            );
+
+        if (
+            brushTexture.id != 0 &&
+            brushTexture.width > 0 &&
+            brushTexture.height > 0
+            )
+        {
+            const Rectangle source =
+                GetTileBrushSourceRect(
+                    tileIndex
+                );
+
+            const float u0 =
+                source.x /
+                static_cast<float>(
+                    brushTexture.width
+                    );
+
+            const float v0 =
+                source.y /
+                static_cast<float>(
+                    brushTexture.height
+                    );
+
+            const float u1 =
+                (
+                    source.x +
+                    source.width
+                    ) /
+                static_cast<float>(
+                    brushTexture.width
+                    );
+
+            const float v1 =
+                (
+                    source.y +
+                    source.height
+                    ) /
+                static_cast<float>(
+                    brushTexture.height
+                    );
+
+            builderEntry.meshBuilder.RemapUv(
+                u0,
+                v0,
+                u1,
+                v1
+            );
+        }
+
         Mesh mesh =
-            builders[tileIndex].BuildMesh();
+            builderEntry.meshBuilder.BuildMesh();
 
         if (mesh.vertexCount <= 0)
         {
             continue;
         }
 
-        HybridTerrainBatch& batch =
-            hybridTerrainBatches[tileIndex];
+        HybridTerrainBatch batch;
 
-        batch.mesh = mesh;
+        batch.mesh =
+            mesh;
+
         batch.model =
-            LoadModelFromMesh(mesh);
+            LoadModelFromMesh(
+                mesh
+            );
 
-        batch.tileIndex = tileIndex;
+        batch.chamberId =
+            builderEntry.chamberId;
+
+        batch.tileIndex =
+            tileIndex;
+
         batch.ready =
             batch.model.meshCount > 0;
 
@@ -22575,21 +26995,30 @@ void Game::RebuildHybridTerrain()
                 hybridTerrainShader;
         }
 
+        Texture2D batchTexture =
+            GetTileBrushTexture(
+                tileIndex
+            );
+
         if (
-            tileIndex >= 0 &&
-            tileIndex < static_cast<int>(tileBrushes.size()) &&
-            tileBrushes[tileIndex].hasTexture &&
-            tileBrushes[tileIndex].texture.id != 0 &&
+            batchTexture.id != 0 &&
             batch.model.materialCount > 0
             )
         {
             batch.model.materials[0]
                 .maps[MATERIAL_MAP_ALBEDO]
                 .texture =
-                tileBrushes[tileIndex].texture;
+                batchTexture;
         }
 
-        builtAnyBatch = true;
+        hybridTerrainBatches.push_back(
+            std::move(
+                batch
+            )
+        );
+
+        builtAnyBatch =
+            true;
     }
 
     hybridTerrainDirty = false;
@@ -23138,6 +27567,606 @@ void Game::UpdateHybridEditorCameraControls()
     UpdateHybridCamera(0.0f);
 }
 
+bool Game::ScreenToTerrainWall3D(
+    Vector2 screenPosition,
+    int& outCellX,
+    int& outCellY,
+    TerrainWallFace& outFace
+) const
+{
+    outCellX = -1;
+    outCellY = -1;
+    outFace =
+        TerrainWallFace::None;
+
+    if (
+        rendererMode !=
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        return false;
+    }
+
+    const Ray ray =
+        GetScreenToWorldRay(
+            screenPosition,
+            hybridCamera
+        );
+
+    const float originX =
+        -static_cast<float>(
+            MapWidth
+            ) *
+        TileSize *
+        0.5f;
+
+    const float originY =
+        -static_cast<float>(
+            MapHeight
+            ) *
+        TileSize *
+        0.5f;
+
+    const float levelHeight =
+        PixelsToHybridUnits(
+            terrainElevationStep
+        );
+
+    struct WallCornerHeights
+    {
+        float nw = 0.0f;
+        float ne = 0.0f;
+        float se = 0.0f;
+        float sw = 0.0f;
+    };
+
+    auto GetCornerHeights =
+        [
+            this,
+            levelHeight
+        ](
+            int cellX,
+            int cellY
+            )
+        {
+            WallCornerHeights heights{};
+
+            if (
+                !IsCellInside(
+                    cellX,
+                    cellY
+                ) ||
+                !IsCellEnabled(
+                    cellX,
+                    cellY
+                )
+                )
+            {
+                return heights;
+            }
+
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(
+                        cellX,
+                        cellY
+                    )
+                ];
+
+            const int elevation =
+                GetTerrainElevation(
+                    cellX,
+                    cellY
+                );
+
+            const float baseHeight =
+                static_cast<float>(
+                    elevation
+                    ) *
+                levelHeight;
+
+            heights.nw = baseHeight;
+            heights.ne = baseHeight;
+            heights.se = baseHeight;
+            heights.sw = baseHeight;
+
+            int offsetX = 0;
+            int offsetY = 0;
+
+            if (
+                !GetRampDirectionOffset(
+                    cell.rampDirection,
+                    offsetX,
+                    offsetY
+                )
+                )
+            {
+                return heights;
+            }
+
+            const int targetX =
+                cellX +
+                offsetX;
+
+            const int targetY =
+                cellY +
+                offsetY;
+
+            if (
+                !IsCellInside(
+                    targetX,
+                    targetY
+                ) ||
+                !IsCellEnabled(
+                    targetX,
+                    targetY
+                ) ||
+                GetTerrainElevation(
+                    targetX,
+                    targetY
+                ) !=
+                elevation + 1
+                )
+            {
+                return heights;
+            }
+
+            const float highHeight =
+                baseHeight +
+                levelHeight;
+
+            switch (cell.rampDirection)
+            {
+            case RampDirection::North:
+                heights.nw = highHeight;
+                heights.ne = highHeight;
+                break;
+
+            case RampDirection::East:
+                heights.ne = highHeight;
+                heights.se = highHeight;
+                break;
+
+            case RampDirection::South:
+                heights.sw = highHeight;
+                heights.se = highHeight;
+                break;
+
+            case RampDirection::West:
+                heights.nw = highHeight;
+                heights.sw = highHeight;
+                break;
+
+            case RampDirection::None:
+            default:
+                break;
+            }
+
+            return heights;
+        };
+
+    float nearestDistance =
+        std::numeric_limits<float>::max();
+
+    int nearestCellX = -1;
+    int nearestCellY = -1;
+
+    TerrainWallFace nearestFace =
+        TerrainWallFace::None;
+
+    auto TestTriangle =
+        [&](
+            Vector3 pointA,
+            Vector3 pointB,
+            Vector3 pointC,
+            int cellX,
+            int cellY,
+            TerrainWallFace face
+            )
+        {
+            RayCollision collision =
+                GetRayCollisionTriangle(
+                    ray,
+                    pointA,
+                    pointB,
+                    pointC
+                );
+
+            // Test the reverse winding as well so wall picking
+            // works from either side.
+            if (!collision.hit)
+            {
+                collision =
+                    GetRayCollisionTriangle(
+                        ray,
+                        pointA,
+                        pointC,
+                        pointB
+                    );
+            }
+
+            if (
+                !collision.hit ||
+                collision.distance >=
+                nearestDistance
+                )
+            {
+                return;
+            }
+
+            nearestDistance =
+                collision.distance;
+
+            nearestCellX =
+                cellX;
+
+            nearestCellY =
+                cellY;
+
+            nearestFace =
+                face;
+        };
+
+    auto TestQuad =
+        [&](
+            Vector3 point0,
+            Vector3 point1,
+            Vector3 point2,
+            Vector3 point3,
+            int cellX,
+            int cellY,
+            TerrainWallFace face
+            )
+        {
+            TestTriangle(
+                point0,
+                point1,
+                point2,
+                cellX,
+                cellY,
+                face
+            );
+
+            TestTriangle(
+                point0,
+                point2,
+                point3,
+                cellX,
+                cellY,
+                face
+            );
+        };
+
+    constexpr float wallEpsilon =
+        0.0001f;
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            if (
+                !IsCellEnabled(
+                    x,
+                    y
+                )
+                )
+            {
+                continue;
+            }
+
+            const WallCornerHeights current =
+                GetCornerHeights(
+                    x,
+                    y
+                );
+
+            const float x0 =
+                (
+                    originX +
+                    static_cast<float>(
+                        x
+                        ) *
+                    TileSize
+                    ) *
+                hybridUnitsPerPixel;
+
+            const float x1 =
+                (
+                    originX +
+                    static_cast<float>(
+                        x + 1
+                        ) *
+                    TileSize
+                    ) *
+                hybridUnitsPerPixel;
+
+            const float z0 =
+                (
+                    originY +
+                    static_cast<float>(
+                        y
+                        ) *
+                    TileSize
+                    ) *
+                hybridUnitsPerPixel;
+
+            const float z1 =
+                (
+                    originY +
+                    static_cast<float>(
+                        y + 1
+                        ) *
+                    TileSize
+                    ) *
+                hybridUnitsPerPixel;
+
+            const Vector3 nw{
+                x0,
+                current.nw,
+                z0
+            };
+
+            const Vector3 ne{
+                x1,
+                current.ne,
+                z0
+            };
+
+            const Vector3 se{
+                x1,
+                current.se,
+                z1
+            };
+
+            const Vector3 sw{
+                x0,
+                current.sw,
+                z1
+            };
+
+            // East
+            if (
+                !IsRampConnectionBetweenCells(
+                    x,
+                    y,
+                    x + 1,
+                    y
+                )
+                )
+            {
+                const WallCornerHeights neighbour =
+                    GetCornerHeights(
+                        x + 1,
+                        y
+                    );
+
+                const float lowerNe =
+                    std::min(
+                        current.ne,
+                        neighbour.nw
+                    );
+
+                const float lowerSe =
+                    std::min(
+                        current.se,
+                        neighbour.sw
+                    );
+
+                if (
+                    current.ne - lowerNe >
+                    wallEpsilon ||
+                    current.se - lowerSe >
+                    wallEpsilon
+                    )
+                {
+                    TestQuad(
+                        ne,
+                        se,
+                        {
+                            x1,
+                            lowerSe,
+                            z1
+                        },
+                        {
+                            x1,
+                            lowerNe,
+                            z0
+                        },
+                        x,
+                        y,
+                        TerrainWallFace::East
+                    );
+                }
+            }
+
+            // West
+            if (
+                !IsRampConnectionBetweenCells(
+                    x,
+                    y,
+                    x - 1,
+                    y
+                )
+                )
+            {
+                const WallCornerHeights neighbour =
+                    GetCornerHeights(
+                        x - 1,
+                        y
+                    );
+
+                const float lowerNw =
+                    std::min(
+                        current.nw,
+                        neighbour.ne
+                    );
+
+                const float lowerSw =
+                    std::min(
+                        current.sw,
+                        neighbour.se
+                    );
+
+                if (
+                    current.nw - lowerNw >
+                    wallEpsilon ||
+                    current.sw - lowerSw >
+                    wallEpsilon
+                    )
+                {
+                    TestQuad(
+                        sw,
+                        nw,
+                        {
+                            x0,
+                            lowerNw,
+                            z0
+                        },
+                        {
+                            x0,
+                            lowerSw,
+                            z1
+                        },
+                        x,
+                        y,
+                        TerrainWallFace::West
+                    );
+                }
+            }
+
+            // South
+            if (
+                !IsRampConnectionBetweenCells(
+                    x,
+                    y,
+                    x,
+                    y + 1
+                )
+                )
+            {
+                const WallCornerHeights neighbour =
+                    GetCornerHeights(
+                        x,
+                        y + 1
+                    );
+
+                const float lowerSw =
+                    std::min(
+                        current.sw,
+                        neighbour.nw
+                    );
+
+                const float lowerSe =
+                    std::min(
+                        current.se,
+                        neighbour.ne
+                    );
+
+                if (
+                    current.sw - lowerSw >
+                    wallEpsilon ||
+                    current.se - lowerSe >
+                    wallEpsilon
+                    )
+                {
+                    TestQuad(
+                        se,
+                        sw,
+                        {
+                            x0,
+                            lowerSw,
+                            z1
+                        },
+                        {
+                            x1,
+                            lowerSe,
+                            z1
+                        },
+                        x,
+                        y,
+                        TerrainWallFace::South
+                    );
+                }
+            }
+
+            // North
+            if (
+                !IsRampConnectionBetweenCells(
+                    x,
+                    y,
+                    x,
+                    y - 1
+                )
+                )
+            {
+                const WallCornerHeights neighbour =
+                    GetCornerHeights(
+                        x,
+                        y - 1
+                    );
+
+                const float lowerNw =
+                    std::min(
+                        current.nw,
+                        neighbour.sw
+                    );
+
+                const float lowerNe =
+                    std::min(
+                        current.ne,
+                        neighbour.se
+                    );
+
+                if (
+                    current.nw - lowerNw >
+                    wallEpsilon ||
+                    current.ne - lowerNe >
+                    wallEpsilon
+                    )
+                {
+                    TestQuad(
+                        nw,
+                        ne,
+                        {
+                            x1,
+                            lowerNe,
+                            z0
+                        },
+                        {
+                            x0,
+                            lowerNw,
+                            z0
+                        },
+                        x,
+                        y,
+                        TerrainWallFace::North
+                    );
+                }
+            }
+        }
+    }
+
+    if (
+        nearestCellX < 0 ||
+        nearestFace ==
+        TerrainWallFace::None
+        )
+    {
+        return false;
+    }
+
+    outCellX =
+        nearestCellX;
+
+    outCellY =
+        nearestCellY;
+
+    outFace =
+        nearestFace;
+
+    return true;
+}
+
 bool Game::ScreenToTerrainWorld3D(
     Vector2 screenPosition,
     Vector2& outWorldPosition,
@@ -23448,38 +28477,58 @@ void Game::DrawHybridGroundEffects3D()
         BLEND_ALPHA
     );
 
-    // Player shadow:
-    // deliberately larger than the collision radius so the
-    // player reads clearly against bright terrain.
+    // --------------------------------------------------
+ // Player contact shadow
+ //
+ // The player is grounded, so the shadow should remain
+ // tight beneath the visible feet.
+ // --------------------------------------------------
+
     DrawHybridGroundShadow(
         playerPosition,
-
-        // Full width.
-        playerRadius * 3.60f,
-
-        // Full front/back depth.
-        playerRadius * 1.25f,
-
+        playerRadius * 2.20f,
+        playerRadius * 0.55f,
         Color{
             0,
             0,
             0,
-            125
+            105
         }
     );
 
-    // Enemy shadows are capped for mobile-web performance.
-    constexpr bool drawEnemyShadows = true;
-    constexpr int maxEnemyShadows = 24;
+    // --------------------------------------------------
+    // Enemy shadows
+    //
+    // Grunt and Runner use floating blob sprites, so they
+    // keep the wider, softer floating shadow.
+    //
+    // Shooter, Tank and Boss use tighter contact shadows.
+    // --------------------------------------------------
+
+    constexpr bool drawEnemyShadows =
+        true;
+
+    constexpr int maxEnemyShadows =
+        24;
 
     if (drawEnemyShadows)
     {
-        int drawnEnemyShadows = 0;
+        int drawnEnemyShadows =
+            0;
 
-        for (const Enemy& enemy : enemies)
+        for (
+            const Enemy& enemy :
+            enemies
+            )
         {
             if (
                 !enemy.active ||
+                !IsChamberVisible(
+                    enemy.chamberId
+                ) ||
+                IsEnemySpawnProtected(
+                    enemy
+                ) ||
                 drawnEnemyShadows >=
                 maxEnemyShadows
                 )
@@ -23487,7 +28536,7 @@ void Game::DrawHybridGroundEffects3D()
                 continue;
             }
 
-            Vector2 screenPosition =
+            const Vector2 screenPosition =
                 GetWorldToScreen(
                     WorldToHybrid3D(
                         enemy.pos
@@ -23518,15 +28567,99 @@ void Game::DrawHybridGroundEffects3D()
                 continue;
             }
 
+            const bool usesFloatingBlobShadow =
+                ShouldUseBlobEnemySprite(
+                    enemy
+                );
+
+            float shadowWidth =
+                enemy.radius *
+                1.80f;
+
+            float shadowDepth =
+                enemy.radius *
+                0.48f;
+
+            unsigned char shadowAlpha =
+                92;
+
+            if (usesFloatingBlobShadow)
+            {
+                // Wide, soft shadow communicates that the blob
+                // is hovering above the terrain.
+                shadowWidth =
+                    enemy.radius *
+                    2.40f;
+
+                shadowDepth =
+                    enemy.radius *
+                    0.90f;
+
+                shadowAlpha =
+                    68;
+            }
+            else if (
+                enemy.type ==
+                EnemyType::Shooter
+                )
+            {
+                // Tight contact shadow directly beneath the
+                // archer's feet.
+                shadowWidth =
+                    enemy.radius *
+                    1.75f;
+
+                shadowDepth =
+                    enemy.radius *
+                    0.42f;
+
+                shadowAlpha =
+                    96;
+            }
+            else if (
+                enemy.type ==
+                EnemyType::Boss
+                )
+            {
+                // Larger than ordinary grounded enemies, but
+                // still a contact shadow rather than a floating one.
+                shadowWidth =
+                    enemy.radius *
+                    2.05f;
+
+                shadowDepth =
+                    enemy.radius *
+                    0.55f;
+
+                shadowAlpha =
+                    112;
+            }
+            else if (
+                enemy.type ==
+                EnemyType::Tank
+                )
+            {
+                shadowWidth =
+                    enemy.radius *
+                    1.90f;
+
+                shadowDepth =
+                    enemy.radius *
+                    0.55f;
+
+                shadowAlpha =
+                    100;
+            }
+
             DrawHybridGroundShadow(
                 enemy.pos,
-                enemy.radius * 2.40f,
-                enemy.radius * 0.90f,
+                shadowWidth,
+                shadowDepth,
                 Color{
                     0,
                     0,
                     0,
-                    72
+                    shadowAlpha
                 }
             );
 
@@ -23534,41 +28667,45 @@ void Game::DrawHybridGroundEffects3D()
         }
     }
 
+
+    // Normal enemy spawning circles.
+    DrawEnemySpawnGroundEffects3D();
+
     // Falling-rock danger circles must always draw,
     // regardless of whether Huashan is active.
     DrawBossFallingRockTelegraphsHybrid3D();
 
     if (
         huashanImpactSpriteLoaded &&
-            (
-                huashanImpactAnimationActive ||
-                !huashanGroundMarks.empty()
-                )
+        (
+            huashanImpactAnimationActive ||
+            !huashanGroundMarks.empty()
             )
-        {
-            rlDrawRenderBatchActive();
+        )
+    {
+        rlDrawRenderBatchActive();
 
-            rlDisableBackfaceCulling();
-            rlDisableDepthMask();
+        rlDisableBackfaceCulling();
+        rlDisableDepthMask();
 
-            BeginBlendMode(
-                BLEND_ALPHA
-            );
+        BeginBlendMode(
+            BLEND_ALPHA
+        );
 
-            // Do not use the billboard shader here.
-            // Its alpha-discard threshold can make the final
-            // portion of the slow fade disappear suddenly.
+        // Do not use the billboard shader here.
+        // Its alpha-discard threshold can make the final
+        // portion of the slow fade disappear suddenly.
 
-            DrawHuashanImpactGround3D();
+        DrawHuashanImpactGround3D();
 
-            EndBlendMode();
+        EndBlendMode();
 
-            rlDrawRenderBatchActive();
+        rlDrawRenderBatchActive();
 
-            rlEnableDepthMask();
-            rlEnableBackfaceCulling();
-        }
-    
+        rlEnableDepthMask();
+        rlEnableBackfaceCulling();
+    }
+
 
     // Obstacle shadows are disabled here by default.
     // Trees and large props can later use baked artwork shadows
@@ -23763,11 +28900,27 @@ void Game::DrawHybridTerrain3D()
             continue;
         }
 
+        const float visibility =
+            GetChamberVisibility(
+                batch.chamberId
+            );
+
+        if (visibility <= 0.01f)
+        {
+            continue;
+        }
+
+        Color tint = WHITE;
+        tint.a =
+            static_cast<unsigned char>(
+                255.0f * visibility
+                );
+
         DrawModel(
             batch.model,
             { 0.0f, 0.0f, 0.0f },
             1.0f,
-            WHITE
+            tint
         );
     }
 }
@@ -23877,213 +29030,213 @@ void Game::DrawHybridGroundDisc(
 }
 
 
-    void Game::DrawHybridGroundShadow(
-        Vector2 worldPosition,
-        float widthPixels,
-        float depthPixels,
-        Color color,
-        float additionalHeightPixels
-    ) const
+void Game::DrawHybridGroundShadow(
+    Vector2 worldPosition,
+    float widthPixels,
+    float depthPixels,
+    Color color,
+    float additionalHeightPixels
+) const
+{
+    if (
+        widthPixels <= 0.0f ||
+        depthPixels <= 0.0f
+        )
     {
-        if (
-            widthPixels <= 0.0f ||
-            depthPixels <= 0.0f
-            )
-        {
-            return;
-        }
-
-        // Fallback if the soft radial texture was not created.
-        if (hybridShadowTexture.id == 0)
-        {
-            DrawHybridGroundDisc(
-                worldPosition,
-                std::max(
-                    widthPixels,
-                    depthPixels
-                ) * 0.5f,
-                color,
-                additionalHeightPixels
-            );
-
-            return;
-        }
-
-        // Slight lift prevents z-fighting with the terrain.
-        const Vector3 center =
-            WorldToHybrid3D(
-                worldPosition,
-                additionalHeightPixels + 0.85f
-            );
-
-        const float halfWidth =
-            PixelsToHybridUnits(
-                widthPixels * 0.5f
-            );
-
-        const float halfDepth =
-            PixelsToHybridUnits(
-                depthPixels * 0.5f
-            );
-
-        // Align the long axis with the camera's horizontal direction.
-        // This makes the contact shadow look like a normal horizontal
-        // sprite shadow instead of a diagonal world-space oval.
-        Vector3 cameraForward =
-            Vector3Normalize(
-                Vector3Subtract(
-                    hybridCamera.target,
-                    hybridCamera.position
-                )
-            );
-
-        Vector3 groundRight =
-            Vector3CrossProduct(
-                cameraForward,
-                Vector3{
-                    0.0f,
-                    1.0f,
-                    0.0f
-                }
-            );
-
-        if (
-            Vector3Length(
-                groundRight
-            ) <= 0.0001f
-            )
-        {
-            groundRight = {
-                1.0f,
-                0.0f,
-                0.0f
-            };
-        }
-        else
-        {
-            groundRight =
-                Vector3Normalize(
-                    groundRight
-                );
-        }
-
-        Vector3 groundForward{
-            -groundRight.z,
-            0.0f,
-            groundRight.x
-        };
-
-        const Vector3 rightOffset =
-            Vector3Scale(
-                groundRight,
-                halfWidth
-            );
-
-        const Vector3 depthOffset =
-            Vector3Scale(
-                groundForward,
-                halfDepth
-            );
-
-        const Vector3 northWest =
-            Vector3Subtract(
-                Vector3Subtract(
-                    center,
-                    rightOffset
-                ),
-                depthOffset
-            );
-
-        const Vector3 southWest =
-            Vector3Add(
-                Vector3Subtract(
-                    center,
-                    rightOffset
-                ),
-                depthOffset
-            );
-
-        const Vector3 southEast =
-            Vector3Add(
-                Vector3Add(
-                    center,
-                    rightOffset
-                ),
-                depthOffset
-            );
-
-        const Vector3 northEast =
-            Vector3Subtract(
-                Vector3Add(
-                    center,
-                    rightOffset
-                ),
-                depthOffset
-            );
-
-        rlSetTexture(
-            hybridShadowTexture.id
-        );
-
-        rlBegin(
-            RL_QUADS
-        );
-
-        rlColor4ub(
-            color.r,
-            color.g,
-            color.b,
-            color.a
-        );
-
-        rlTexCoord2f(
-            0.0f,
-            0.0f
-        );
-
-        rlVertex3f(
-            northWest.x,
-            northWest.y,
-            northWest.z
-        );
-
-        rlTexCoord2f(
-            0.0f,
-            1.0f
-        );
-
-        rlVertex3f(
-            southWest.x,
-            southWest.y,
-            southWest.z
-        );
-
-        rlTexCoord2f(
-            1.0f,
-            1.0f
-        );
-
-        rlVertex3f(
-            southEast.x,
-            southEast.y,
-            southEast.z
-        );
-
-        rlTexCoord2f(
-            1.0f,
-            0.0f
-        );
-
-        rlVertex3f(
-            northEast.x,
-            northEast.y,
-            northEast.z
-        );
-
-        rlEnd();
-
-        rlSetTexture(0);
+        return;
     }
+
+    // Fallback if the soft radial texture was not created.
+    if (hybridShadowTexture.id == 0)
+    {
+        DrawHybridGroundDisc(
+            worldPosition,
+            std::max(
+                widthPixels,
+                depthPixels
+            ) * 0.5f,
+            color,
+            additionalHeightPixels
+        );
+
+        return;
+    }
+
+    // Slight lift prevents z-fighting with the terrain.
+    const Vector3 center =
+        WorldToHybrid3D(
+            worldPosition,
+            additionalHeightPixels + 0.85f
+        );
+
+    const float halfWidth =
+        PixelsToHybridUnits(
+            widthPixels * 0.5f
+        );
+
+    const float halfDepth =
+        PixelsToHybridUnits(
+            depthPixels * 0.5f
+        );
+
+    // Align the long axis with the camera's horizontal direction.
+    // This makes the contact shadow look like a normal horizontal
+    // sprite shadow instead of a diagonal world-space oval.
+    Vector3 cameraForward =
+        Vector3Normalize(
+            Vector3Subtract(
+                hybridCamera.target,
+                hybridCamera.position
+            )
+        );
+
+    Vector3 groundRight =
+        Vector3CrossProduct(
+            cameraForward,
+            Vector3{
+                0.0f,
+                1.0f,
+                0.0f
+            }
+        );
+
+    if (
+        Vector3Length(
+            groundRight
+        ) <= 0.0001f
+        )
+    {
+        groundRight = {
+            1.0f,
+            0.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        groundRight =
+            Vector3Normalize(
+                groundRight
+            );
+    }
+
+    Vector3 groundForward{
+        -groundRight.z,
+        0.0f,
+        groundRight.x
+    };
+
+    const Vector3 rightOffset =
+        Vector3Scale(
+            groundRight,
+            halfWidth
+        );
+
+    const Vector3 depthOffset =
+        Vector3Scale(
+            groundForward,
+            halfDepth
+        );
+
+    const Vector3 northWest =
+        Vector3Subtract(
+            Vector3Subtract(
+                center,
+                rightOffset
+            ),
+            depthOffset
+        );
+
+    const Vector3 southWest =
+        Vector3Add(
+            Vector3Subtract(
+                center,
+                rightOffset
+            ),
+            depthOffset
+        );
+
+    const Vector3 southEast =
+        Vector3Add(
+            Vector3Add(
+                center,
+                rightOffset
+            ),
+            depthOffset
+        );
+
+    const Vector3 northEast =
+        Vector3Subtract(
+            Vector3Add(
+                center,
+                rightOffset
+            ),
+            depthOffset
+        );
+
+    rlSetTexture(
+        hybridShadowTexture.id
+    );
+
+    rlBegin(
+        RL_QUADS
+    );
+
+    rlColor4ub(
+        color.r,
+        color.g,
+        color.b,
+        color.a
+    );
+
+    rlTexCoord2f(
+        0.0f,
+        0.0f
+    );
+
+    rlVertex3f(
+        northWest.x,
+        northWest.y,
+        northWest.z
+    );
+
+    rlTexCoord2f(
+        0.0f,
+        1.0f
+    );
+
+    rlVertex3f(
+        southWest.x,
+        southWest.y,
+        southWest.z
+    );
+
+    rlTexCoord2f(
+        1.0f,
+        1.0f
+    );
+
+    rlVertex3f(
+        southEast.x,
+        southEast.y,
+        southEast.z
+    );
+
+    rlTexCoord2f(
+        1.0f,
+        0.0f
+    );
+
+    rlVertex3f(
+        northEast.x,
+        northEast.y,
+        northEast.z
+    );
+
+    rlEnd();
+
+    rlSetTexture(0);
+}
 
 void Game::DrawHybridBillboardFrame(
     Texture2D texture,
@@ -24465,45 +29618,73 @@ bool Game::GetActivePlayerFrame(
     outSource = {};
     outWidthPixels = 0.0f;
     outHeightPixels = 0.0f;
-    outAnchorY = 0.98f;
 
-    int frameWidth = playerFrameWidth;
-    int frameHeight = playerFrameHeight;
-    int framesPerRow = playerFramesPerRow;
-    int frame = playerAnimFrame;
+    // Keep the billboard above the terrain.
+    outAnchorY =
+        0.98f;
+
+    int frameWidth =
+        playerFrameWidth;
+
+    int frameHeight =
+        playerFrameHeight;
+
+    int framesPerRow =
+        playerFramesPerRow;
+
+    int frame =
+        playerAnimFrame;
 
     const bool drawAttack =
         playerAnimationState ==
         PlayerAnimationState::Attacking &&
         playerAttackSpriteLoaded &&
-        playerAttackSpriteSheet.id != 0;
+        playerAttackSpriteSheet.id !=
+        0;
 
     const bool drawIdle =
         playerAnimationState ==
         PlayerAnimationState::Idle &&
         playerIdleSpriteLoaded &&
-        playerIdleSpriteSheet.id != 0;
+        playerIdleSpriteSheet.id !=
+        0;
 
     if (drawAttack)
     {
-        outTexture = playerAttackSpriteSheet;
-        frameWidth = playerAttackFrameWidth;
-        frameHeight = playerAttackFrameHeight;
-        framesPerRow = playerAttackFramesPerRow;
+        outTexture =
+            playerAttackSpriteSheet;
+
+        frameWidth =
+            playerAttackFrameWidth;
+
+        frameHeight =
+            playerAttackFrameHeight;
+
+        framesPerRow =
+            playerAttackFramesPerRow;
     }
     else if (drawIdle)
     {
-        outTexture = playerIdleSpriteSheet;
-        frameWidth = playerIdleFrameWidth;
-        frameHeight = playerIdleFrameHeight;
-        framesPerRow = playerIdleFramesPerRow;
+        outTexture =
+            playerIdleSpriteSheet;
+
+        frameWidth =
+            playerIdleFrameWidth;
+
+        frameHeight =
+            playerIdleFrameHeight;
+
+        framesPerRow =
+            playerIdleFramesPerRow;
     }
     else if (
         playerSpriteLoaded &&
-        playerSpriteSheet.id != 0
+        playerSpriteSheet.id !=
+        0
         )
     {
-        outTexture = playerSpriteSheet;
+        outTexture =
+            playerSpriteSheet;
 
         if (
             playerAnimationState ==
@@ -24512,7 +29693,8 @@ bool Game::GetActivePlayerFrame(
             PlayerAnimationState::Attacking
             )
         {
-            frame = 0;
+            frame =
+                0;
         }
     }
     else
@@ -24534,22 +29716,50 @@ bool Game::GetActivePlayerFrame(
             playerDirection
         );
 
+    // Remove transparent space below the player's feet.
+    const float bottomTrim =
+        Clamp(
+            playerSpriteBottomTrim,
+            0.0f,
+            static_cast<float>(
+                frameHeight - 1
+                )
+        );
+
     outSource = {
-        static_cast<float>(frame * frameWidth),
-        static_cast<float>(row * frameHeight),
-        static_cast<float>(frameWidth),
-        static_cast<float>(frameHeight)
+        static_cast<float>(
+            frame *
+            frameWidth
+        ),
+
+        static_cast<float>(
+            row *
+            frameHeight
+        ),
+
+        static_cast<float>(
+            frameWidth
+        ),
+
+        static_cast<float>(
+            frameHeight
+        ) -
+        bottomTrim
     };
 
     const float drawScale =
         playerSpriteDrawScale;
 
     outWidthPixels =
-        static_cast<float>(frameWidth) *
+        static_cast<float>(
+            frameWidth
+            ) *
         drawScale;
 
+    // Use the cropped source height so the sprite does not
+    // become vertically stretched.
     outHeightPixels =
-        static_cast<float>(frameHeight) *
+        outSource.height *
         drawScale;
 
     return true;
@@ -24648,8 +29858,8 @@ void Game::DrawHybridDashAfterimage3D(
     int directionRows = 8;
 
     float drawScale = 1.0f;
-    float anchorY = 0.98f;
-
+    float anchorY =
+        0.98f;
     // --------------------------------------------------
     // Choose Player or Boss sprite
     // --------------------------------------------------
@@ -24695,7 +29905,8 @@ void Game::DrawHybridDashAfterimage3D(
         drawScale =
             bossVisualScale;
 
-        anchorY = 0.98f;
+        anchorY =
+            0.98f;
     }
     else
     {
@@ -24725,7 +29936,8 @@ void Game::DrawHybridDashAfterimage3D(
         drawScale =
             playerSpriteDrawScale;
 
-        anchorY = 0.84f;
+        anchorY =
+            0.98f;
     }
 
     framesPerRow =
@@ -24901,15 +30113,39 @@ void Game::DrawHybridEnemy3D(
     const Enemy& enemy
 )
 {
-    if (!enemy.active)
+    if (
+        !enemy.active ||
+        enemy.spawnState ==
+        EnemySpawnState::GroundEffect
+        )
     {
         return;
     }
 
-    const float enemyWhiteFlash =
+    const float enemySpawnVisualOffset =
+        GetEnemySpawnVisualOffset(
+            enemy
+        );
+
+    const float finalEnemyVisualHeight =
+        enemy.visualHeight +
+        enemySpawnVisualOffset;
+
+    const float damageWhiteFlash =
         enemy.damageFlashTimer > 0.0f
         ? 1.0f
         : 0.0f;
+
+    const float spawnWhiteFlash =
+        GetEnemySpawnFlashAmount(
+            enemy
+        );
+
+    const float enemyWhiteFlash =
+        std::max(
+            damageWhiteFlash,
+            spawnWhiteFlash
+        );
 
     // Textured enemies keep their authored colours.
     Color spriteTint =
@@ -25034,8 +30270,8 @@ void Game::DrawHybridEnemy3D(
     }
 
     // --------------------------------------------------
-// Dedicated shooter sprite
-// --------------------------------------------------
+   // Dedicated shooter sprite
+   // --------------------------------------------------
 
     if (
         enemy.type ==
@@ -25065,8 +30301,6 @@ void Game::DrawHybridEnemy3D(
             )
             )
         {
-
-
             DrawHybridBillboardFrame(
                 shooterTexture,
                 shooterSource,
@@ -25074,7 +30308,11 @@ void Game::DrawHybridEnemy3D(
                 shooterWidthPixels,
                 shooterHeightPixels,
                 shooterAnchorY,
-                enemy.visualHeight,
+
+                // Use the spawning height instead of
+                // the normal enemy height.
+                finalEnemyVisualHeight,
+
                 spriteTint,
                 HybridBillboardOrientation::UprightWorld,
                 enemyWhiteFlash
@@ -25085,8 +30323,8 @@ void Game::DrawHybridEnemy3D(
     }
 
     // --------------------------------------------------
-// Dedicated Boss sprite
-// --------------------------------------------------
+    // Dedicated Boss sprite
+    // --------------------------------------------------
 
     if (
         enemy.type ==
@@ -25123,7 +30361,7 @@ void Game::DrawHybridEnemy3D(
                 bossWidthPixels,
                 bossHeightPixels,
                 bossAnchorY,
-                enemy.visualHeight,
+                finalEnemyVisualHeight,
                 spriteTint,
                 HybridBillboardOrientation::UprightWorld,
                 enemyWhiteFlash
@@ -25133,13 +30371,20 @@ void Game::DrawHybridEnemy3D(
         }
     }
 
+    // --------------------------------------------------
+    // Small animated enemy sprite
+    // --------------------------------------------------
+
     const bool useBlob =
-        ShouldUseBlobEnemySprite(enemy);
+        ShouldUseBlobEnemySprite(
+            enemy
+        );
 
     if (
         useBlob &&
         smallEnemySpriteLoaded &&
-        smallEnemySpriteSheet.id != 0
+        smallEnemySpriteSheet.id !=
+        0
         )
     {
         const int frame =
@@ -25147,7 +30392,8 @@ void Game::DrawHybridEnemy3D(
                 0,
                 std::min(
                     enemy.spriteFrame,
-                    smallEnemyFramesPerRow - 1
+                    smallEnemyFramesPerRow -
+                    1
                 )
             );
 
@@ -25161,19 +30407,35 @@ void Game::DrawHybridEnemy3D(
                 0,
                 std::min(
                     row,
-                    smallEnemyDirectionRows - 1
+                    smallEnemyDirectionRows -
+                    1
                 )
             );
 
         Rectangle source{
-            static_cast<float>(frame * smallEnemyFrameWidth),
-            static_cast<float>(row * smallEnemyFrameHeight),
-            static_cast<float>(smallEnemyFrameWidth),
-            static_cast<float>(smallEnemyFrameHeight)
+            static_cast<float>(
+                frame *
+                smallEnemyFrameWidth
+            ),
+
+            static_cast<float>(
+                row *
+                smallEnemyFrameHeight
+            ),
+
+            static_cast<float>(
+                smallEnemyFrameWidth
+            ),
+
+            static_cast<float>(
+                smallEnemyFrameHeight
+            )
         };
 
         const float size =
-            GetBlobEnemyVisualSize(enemy);
+            GetBlobEnemyVisualSize(
+                enemy
+            );
 
         DrawHybridBillboardFrame(
             smallEnemySpriteSheet,
@@ -25182,31 +30444,47 @@ void Game::DrawHybridEnemy3D(
             size,
             size,
             0.98f,
-            enemy.visualHeight,
+
+            // This is the important replacement for
+            // Grunt, Runner and other blob enemies.
+            finalEnemyVisualHeight,
+
             spriteTint,
             HybridBillboardOrientation::FaceCamera,
             enemyWhiteFlash
         );
     }
-    else if (hybridCircleTexture.id != 0)
+
+    // --------------------------------------------------
+    // Fallback enemy circle
+    // --------------------------------------------------
+
+    else if (
+        hybridCircleTexture.id !=
+        0
+        )
     {
         DrawHybridBillboardFrame(
             hybridCircleTexture,
             {
                 0.0f,
                 0.0f,
+
                 static_cast<float>(
                     hybridCircleTexture.width
                 ),
+
                 static_cast<float>(
                     hybridCircleTexture.height
                 )
             },
             enemy.pos,
-            enemy.radius * 2.0f,
-            enemy.radius * 2.0f,
+            enemy.radius *
+            2.0f,
+            enemy.radius *
+            2.0f,
             1.0f,
-            enemy.visualHeight,
+            finalEnemyVisualHeight,
             fallbackTint,
             HybridBillboardOrientation::FaceCamera,
             enemyWhiteFlash
@@ -25220,9 +30498,16 @@ void Game::DrawHybridObstacle3D(
 {
     const float localHeight =
         static_cast<float>(
-            std::max(0, obstacle.heightLevel)
+            std::max(
+                0,
+                obstacle.heightLevel
+            )
             ) *
         obstacleHeightStep;
+
+    // --------------------------------------------------
+    // Textured obstacle
+    // --------------------------------------------------
 
     if (
         obstacle.hasTexture &&
@@ -25234,8 +30519,14 @@ void Game::DrawHybridObstacle3D(
             {
                 0.0f,
                 0.0f,
-                static_cast<float>(obstacle.texture.width),
-                static_cast<float>(obstacle.texture.height)
+
+                static_cast<float>(
+                    obstacle.texture.width
+                ),
+
+                static_cast<float>(
+                    obstacle.texture.height
+                )
             },
             obstacle.position,
             obstacle.size.x,
@@ -25244,33 +30535,65 @@ void Game::DrawHybridObstacle3D(
             localHeight,
             WHITE
         );
-    }
-    else if (hybridCircleTexture.id != 0)
-    {
-        const float size =
-            std::max(
-                obstacle.size.x,
-                obstacle.size.y
-            ) * 0.5f;
 
-        DrawHybridBillboardFrame(
-            hybridCircleTexture,
-            {
-                0.0f,
-                0.0f,
-                static_cast<float>(hybridCircleTexture.width),
-                static_cast<float>(hybridCircleTexture.height)
-            },
-            obstacle.position,
-            size,
-            size,
-            1.0f,
-            localHeight,
-            obstacle.type == 0
-            ? Color{ 48, 126, 54, 255 }
-            : Color{ 94, 93, 88, 255 }
-        );
+        return;
     }
+
+    // --------------------------------------------------
+    // Fallback obstacle placeholder
+    // --------------------------------------------------
+
+    if (
+        hybridCircleTexture.id ==
+        0
+        )
+    {
+        return;
+    }
+
+    const float size =
+        std::max(
+            obstacle.size.x,
+            obstacle.size.y
+        ) *
+        0.5f;
+
+    const Color fallbackColor =
+        obstacle.type == 0
+        ? Color{
+            48,
+            126,
+            54,
+            255
+    }
+        : Color{
+            94,
+            93,
+            88,
+            255
+    };
+
+    DrawHybridBillboardFrame(
+        hybridCircleTexture,
+        {
+            0.0f,
+            0.0f,
+
+            static_cast<float>(
+                hybridCircleTexture.width
+            ),
+
+            static_cast<float>(
+                hybridCircleTexture.height
+            )
+        },
+        obstacle.position,
+        size,
+        size,
+        1.0f,
+        localHeight,
+        fallbackColor
+    );
 }
 
 void Game::DrawHybridNpc3D(
@@ -25508,6 +30831,15 @@ void Game::DrawHybridActors3D()
 
     for (const Obstacle& obstacle : obstacles)
     {
+        if (
+            !IsWorldPositionInVisibleChamber(
+                obstacle.position
+            )
+            )
+        {
+            continue;
+        }
+
         DrawHybridObstacle3D(
             obstacle
         );
@@ -25515,6 +30847,15 @@ void Game::DrawHybridActors3D()
 
     for (const NPC& npc : npcs)
     {
+        if (
+            !IsWorldPositionInVisibleChamber(
+                npc.position
+            )
+            )
+        {
+            continue;
+        }
+
         DrawHybridNpc3D(
             npc
         );
@@ -25522,6 +30863,15 @@ void Game::DrawHybridActors3D()
 
     for (const Enemy& enemy : enemies)
     {
+        if (
+            !IsChamberVisible(
+                enemy.chamberId
+            )
+            )
+        {
+            continue;
+        }
+
         DrawHybridEnemy3D(
             enemy
         );
@@ -25577,6 +30927,15 @@ void Game::DrawHybridActors3D()
             dashAfterimages
             )
         {
+            if (
+                !IsWorldPositionInVisibleChamber(
+                    afterimage.worldPosition
+                )
+                )
+            {
+                continue;
+            }
+
             DrawHybridDashAfterimage3D(
                 afterimage
             );
@@ -25602,6 +30961,15 @@ void Game::DrawHybridActors3D()
 
     for (const Projectile& projectile : projectiles)
     {
+        if (
+            !IsWorldPositionInVisibleChamber(
+                projectile.pos
+            )
+            )
+        {
+            continue;
+        }
+
         DrawHybridProjectile3D(
             projectile
         );
@@ -25628,6 +30996,15 @@ void Game::DrawHybridActors3D()
             )
             )
         {
+            if (
+                !IsWorldPositionInVisibleChamber(
+                    particle.pos
+                )
+                )
+            {
+                continue;
+            }
+
             DrawHybridVfx3D(
                 particle
             );
@@ -25730,16 +31107,50 @@ void Game::DrawHybridEditorOverlay3D()
             DrawLine3D(corners3D[3], corners3D[0], color);
         };
 
-    if (showGrid)
+    if (
+        showGrid ||
+        showChamberOverlay
+        )
     {
         for (int y = 0; y < MapHeight; ++y)
         {
             for (int x = 0; x < MapWidth; ++x)
             {
+                Color cellColor{
+                    255,
+                    255,
+                    255,
+                    38
+                };
+
+                if (!IsCellEnabled(x, y))
+                {
+                    cellColor =
+                        Color{
+                            255,
+                            70,
+                            70,
+                            80
+                    };
+                }
+                else if (showChamberOverlay)
+                {
+                    const int chamberId =
+                        terrainCells[
+                            CellIndex(x, y)
+                        ].chamberId;
+
+                    cellColor =
+                        GetChamberDebugColor(
+                            chamberId,
+                            190
+                        );
+                }
+
                 DrawCellOutline(
                     x,
                     y,
-                    Color{ 255, 255, 255, 38 }
+                    cellColor
                 );
             }
         }
@@ -25761,6 +31172,11 @@ void Game::DrawHybridEditorOverlay3D()
     {
         for (int x = 0; x < MapWidth; ++x)
         {
+            if (!IsCellEnabled(x, y))
+            {
+                continue;
+            }
+
             const TerrainCell& cell =
                 terrainCells[
                     CellIndex(x, y)
@@ -25820,10 +31236,19 @@ void Game::DrawHybridWorld3D()
 void Game::DrawHybridScreenOverlays2D()
 {
 
-   
+
 
     for (const NPC& npc : npcs)
     {
+        if (
+            !IsWorldPositionInVisibleChamber(
+                npc.position
+            )
+            )
+        {
+            continue;
+        }
+
         Vector2 screen =
             GetWorldToScreen(
                 WorldToHybrid3D(
@@ -25849,6 +31274,9 @@ void Game::DrawHybridScreenOverlays2D()
     {
         if (
             !enemy.active ||
+            !IsChamberVisible(
+                enemy.chamberId
+            ) ||
             (
                 enemy.hp >= enemy.maxHp &&
                 enemy.type != EnemyType::Boss
@@ -26844,6 +32272,22 @@ void Game::LoadBossSpriteSheets()
     );
 
     LoadBossActionSheet(
+        "Assets/enemies/boss_preheal.png",
+        bossPreHealSpriteSheet,
+        bossPreHealSpriteLoaded,
+        bossPreHealFramesPerRow,
+        bossPreHealDirectionRows
+    );
+
+    LoadBossActionSheet(
+        "Assets/enemies/boss_heal_loop.png",
+        bossHealingLoopSpriteSheet,
+        bossHealingLoopSpriteLoaded,
+        bossHealingLoopFramesPerRow,
+        bossHealingLoopDirectionRows
+    );
+
+    LoadBossActionSheet(
         "Assets/enemies/boss_precharge.png",
         bossPreChargeSpriteSheet,
         bossPreChargeSpriteLoaded,
@@ -26936,6 +32380,98 @@ void Game::UpdateBossAnimation(
                 }
             }
         };
+
+
+    // --------------------------------------------------
+// Prehealing animation
+//
+// Plays once, then enters the 20-second healing loop.
+// --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::HealingWindup
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Attacking;
+
+        const int frameCount =
+            std::max(
+                1,
+                bossPreHealFramesPerRow
+            );
+
+        const float frameDuration =
+            std::max(
+                0.01f,
+                bossPreHealFrameDuration
+            );
+
+        enemy.bossAnimationTimer +=
+            dt;
+
+        while (
+            enemy.bossAnimationTimer >=
+            frameDuration
+            )
+        {
+            enemy.bossAnimationTimer -=
+                frameDuration;
+
+            enemy.bossAnimationFrame++;
+
+            if (
+                enemy.bossAnimationFrame >=
+                frameCount
+                )
+            {
+                enemy.bossActionState =
+                    BossActionState::HealingActive;
+
+                enemy.bossAnimationFrame =
+                    0;
+
+                enemy.bossAnimationTimer =
+                    0.0f;
+
+                enemy.bossHealingTimer =
+                    0.0f;
+
+                enemy.bossHealingWaveTimer =
+                    0.0f;
+
+                enemy.bossHealingWavesSpawned =
+                    0;
+
+                break;
+            }
+        }
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Healing loop animation
+    // --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::HealingActive
+        )
+    {
+        enemy.animationState =
+            EnemyAnimationState::Attacking;
+
+        AdvanceBossLoop(
+            bossHealingLoopFramesPerRow,
+            bossHealingLoopFrameDuration,
+            1.0f,
+            0
+        );
+
+        return;
+    }
 
     if (
         enemy.bossActionState ==
@@ -27349,6 +32885,30 @@ bool Game::GetBossAnimationFrame(
 
     if (
         enemy.bossActionState ==
+        BossActionState::HealingWindup
+        )
+    {
+        SelectSheet(
+            bossPreHealSpriteSheet,
+            bossPreHealSpriteLoaded,
+            bossPreHealFramesPerRow,
+            bossPreHealDirectionRows
+        );
+    }
+    else if (
+        enemy.bossActionState ==
+        BossActionState::HealingActive
+        )
+    {
+        SelectSheet(
+            bossHealingLoopSpriteSheet,
+            bossHealingLoopSpriteLoaded,
+            bossHealingLoopFramesPerRow,
+            bossHealingLoopDirectionRows
+        );
+    }
+    else if (
+        enemy.bossActionState ==
         BossActionState::BombardmentRoar
         )
     {
@@ -27517,6 +33077,21 @@ bool Game::GetBossAnimationFrame(
         )
     };
 
+    const float bottomTrim =
+        Clamp(
+            bossSpriteBottomTrim,
+            0.0f,
+            static_cast<float>(
+                bossFrameHeight - 1
+                )
+        );
+
+    outSource.height =
+        static_cast<float>(
+            bossFrameHeight
+            ) -
+        bottomTrim;
+
     outWidthPixels =
         static_cast<float>(
             bossFrameWidth
@@ -27524,14 +33099,13 @@ bool Game::GetBossAnimationFrame(
         bossVisualScale;
 
     outHeightPixels =
-        static_cast<float>(
-            bossFrameHeight
-            ) *
+        outSource.height *
         bossVisualScale;
 
-    // Position represents the boss's feet.
-    outAnchorY = 0.98f;
-
+    // Keep the billboard above the terrain.
+    // The transparent margin is handled through cropping.
+    outAnchorY =
+        0.98f;
     return true;
 }
 
@@ -28015,15 +33589,55 @@ void Game::UpdateBossBehavior(
     bool sameTerrainLevel
 )
 {
+    const float healthRatio =
+        static_cast<float>(
+            enemy.hp
+            ) /
+        static_cast<float>(
+            std::max(
+                1,
+                enemy.maxHp
+            )
+            );
+
+    const bool bossBelowHalfHealth =
+        healthRatio <=
+        0.50f;
+
+    const float lowHealthAbilityFrequency =
+        bossBelowHalfHealth
+        ? bossLowHealthAbilityFrequencyMultiplier
+        : 1.0f;
+
+    const float movementSpeedMultiplier =
+        GetBossMovementSpeedMultiplier(
+            enemy
+        );
+
+    // Below 50% HP, this extra multiplier affects:
+    //
+    // - normal slam frequency
+    // - slam wind-up speed
+    // - laser cooldown
+    // - roar cooldown
+    // - charge cooldown
+    const float attackSpeedMultiplier =
+        GetBossAttackSpeedMultiplier(
+            enemy
+        ) *
+        lowHealthAbilityFrequency;
+
+    const float dashPowerMultiplier =
+        GetBossDashPowerMultiplier(
+            enemy
+        );
 
     enemy.bossBombardmentCooldownTimer =
         std::max(
             0.0f,
             enemy.bossBombardmentCooldownTimer -
             dt *
-            GetBossAttackSpeedMultiplier(
-                enemy
-            )
+            attackSpeedMultiplier
         );
 
     enemy.bossChargeCooldownTimer =
@@ -28031,9 +33645,7 @@ void Game::UpdateBossBehavior(
             0.0f,
             enemy.bossChargeCooldownTimer -
             dt *
-            GetBossAttackSpeedMultiplier(
-                enemy
-            )
+            attackSpeedMultiplier
         );
 
     enemy.bossDecisionTimer =
@@ -28043,27 +33655,13 @@ void Game::UpdateBossBehavior(
             dt
         );
 
-    const float movementSpeedMultiplier =
-        GetBossMovementSpeedMultiplier(
-            enemy
-        );
-
-    const float attackSpeedMultiplier =
-        GetBossAttackSpeedMultiplier(
-            enemy
-        );
-
-    const float dashPowerMultiplier =
-        GetBossDashPowerMultiplier(
-            enemy
-        );
-
     enemy.bossForwardDashCooldownTimer =
         std::max(
             0.0f,
             enemy.bossForwardDashCooldownTimer -
             dt *
-            dashPowerMultiplier
+            dashPowerMultiplier *
+            lowHealthAbilityFrequency
         );
 
     enemy.bossSlamImpactVisualTimer =
@@ -28080,17 +33678,6 @@ void Game::UpdateBossBehavior(
             dt *
             attackSpeedMultiplier
         );
-
-    const float healthRatio =
-        static_cast<float>(
-            enemy.hp
-            ) /
-        static_cast<float>(
-            std::max(
-                1,
-                enemy.maxHp
-            )
-            );
 
     // --------------------------------------------------
 // Dedicated Boss stunned state
@@ -28125,6 +33712,33 @@ void Game::UpdateBossBehavior(
                 enemy
             );
         }
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+// Boss healing states
+//
+// These states completely own the Boss until healing
+// ends and the forced stun begins.
+// --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::HealingWindup ||
+        enemy.bossActionState ==
+        BossActionState::HealingActive
+        )
+    {
+        UpdateBossHealing(
+            enemy,
+            dt
+        );
 
         UpdateBossAnimation(
             enemy,
@@ -28170,6 +33784,43 @@ void Game::UpdateBossBehavior(
         UpdateBossBombardment(
             enemy,
             dt
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+// Healing trigger
+//
+// The Boss must be free before beginning healing.
+// Crossing below 50% during another attack causes
+// healing to begin after that attack finishes.
+// --------------------------------------------------
+
+    const bool bossCanBeginHealing =
+        enemy.bossActionState ==
+        BossActionState::None &&
+        !enemy.bossDashCharging &&
+        enemy.bossDashTimer <=
+        0.0f;
+
+    if (
+        bossCanBeginHealing &&
+        healthRatio <=
+        bossHealingTriggerHealthRatio &&
+        enemy.bossHealingUseCount <
+        bossHealingMaximumUses &&
+        enemy.bossHealingCooldownTimer <=
+        0.0f
+        )
+    {
+        StartBossHealing(
+            enemy
         );
 
         UpdateBossAnimation(
@@ -28449,8 +34100,11 @@ void Game::UpdateBossBehavior(
     }
 
     // --------------------------------------------------
-    // Continue an existing special attack.
-    // --------------------------------------------------
+// Continue an existing special attack.
+//
+// Existing actions must always update before the Boss
+// is allowed to select a new attack.
+// --------------------------------------------------
 
     if (
         enemy.bossActionState ==
@@ -28472,152 +34126,12 @@ void Game::UpdateBossBehavior(
         return;
     }
 
-    if (
-        enemy.bossActionState ==
-        BossActionState::Slam
-        )
-    {
-        UpdateBossAnimation(
-            enemy,
-            dt
-        );
-
-        return;
-    }
-
-    enemy.attackTimer =
-        std::min(
-            enemy.attackInterval,
-            enemy.attackTimer +
-            dt *
-            attackSpeedMultiplier
-        );
-
-
-    const bool bombardmentUnlocked =
-        healthRatio <=
-        0.75f;
-
-    const bool chargeRangeValid =
-        distanceToPlayer >
-        bossSlamRadius *
-        1.45f &&
-        distanceToPlayer <
-        950.0f;
-
-    if (
-        enemy.bossDecisionTimer <=
-        0.0f
-        )
-    {
-        enemy.bossDecisionTimer =
-            0.80f;
-
-        const int attackRoll =
-            GetRandomValue(
-                0,
-                99
-            );
-
-        // 25% chance to bombard when available.
-        if (
-            bombardmentUnlocked &&
-            attackRoll < 25 &&
-            sameTerrainLevel &&
-            distanceToPlayer >
-            bossSlamRadius *
-            1.30f &&
-            enemy.bossBombardmentCooldownTimer <=
-            0.0f
-            )
-        {
-            StartBossBombardment(
-                enemy
-            );
-
-            UpdateBossAnimation(
-                enemy,
-                dt
-            );
-
-            return;
-        }
-
-        // Additional 30% section of the roll for charge.
-        if (
-            attackRoll >= 25 &&
-            attackRoll < 55 &&
-            chargeRangeValid &&
-            sameTerrainLevel &&
-            enemy.bossChargeCooldownTimer <=
-            0.0f
-            )
-        {
-            StartBossCharge(
-                enemy
-            );
-
-            UpdateBossAnimation(
-                enemy,
-                dt
-            );
-
-            return;
-        }
-    }
-
-    if (
-        sameTerrainLevel &&
-        distanceToPlayer >
-        bossForwardDashTriggerDistance &&
-        enemy.bossForwardDashCooldownTimer <=
-        0.0f
-        )
-    {
-        StartBossForwardDash(
-            enemy
-        );
-
-        UpdateBossAnimation(
-            enemy,
-            dt
-        );
-
-        return;
-    }
-
     // --------------------------------------------------
-    // Below 50%: ranged laser when the player is not close.
+    // Continue the slam warning.
+    //
+    // This must happen before bombardment, charge, chase
+    // dash, or laser selection.
     // --------------------------------------------------
-
-    const bool laserUnlocked =
-        healthRatio <=
-        0.50f;
-
-    const float slamStartRange =
-        bossSlamRadius *
-        0.82f;
-
-    if (
-        laserUnlocked &&
-        sameTerrainLevel &&
-        distanceToPlayer >
-        slamStartRange &&
-        enemy.bossLaserCooldownTimer <=
-        0.0f
-        )
-    {
-        StartBossLaser(
-            enemy
-        );
-
-        UpdateBossAnimation(
-            enemy,
-            dt
-        );
-
-        return;
-    }
 
     if (
         enemy.bossActionState ==
@@ -28658,10 +34172,210 @@ void Game::UpdateBossBehavior(
     }
 
     // --------------------------------------------------
+    // Continue the slam animation.
+    // --------------------------------------------------
+
+    if (
+        enemy.bossActionState ==
+        BossActionState::Slam
+        )
+    {
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // The Boss may select a new action only when it is
+    // completely free.
+    // --------------------------------------------------
+
+    const bool bossCanStartNewAction =
+        enemy.bossActionState ==
+        BossActionState::None &&
+        !enemy.bossDashCharging &&
+        enemy.bossDashTimer <=
+        0.0f;
+
+    enemy.attackTimer =
+        std::min(
+            enemy.attackInterval,
+            enemy.attackTimer +
+            dt *
+            attackSpeedMultiplier
+        );
+
+    const bool chargeRangeValid =
+        distanceToPlayer >
+        bossSlamRadius *
+        1.45f &&
+        distanceToPlayer <
+        950.0f;
+
+    // Roar and charge become more likely below 50% HP.
+    const int roarRollEnd =
+        bossBelowHalfHealth
+        ? 35
+        : 22;
+
+    const int chargeRollEnd =
+        roarRollEnd +
+        (
+            bossBelowHalfHealth
+            ? 40
+            : 30
+            );
+
+    // --------------------------------------------------
+    // Random special-action selection.
+    //
+    // Roar is now a normal base ability and may occur
+    // from 100% HP onward.
+    // --------------------------------------------------
+
+    if (
+        bossCanStartNewAction &&
+        enemy.bossDecisionTimer <=
+        0.0f
+        )
+    {
+        enemy.bossDecisionTimer =
+            bossBelowHalfHealth
+            ? bossLowHealthDecisionInterval
+            : bossDecisionInterval;
+
+        const int attackRoll =
+            GetRandomValue(
+                0,
+                99
+            );
+
+        // --------------------------------------------------
+        // Roar / bombardment
+        //
+        // Plays directly without first performing the retreat
+        // dash. Available at every Boss health level.
+        // --------------------------------------------------
+
+        if (
+            attackRoll <
+            roarRollEnd &&
+            sameTerrainLevel &&
+            enemy.bossBombardmentCooldownTimer <=
+            0.0f
+            )
+        {
+            StartBossBombardmentRoar(
+                enemy
+            );
+
+            UpdateBossAnimation(
+                enemy,
+                dt
+            );
+
+            return;
+        }
+
+        // --------------------------------------------------
+        // Straight-line charge
+        // --------------------------------------------------
+
+        if (
+            attackRoll >=
+            roarRollEnd &&
+            attackRoll <
+            chargeRollEnd &&
+            chargeRangeValid &&
+            sameTerrainLevel &&
+            enemy.bossChargeCooldownTimer <=
+            0.0f
+            )
+        {
+            StartBossCharge(
+                enemy
+            );
+
+            UpdateBossAnimation(
+                enemy,
+                dt
+            );
+
+            return;
+        }
+    }
+
+    // --------------------------------------------------
+    // Far-distance chase dash.
+    //
+    // This now runs only when no other Boss action is active.
+    // --------------------------------------------------
+
+    if (
+        bossCanStartNewAction &&
+        sameTerrainLevel &&
+        distanceToPlayer >
+        bossForwardDashTriggerDistance &&
+        enemy.bossForwardDashCooldownTimer <=
+        0.0f
+        )
+    {
+        StartBossForwardDash(
+            enemy
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Below 50% HP: ranged laser when the player is not
+    // within slam range.
+    // --------------------------------------------------
+
+    const bool laserUnlocked =
+        healthRatio <=
+        0.50f;
+
+    const float slamStartRange =
+        bossSlamRadius *
+        0.82f;
+
+    if (
+        bossCanStartNewAction &&
+        laserUnlocked &&
+        sameTerrainLevel &&
+        distanceToPlayer >
+        slamStartRange &&
+        enemy.bossLaserCooldownTimer <=
+        0.0f
+        )
+    {
+        StartBossLaser(
+            enemy
+        );
+
+        UpdateBossAnimation(
+            enemy,
+            dt
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
     // Basic circular axe slam.
     // --------------------------------------------------
 
     if (
+        bossCanStartNewAction &&
         sameTerrainLevel &&
         distanceToPlayer <=
         slamStartRange &&
@@ -28688,6 +34402,9 @@ void Game::UpdateBossBehavior(
     enemy.pathRefreshTimer +=
         dt;
 
+    const bool pathMissing =
+        enemy.path.empty();
+
     const bool pathFinished =
         !enemy.path.empty() &&
         enemy.pathIndex >=
@@ -28695,10 +34412,13 @@ void Game::UpdateBossBehavior(
             enemy.path.size()
             );
 
+    // Several Boss actions clear the path. Refresh it
+    // immediately instead of waiting for the path timer.
     if (
+        pathMissing ||
+        pathFinished ||
         enemy.pathRefreshTimer >=
-        enemy.pathRefreshInterval ||
-        pathFinished
+        enemy.pathRefreshInterval
         )
     {
         RefreshEnemyPath(
@@ -28707,7 +34427,7 @@ void Game::UpdateBossBehavior(
     }
 
     // Temporarily scale movement without permanently
-    // modifying the Boss's base speed.
+    // changing the Boss's base movement speed.
     const float baseMovementSpeed =
         enemy.speed;
 
@@ -29382,6 +35102,9 @@ void Game::DrawBossUnlitEffects() const
         {
             if (
                 !enemy.active ||
+                !IsChamberVisible(
+                    enemy.chamberId
+                ) ||
                 enemy.type !=
                 EnemyType::Boss
                 )
@@ -29990,6 +35713,9 @@ void Game::DrawBossSlamDomeHybrid3D() const
     {
         if (
             enemy.active &&
+            IsChamberVisible(
+                enemy.chamberId
+            ) &&
             enemy.type ==
             EnemyType::Boss &&
             enemy.bossSlamImpactVisualTimer >
@@ -30218,6 +35944,9 @@ void Game::DrawBossSlamDomeHybrid3D() const
     {
         if (
             !enemy.active ||
+            !IsChamberVisible(
+                enemy.chamberId
+            ) ||
             enemy.type !=
             EnemyType::Boss ||
             enemy.bossSlamImpactVisualTimer <=
@@ -30707,6 +36436,23 @@ void Game::StartBossBombardmentRoar(
     Enemy& enemy
 )
 {
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        !enemy.active ||
+        enemy.bossActionState !=
+        BossActionState::None ||
+        enemy.bossDashCharging ||
+        enemy.bossDashTimer >
+        0.0f
+        )
+    {
+        return;
+    }
+
+    enemy.bossBombardmentCooldownTimer =
+        bossBombardmentCooldown;
+
     enemy.bossActionState =
         BossActionState::BombardmentRoar;
 
@@ -31539,8 +37285,6 @@ void Game::StartBossCharge(
     enemy.bossChargeHitPlayer =
         false;
 
-    enemy.bossDashAfterimageTimer =
-        0.0f;
 
     enemy.animationState =
         EnemyAnimationState::Attacking;
@@ -31691,8 +37435,8 @@ void Game::UpdateBossCharge(
                 true;
         }
     }
-
-    enemy.bossDashAfterimageTimer -=
+    /*
+        enemy.bossDashAfterimageTimer -=
         dt *
         GetBossDashPowerMultiplier(
             enemy
@@ -31710,6 +37454,8 @@ void Game::UpdateBossCharge(
         enemy.bossDashAfterimageTimer +=
             bossDashAfterimageInterval;
     }
+    */
+
 
     // Normally this triggers because the collision test
     // found an obstacle or terrain wall.
@@ -31734,3 +37480,869 @@ void Game::UpdateBossCharge(
     }
 }
 
+void Game::DrawEnemySpawnGroundEffects2D() const
+{
+    if (
+        !enemySpawnEffectSpriteLoaded ||
+        enemySpawnEffectSpriteSheet.id ==
+        0
+        )
+    {
+        return;
+    }
+
+    BeginBlendMode(
+        BLEND_ALPHA
+    );
+
+    for (
+        const Enemy& enemy :
+        enemies
+        )
+    {
+        if (
+            !enemy.active ||
+            !IsChamberVisible(
+                enemy.chamberId
+            ) ||
+            enemy.type ==
+            EnemyType::Boss ||
+            enemy.spawnState ==
+            EnemySpawnState::Ready
+            )
+        {
+            continue;
+        }
+
+        // GroundEffect animates through the sheet.
+ // Emerging and FadeOut use the final frame.
+        int frame =
+            enemySpawnEffectFrameCount -
+            1;
+
+        unsigned char alpha =
+            255;
+
+        if (
+            enemy.spawnState ==
+            EnemySpawnState::GroundEffect
+            )
+        {
+            const float progress =
+                Clamp(
+                    enemy.spawnStateTimer /
+                    std::max(
+                        0.01f,
+                        enemySpawnGroundEffectDuration
+                    ),
+                    0.0f,
+                    1.0f
+                );
+
+            frame =
+                std::min(
+                    enemySpawnEffectFrameCount -
+                    1,
+
+                    static_cast<int>(
+                        progress *
+                        static_cast<float>(
+                            enemySpawnEffectFrameCount
+                            )
+                        )
+                );
+        }
+        else if (
+            enemy.spawnState ==
+            EnemySpawnState::Emerging
+            )
+        {
+            // The final frame remains completely visible until
+            // the enemy is fully above the ground.
+            frame =
+                enemySpawnEffectFrameCount -
+                1;
+
+            alpha =
+                255;
+        }
+        else if (
+            enemy.spawnState ==
+            EnemySpawnState::FadeOut
+            )
+        {
+            frame =
+                enemySpawnEffectFrameCount -
+                1;
+
+            const float fadeProgress =
+                Clamp(
+                    enemy.spawnStateTimer /
+                    std::max(
+                        0.01f,
+                        enemySpawnFadeDuration
+                    ),
+                    0.0f,
+                    1.0f
+                );
+
+            const float smoothFade =
+                fadeProgress *
+                fadeProgress *
+                (
+                    3.0f -
+                    2.0f *
+                    fadeProgress
+                    );
+
+            alpha =
+                static_cast<unsigned char>(
+                    255.0f *
+                    (
+                        1.0f -
+                        smoothFade
+                        )
+                    );
+        }
+
+        const float visualSize =
+            std::max(
+                enemySpawnEffectVisualSize,
+                enemy.radius *
+                4.50f
+            );
+
+        const float halfSize =
+            visualSize *
+            0.5f;
+
+        const Vector2 northWest{
+            enemy.pos.x - halfSize,
+            enemy.pos.y - halfSize
+        };
+
+        const Vector2 northEast{
+            enemy.pos.x + halfSize,
+            enemy.pos.y - halfSize
+        };
+
+        const Vector2 southEast{
+            enemy.pos.x + halfSize,
+            enemy.pos.y + halfSize
+        };
+
+        const Vector2 southWest{
+            enemy.pos.x - halfSize,
+            enemy.pos.y + halfSize
+        };
+
+        DrawTextureFrameOnQuad2D(
+            enemySpawnEffectSpriteSheet,
+            GetEnemySpawnEffectSourceRect(
+                frame
+            ),
+            WorldToViewElevated(
+                northWest,
+                1.2f
+            ),
+            WorldToViewElevated(
+                northEast,
+                1.2f
+            ),
+            WorldToViewElevated(
+                southEast,
+                1.2f
+            ),
+            WorldToViewElevated(
+                southWest,
+                1.2f
+            ),
+            Color{
+                255,
+                255,
+                255,
+                alpha
+            }
+        );
+    }
+
+    EndBlendMode();
+}
+
+void Game::StartBossHealing(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.type !=
+        EnemyType::Boss ||
+        !enemy.active ||
+        enemy.bossActionState !=
+        BossActionState::None ||
+        enemy.bossHealingUseCount >=
+        bossHealingMaximumUses
+        )
+    {
+        return;
+    }
+
+    enemy.bossHealingUseCount++;
+
+    enemy.bossActionState =
+        BossActionState::HealingWindup;
+
+    enemy.animationState =
+        EnemyAnimationState::Attacking;
+
+    enemy.bossAnimationFrame =
+        0;
+
+    enemy.bossAnimationTimer =
+        0.0f;
+
+    enemy.bossHealingTimer =
+        0.0f;
+
+    enemy.bossHealingWaveTimer =
+        0.0f;
+
+    enemy.bossHealingWavesSpawned =
+        0;
+
+    enemy.bossHealingAmountApplied =
+        0;
+
+    enemy.bossHealingTargetAmount =
+        std::max(
+            1,
+            static_cast<int>(
+                static_cast<float>(
+                    enemy.maxHp
+                    ) *
+                bossHealingAmountRatio +
+                0.5f
+                )
+        );
+
+    // Completely stop all movement.
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+    enemy.pathRefreshTimer = 0.0f;
+
+    enemy.velocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.knockbackVelocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.bossDashCharging =
+        false;
+
+    enemy.bossDashChargeTimer =
+        0.0f;
+
+    enemy.bossDashTimer =
+        0.0f;
+
+    enemy.bossDashVelocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.bossDashPurpose =
+        BossDashPurpose::None;
+
+    enemy.bossDashIsForward =
+        false;
+
+    // Healing cannot be stopped by ordinary crowd control.
+    enemy.stunTimer =
+        0.0f;
+
+    enemy.frozenTimer =
+        0.0f;
+
+    enemy.slowTimer =
+        0.0f;
+
+    enemy.airborneTimer =
+        0.0f;
+
+    enemy.airborneMaxTimer =
+        0.0f;
+
+    enemy.landingStunTimer =
+        0.0f;
+
+    enemy.landingStunOnLand =
+        0.0f;
+
+    enemy.visualHeight =
+        0.0f;
+
+    enemy.bossInterruptDamage =
+        0.0f;
+}
+
+void Game::UpdateBossHealing(
+    Enemy& enemy,
+    float dt
+)
+{
+    if (
+        enemy.bossActionState !=
+        BossActionState::HealingWindup &&
+        enemy.bossActionState !=
+        BossActionState::HealingActive
+        )
+    {
+        return;
+    }
+
+    // Keep the Boss completely stationary throughout
+    // both healing states.
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+    enemy.pathRefreshTimer = 0.0f;
+
+    enemy.velocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.knockbackVelocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.stunTimer = 0.0f;
+    enemy.frozenTimer = 0.0f;
+    enemy.slowTimer = 0.0f;
+
+    enemy.airborneTimer = 0.0f;
+    enemy.airborneMaxTimer = 0.0f;
+    enemy.landingStunTimer = 0.0f;
+    enemy.landingStunOnLand = 0.0f;
+    enemy.visualHeight = 0.0f;
+
+    // Prehealing is controlled by UpdateBossAnimation().
+    if (
+        enemy.bossActionState ==
+        BossActionState::HealingWindup
+        )
+    {
+        return;
+    }
+
+    const float safeDuration =
+        std::max(
+            0.10f,
+            bossHealingDuration
+        );
+
+    enemy.bossHealingTimer =
+        std::min(
+            safeDuration,
+            enemy.bossHealingTimer +
+            dt
+        );
+
+    // --------------------------------------------------
+    // Gradual healing
+    //
+    // The amount that should have been restored by this
+    // point in the 20-second period is calculated, then
+    // only the missing difference is applied.
+    // --------------------------------------------------
+
+    const float healingProgress =
+        Clamp(
+            enemy.bossHealingTimer /
+            safeDuration,
+            0.0f,
+            1.0f
+        );
+
+    const int desiredHealingAmount =
+        std::min(
+            enemy.bossHealingTargetAmount,
+
+            static_cast<int>(
+                static_cast<float>(
+                    enemy.bossHealingTargetAmount
+                    ) *
+                healingProgress
+                )
+        );
+
+    const int healingThisFrame =
+        desiredHealingAmount -
+        enemy.bossHealingAmountApplied;
+
+    if (healingThisFrame > 0)
+    {
+        enemy.hp =
+            std::min(
+                enemy.maxHp,
+                enemy.hp +
+                healingThisFrame
+            );
+
+        enemy.bossHealingAmountApplied =
+            desiredHealingAmount;
+    }
+
+    // --------------------------------------------------
+ // Sequential healing minion waves
+ //
+ // Wave 1 begins immediately.
+ //
+ // Each later wave may begin only after every minion
+ // belonging to the previous wave has been defeated.
+ // --------------------------------------------------
+
+    if (
+        enemy.bossHealingWavesSpawned <=
+        0
+        )
+    {
+        const int firstWaveNumber =
+            1;
+
+        QueueBossHealingMinionWave(
+            enemy,
+            firstWaveNumber
+        );
+
+        enemy.bossHealingWavesSpawned =
+            firstWaveNumber;
+    }
+    else if (
+        enemy.bossHealingWavesSpawned <
+        bossHealingMinionWaveCount
+        )
+    {
+        const int currentWaveNumber =
+            enemy.bossHealingWavesSpawned;
+
+        const bool currentWaveDefeated =
+            !HasLivingBossHealingMinions(
+                enemy,
+                currentWaveNumber
+            );
+
+        if (currentWaveDefeated)
+        {
+            const int nextWaveNumber =
+                currentWaveNumber +
+                1;
+
+            QueueBossHealingMinionWave(
+                enemy,
+                nextWaveNumber
+            );
+
+            enemy.bossHealingWavesSpawned =
+                nextWaveNumber;
+        }
+    }
+
+    const bool healingTimeCompleted =
+        enemy.bossHealingTimer >=
+        safeDuration;
+
+    const bool allWavesSpawned =
+        enemy.bossHealingWavesSpawned >=
+        bossHealingMinionWaveCount;
+
+    bool finalWaveDefeated =
+        false;
+
+    if (allWavesSpawned)
+    {
+        finalWaveDefeated =
+            !HasLivingBossHealingMinions(
+                enemy,
+                enemy.bossHealingWavesSpawned
+            );
+    }
+
+    // The Boss remains in its healing loop until both:
+    //
+    // 1. The intended healing duration has completed.
+    // 2. All three minion waves have been defeated.
+    if (
+        !healingTimeCompleted ||
+        !allWavesSpawned ||
+        !finalWaveDefeated
+        )
+    {
+        return;
+    }
+
+    // Ensure the complete 20% healing amount is applied.
+    const int remainingHealing =
+        enemy.bossHealingTargetAmount -
+        enemy.bossHealingAmountApplied;
+
+    if (remainingHealing > 0)
+    {
+        enemy.hp =
+            std::min(
+                enemy.maxHp,
+                enemy.hp +
+                remainingHealing
+            );
+
+        enemy.bossHealingAmountApplied =
+            enemy.bossHealingTargetAmount;
+    }
+
+    // Use double the ordinary special stun duration.
+    float normalStunDuration =
+        GetBossSpecialStunDuration(
+            enemy
+        );
+
+    // The final health tier normally cannot be staggered,
+    // so use the original high-tier stun as the fallback.
+    if (normalStunDuration <= 0.0f)
+    {
+        normalStunDuration =
+            4.50f;
+    }
+
+    const float healingEndStunDuration =
+        std::max(
+            bossHealingMinimumEndStunDuration,
+            normalStunDuration *
+            bossHealingEndStunMultiplier
+        );
+
+    // Cooldown continues counting during the stun, so add
+    // the stun time to preserve the intended post-stun delay.
+    enemy.bossHealingCooldownTimer =
+        bossHealingCooldown +
+        healingEndStunDuration;
+
+    StartBossStunned(
+        enemy,
+        healingEndStunDuration,
+        true
+    );
+}
+
+bool Game::HasLivingBossHealingMinions(
+    const Enemy& boss,
+    int waveNumber
+) const
+{
+    if (
+        boss.id <= 0 ||
+        waveNumber <= 0
+        )
+    {
+        return false;
+    }
+
+    // Check enemies already added to the game.
+    for (
+        const Enemy& enemy :
+        enemies
+        )
+    {
+        if (
+            !enemy.active
+            )
+        {
+            continue;
+        }
+
+        if (
+            enemy.bossHealingSummonerId ==
+            boss.id &&
+            enemy.bossHealingSummonWave ==
+            waveNumber
+            )
+        {
+            return true;
+        }
+    }
+
+    // Also check queued enemies that have not yet been
+    // inserted into the enemies vector.
+    for (
+        const PendingEnemySpawn& pending :
+        pendingEnemySpawns
+        )
+    {
+        if (
+            pending.bossHealingSummonerId ==
+            boss.id &&
+            pending.bossHealingSummonWave ==
+            waveNumber
+            )
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void Game::QueueBossHealingMinionWave(
+    const Enemy& boss,
+    int waveNumber
+)
+{
+    if (
+        boss.type !=
+        EnemyType::Boss ||
+        !boss.active ||
+        waveNumber <= 0
+        )
+    {
+        return;
+    }
+
+    const int minionCount =
+        std::max(
+            1,
+            bossHealingMinionsPerWave
+        );
+
+    const float randomRotation =
+        static_cast<float>(
+            GetRandomValue(
+                0,
+                359
+            )
+            ) *
+        DEG2RAD;
+
+    const int bossElevation =
+        GetTerrainElevationAtWorld(
+            boss.pos
+        );
+
+    for (
+        int minionIndex = 0;
+        minionIndex < minionCount;
+        ++minionIndex
+        )
+    {
+        bool foundPosition =
+            false;
+
+        Vector2 spawnPosition =
+            boss.pos;
+
+        for (
+            int attempt = 0;
+            attempt < 12;
+            ++attempt
+            )
+        {
+            const float baseAngle =
+                randomRotation +
+                (
+                    static_cast<float>(
+                        minionIndex
+                        ) /
+                    static_cast<float>(
+                        minionCount
+                        )
+                    ) *
+                PI *
+                2.0f;
+
+            const float angle =
+                baseAngle +
+                static_cast<float>(
+                    attempt
+                    ) *
+                0.31f;
+
+            const float radiusVariation =
+                static_cast<float>(
+                    (
+                        attempt %
+                        3
+                        ) -
+                    1
+                    ) *
+                24.0f;
+
+            const float spawnRadius =
+                bossHealingMinionSpawnRadius +
+                radiusVariation;
+
+            const Vector2 candidate{
+                boss.pos.x +
+                    cosf(angle) *
+                    spawnRadius,
+
+                boss.pos.y +
+                    sinf(angle) *
+                    spawnRadius
+            };
+
+            if (
+                GetTerrainElevationAtWorld(
+                    candidate
+                ) !=
+                bossElevation
+                )
+            {
+                continue;
+            }
+
+            if (
+                !CanEnemyStandAt(
+                    candidate,
+                    candidate,
+                    20.0f
+                )
+                )
+            {
+                continue;
+            }
+
+            spawnPosition =
+                candidate;
+
+            foundPosition =
+                true;
+
+            break;
+        }
+
+        if (!foundPosition)
+        {
+            continue;
+        }
+
+        const int typeRoll =
+            GetRandomValue(
+                0,
+                99
+            );
+
+        EnemyType minionType =
+            EnemyType::Grunt;
+
+        if (typeRoll < 45)
+        {
+            minionType =
+                EnemyType::Grunt;
+        }
+        else if (typeRoll < 70)
+        {
+            minionType =
+                EnemyType::Runner;
+        }
+        else if (typeRoll < 90)
+        {
+            minionType =
+                EnemyType::Shooter;
+        }
+        else
+        {
+            minionType =
+                EnemyType::Tank;
+        }
+
+        PendingEnemySpawn pendingSpawn;
+
+        pendingSpawn.type =
+            minionType;
+
+        pendingSpawn.chamberId =
+            boss.chamberId;
+
+        pendingSpawn.position =
+            spawnPosition;
+
+        pendingSpawn.bossHealingSummonerId =
+            boss.id;
+
+        pendingSpawn.bossHealingSummonWave =
+            waveNumber;
+
+        pendingEnemySpawns.push_back(
+            pendingSpawn
+        );
+    }
+}
+
+void Game::ProcessPendingEnemySpawns()
+{
+    if (pendingEnemySpawns.empty())
+    {
+        return;
+    }
+
+    std::vector<PendingEnemySpawn>
+        spawnsToProcess;
+
+    spawnsToProcess.swap(
+        pendingEnemySpawns
+    );
+
+    for (
+        const PendingEnemySpawn& request :
+        spawnsToProcess
+        )
+    {
+        const std::size_t previousCount =
+            enemies.size();
+
+        SpawnEnemyInChamber(
+            request.type,
+            request.chamberId
+        );
+
+        if (
+            enemies.size() <=
+            previousCount
+            )
+        {
+            continue;
+        }
+
+        Enemy& spawnedEnemy =
+            enemies.back();
+
+        spawnedEnemy.bossHealingSummonerId =
+            request.bossHealingSummonerId;
+
+        spawnedEnemy.bossHealingSummonWave =
+            request.bossHealingSummonWave;
+
+        spawnedEnemy.pos =
+            request.position;
+
+        spawnedEnemy.previousAnimationPosition =
+            request.position;
+
+        spawnedEnemy.animationPositionInitialized =
+            true;
+
+        spawnedEnemy.path.clear();
+        spawnedEnemy.pathIndex = 0;
+        spawnedEnemy.pathRefreshTimer = 0.0f;
+
+        spawnedEnemy.spawnState =
+            EnemySpawnState::GroundEffect;
+
+        spawnedEnemy.spawnStateTimer =
+            0.0f;
+
+        spawnedEnemy.animationState =
+            EnemyAnimationState::Idle;
+    }
+}
