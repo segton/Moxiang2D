@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import shlex
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Iterable
 
@@ -66,6 +67,36 @@ def check_count(tag: str, header: list[str], body: list[str], errors: list[str])
         return
     if len(body) != expected:
         errors.append(f"{tag}: header says {expected}, found {len(body)} records")
+
+
+def parse_grid(
+    lines: list[str],
+    tag: str,
+    values_per_cell: int,
+    errors: list[str],
+) -> tuple[int, int, list[list[int]]]:
+    header, body = section(lines, tag)
+    if len(header) < 3:
+        errors.append(f"{tag}: missing width/height")
+        return 0, 0, []
+
+    width = int(header[1])
+    height = int(header[2])
+    if len(body) != height:
+        errors.append(f"{tag}: height says {height}, found {len(body)} rows")
+
+    grid: list[list[int]] = []
+    expected = width * values_per_cell
+    for row_index, record in enumerate(body):
+        values = [int(value) for value in shlex.split(record)]
+        if len(values) != expected:
+            errors.append(
+                f"{tag} row {row_index + 1}: expected {expected} values, "
+                f"found {len(values)}"
+            )
+        grid.append(values)
+
+    return width, height, grid
 
 
 def validate(level: Path) -> list[str]:
@@ -151,6 +182,31 @@ def validate(level: Path) -> list[str]:
                     for column in range(map_width)
                 ])
 
+        tiles_width, tiles_height, tile_grid = parse_grid(
+            lines, "TILES", 1, errors
+        )
+        elevation_width, elevation_height, elevation_grid = parse_grid(
+            lines, "TERRAIN_ELEVATIONS", 1, errors
+        )
+        ramp_width, ramp_height, ramp_grid = parse_grid(
+            lines, "TERRAIN_RAMPS", 1, errors
+        )
+        wall_width, wall_height, wall_grid = parse_grid(
+            lines, "WALL_TILES", 4, errors
+        )
+
+        for tag_name, width, height in (
+            ("TILES", tiles_width, tiles_height),
+            ("TERRAIN_ELEVATIONS", elevation_width, elevation_height),
+            ("TERRAIN_RAMPS", ramp_width, ramp_height),
+            ("WALL_TILES", wall_width, wall_height),
+        ):
+            if width != map_width or height != map_height:
+                errors.append(
+                    f"{tag_name}: dimensions {width}x{height} do not match "
+                    f"CELL_LAYOUT {map_width}x{map_height}"
+                )
+
         def world_cell(x: float, y: float) -> tuple[int, int, int, int] | None:
             if (
                 map_width <= 0 or
@@ -172,12 +228,16 @@ def validate(level: Path) -> list[str]:
             return cell_x, cell_y, enabled, chamber_id
 
         atlas_header, _ = section(lines, "TERRAIN_ATLAS")
+        atlas_tile_count = 0
+        atlas_portable_path = ""
         if len(atlas_header) != 4:
             errors.append("TERRAIN_ATLAS must contain path, columns and rows")
         else:
+            atlas_portable_path = atlas_header[1]
             atlas_path = exact_path(project, atlas_header[1])
             columns = int(atlas_header[2])
             rows = int(atlas_header[3])
+            atlas_tile_count = max(0, columns * rows)
             if atlas_path is None or not atlas_path.is_file():
                 errors.append(f"missing/case-mismatched atlas: {atlas_header[1]}")
             elif columns <= 0 or rows <= 0:
@@ -189,6 +249,133 @@ def validate(level: Path) -> list[str]:
                             f"atlas {atlas_header[1]} size {image.width}x{image.height} "
                             f"is not divisible by {columns}x{rows}"
                         )
+
+        if atlas_tile_count > 0:
+            for row_index, values in enumerate(tile_grid):
+                for column, tile_index in enumerate(values):
+                    if tile_index < 0 or tile_index >= atlas_tile_count:
+                        errors.append(
+                            f"TILES ({column}, {row_index}): tile {tile_index} "
+                            f"outside atlas range 0..{atlas_tile_count - 1}"
+                        )
+
+            for row_index, values in enumerate(wall_grid):
+                for value_index, tile_index in enumerate(values):
+                    if tile_index < -1 or tile_index >= atlas_tile_count:
+                        cell_x = value_index // 4
+                        face = value_index % 4
+                        errors.append(
+                            f"WALL_TILES ({cell_x}, {row_index}) face {face}: "
+                            f"tile {tile_index} outside -1..{atlas_tile_count - 1}"
+                        )
+
+        # RampDirection is None/North/East/South/West = 0..4. A ramp is
+        # stored on the lower cell and must point to an enabled level+1 cell.
+        offsets = {1: (0, -1), 2: (1, 0), 3: (0, 1), 4: (-1, 0)}
+        directional_stair_tiles = {1: 44, 2: 45, 3: 46, 4: 47}
+        ramp_count = 0
+        if (
+            len(ramp_grid) == map_height and
+            len(elevation_grid) == map_height and
+            len(tile_grid) == map_height and
+            len(cell_layout) == map_height
+        ):
+            for y in range(map_height):
+                for x in range(map_width):
+                    direction = ramp_grid[y][x]
+                    if direction == 0:
+                        continue
+                    ramp_count += 1
+                    if direction not in offsets:
+                        errors.append(f"TERRAIN_RAMPS ({x}, {y}): invalid direction {direction}")
+                        continue
+                    dx, dy = offsets[direction]
+                    target_x, target_y = x + dx, y + dy
+                    if not (0 <= target_x < map_width and 0 <= target_y < map_height):
+                        errors.append(f"TERRAIN_RAMPS ({x}, {y}): target outside map")
+                        continue
+                    source_enabled = cell_layout[y][x][0] != 0
+                    target_enabled = cell_layout[target_y][target_x][0] != 0
+                    if not source_enabled or not target_enabled:
+                        errors.append(
+                            f"TERRAIN_RAMPS ({x}, {y}): source/target cell is disabled"
+                        )
+                        continue
+                    source_elevation = elevation_grid[y][x]
+                    target_elevation = elevation_grid[target_y][target_x]
+                    if target_elevation != source_elevation + 1:
+                        errors.append(
+                            f"TERRAIN_RAMPS ({x}, {y}): expected {source_elevation + 1} "
+                            f"at target, found {target_elevation}"
+                        )
+                    if atlas_portable_path.endswith("dungeon_master_atlas.png"):
+                        expected_tile = directional_stair_tiles[direction]
+                        if tile_grid[y][x] != expected_tile:
+                            errors.append(
+                                f"TERRAIN_RAMPS ({x}, {y}): direction {direction} "
+                                f"requires stair tile {expected_tile}, found {tile_grid[y][x]}"
+                            )
+
+            if ramp_count == 0:
+                errors.append("TERRAIN_RAMPS: level contains no usable ramps")
+
+            # Ensure every authored chamber can be reached through level edges
+            # or correctly oriented ramps. Encounter gates are intentionally
+            # ignored because they unlock after a chamber is cleared.
+            start: tuple[int, int] | None = None
+            for y in range(map_height - 1, -1, -1):
+                for x in range(map_width):
+                    if cell_layout[y][x][0] != 0:
+                        start = (x, y)
+                        break
+                if start is not None:
+                    break
+
+            if start is not None:
+                queue = deque([start])
+                visited = {start}
+                while queue:
+                    x, y = queue.popleft()
+                    for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                        nx, ny = x + dx, y + dy
+                        if not (0 <= nx < map_width and 0 <= ny < map_height):
+                            continue
+                        if cell_layout[ny][nx][0] == 0:
+                            continue
+
+                        traversable = elevation_grid[ny][nx] == elevation_grid[y][x]
+                        if not traversable:
+                            source_direction = ramp_grid[y][x]
+                            if source_direction in offsets:
+                                rdx, rdy = offsets[source_direction]
+                                traversable = (
+                                    (x + rdx, y + rdy) == (nx, ny) and
+                                    elevation_grid[ny][nx] == elevation_grid[y][x] + 1
+                                )
+                            if not traversable:
+                                target_direction = ramp_grid[ny][nx]
+                                if target_direction in offsets:
+                                    rdx, rdy = offsets[target_direction]
+                                    traversable = (
+                                        (nx + rdx, ny + rdy) == (x, y) and
+                                        elevation_grid[y][x] == elevation_grid[ny][nx] + 1
+                                    )
+
+                        if traversable and (nx, ny) not in visited:
+                            visited.add((nx, ny))
+                            queue.append((nx, ny))
+
+                reached_chambers = {
+                    cell_layout[y][x][1]
+                    for x, y in visited
+                    if cell_layout[y][x][0] != 0
+                }
+                missing_chambers = chamber_ids - reached_chambers
+                if missing_chambers:
+                    errors.append(
+                        f"unreachable chambers through terrain/ramp network: "
+                        f"{sorted(missing_chambers)}"
+                    )
 
         obstacle_header, obstacle_body = section(lines, "OBSTACLES")
         check_count("OBSTACLES", obstacle_header, obstacle_body, errors)

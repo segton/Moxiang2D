@@ -1,72 +1,77 @@
-# Dungeon environment tools
+# Optional dungeon authoring tools
 
-These scripts support the first atmosphere-authoring milestone. Run them from
-inside the `Moxiang2D` project directory.
+The files in this directory are **development utilities only**. The desktop
+game, web game, renderer, editor, and `.mox` loader are C++ and do not run
+Python. A generated `level01.mox` and all required PNG assets are already
+included in the repository.
 
-## Rebuild the environment sprites
+Python is useful here because large `.mox` grids are difficult to edit safely
+by hand. The scripts make the authored layout reproducible, check every ramp
+connection, catch missing web assets and render a planning overview. They can
+be deleted from a packaged game build without affecting the game.
+
+`build_web.bat` runs the validator when Python is available, but validation is
+now optional and the build continues without Python.
+
+## Rebuild the authored dungeon
 
 ```powershell
-python tools/build_environment_assets.py
+python tools/rebuild_level01_dungeon.py
 ```
 
-This crops reusable ornaments from the existing authored dungeon decal sheet,
-creates the 4x4 animated azure-flame sheet, and refreshes
-`Assets/environment/environment_manifest.json`.
+This regenerates the eight-chamber `levels/level01.mox` layout, including:
 
-## Reapply the sample atmosphere pass
+- chamber ownership and elevations
+- correctly oriented lower-cell-to-level+1 ramps
+- dedicated directional stair tiles
+- dedicated wall materials
+- floor variation
+- pillars, rubble, chests, urns and floor decals
+- animated environment flames and authored lights
 
-```powershell
-python tools/apply_level01_atmosphere.py
-```
+The game loads the resulting `.mox` file directly; it does not call this script.
 
-This deterministically upgrades `levels/level01.mox` to level format 11 and
-adds the sample chamber styles, layered environment objects, and authored
-lights. It is safe to rerun: the script replaces its own sections rather than
-appending duplicates.
-
-## Validate a level before building
+## Validate the level
 
 ```powershell
 python tools/validate_level.py levels/level01.mox
 ```
 
-The validator checks section counts, version-11 obstacle and light records,
-chamber references, sprite-sheet grids, missing files, and exact filename
-capitalization. Exact capitalization matters for the web build even when a
-Windows desktop build appears to work.
+The validator checks:
 
-`build_web.bat` runs this validation automatically before Emscripten compiles
-the game.
+- section dimensions and record counts
+- exact asset filename capitalization for web builds
+- atlas dimensions and tile-index ranges
+- obstacle and light placement
+- every ramp's direction and level+1 destination
+- directional stair-tile assignment
+- reachability of every chamber through the terrain/ramp network
 
-## Render a chamber-planning preview
-
-```powershell
-python tools/render_level_plan.py levels/level01.mox
-```
-
-This writes `levels/level01.plan.png`, a debugging plan that shows chamber
-boundaries, elevation changes, layered environment markers, and light radii.
-It does not change the runtime camera or game perspective.
-
-Pillow is required by the asset builder, validator, and preview renderer:
+Pillow is required only for validation of image dimensions:
 
 ```powershell
 python -m pip install Pillow
 ```
 
-## Rebuild the authored dungeon layout
+## Render a planning overview
 
-`rebuild_level01_dungeon.py` replaces the original chamber-mechanics test map
-with an eight-chamber, multi-elevation wuxia dungeon. It rebuilds terrain,
-ramps, chamber ownership, perimeter walls, floor motifs, animated flames and
-localized lighting deterministically.
-
-```bash
-python tools/rebuild_level01_dungeon.py
-python tools/validate_level.py levels/level01.mox
+```powershell
 python tools/render_level_plan.py levels/level01.mox
 ```
 
-The script intentionally does not place `dragon_panel.png` or
-`hanging_scroll.png`. Those images are billboard ornaments and do not conform
-to a wall plane, so they appear like floating decals in the hybrid camera.
+This creates `levels/level01.plan.png`. Cyan arrows show authored ramp
+directions, yellow circles show light coverage, and colored dots show layered
+environment objects. It is a top-down debugging diagram and does not change
+the game's camera or perspective.
+
+## Dungeon master atlas
+
+`Assets/tiles/dungeon_master_atlas.png` uses an 8x8 grid:
+
+- tiles `0-43`: varied floor materials
+- tiles `44-47`: North, East, South and West stair/ramp materials
+- tiles `48-63`: dedicated wall and cliff materials
+
+Keeping floors, directional stairs and walls in one atlas works with the
+existing terrain renderer while preventing floor textures from being stretched
+across vertical walls.

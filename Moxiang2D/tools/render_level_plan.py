@@ -70,6 +70,12 @@ def render(level: Path, output: Path, cell_pixels: int = 18) -> None:
         for record in elevation_body
     ]
 
+    _, ramp_body = section(lines, "TERRAIN_RAMPS")
+    ramps = [
+        [int(value) for value in shlex.split(record)]
+        for record in ramp_body
+    ]
+
     _, chamber_body = section(lines, "CHAMBERS")
     chamber_names = {
         int(fields[0]): fields[1]
@@ -118,6 +124,44 @@ def render(level: Path, output: Path, cell_pixels: int = 18) -> None:
                 )
                 if outside or disabled:
                     draw.line(edge, fill=(176, 155, 118), width=1)
+
+    ramp_offsets = {
+        1: (0, -1),
+        2: (1, 0),
+        3: (0, 1),
+        4: (-1, 0),
+    }
+    for y, row in enumerate(ramps):
+        for x, direction in enumerate(row):
+            if direction not in ramp_offsets:
+                continue
+            dx, dy = ramp_offsets[direction]
+            center_x = margin + (x + 0.5) * cell_pixels
+            center_y = margin + (y + 0.5) * cell_pixels
+            end_x = center_x + dx * cell_pixels * 0.34
+            end_y = center_y + dy * cell_pixels * 0.34
+            draw.line(
+                (center_x, center_y, end_x, end_y),
+                fill=(96, 225, 244),
+                width=max(2, cell_pixels // 7),
+            )
+            perpendicular_x = -dy
+            perpendicular_y = dx
+            arrow_size = cell_pixels * 0.16
+            draw.polygon(
+                [
+                    (end_x, end_y),
+                    (
+                        end_x - dx * arrow_size + perpendicular_x * arrow_size,
+                        end_y - dy * arrow_size + perpendicular_y * arrow_size,
+                    ),
+                    (
+                        end_x - dx * arrow_size - perpendicular_x * arrow_size,
+                        end_y - dy * arrow_size - perpendicular_y * arrow_size,
+                    ),
+                ],
+                fill=(96, 225, 244),
+            )
 
     for chamber_id, name in chamber_names.items():
         positions = [

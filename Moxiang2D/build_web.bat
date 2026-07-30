@@ -114,24 +114,22 @@ if not defined PYTHON_CMD (
     if not errorlevel 1 set "PYTHON_CMD=python"
 )
 
-if not defined PYTHON_CMD (
-    echo ERROR: Python 3 was not found.
-    echo It is required to validate level and asset paths before the web build.
-    pause
-    exit /b 1
-)
-
 echo Emscripten:
 em++ --version
 echo.
-echo Validating level data and exact asset paths...
-%PYTHON_CMD% "%PROJECT_DIR%\tools\validate_level.py" "%PROJECT_DIR%\levels\level01.mox"
+if defined PYTHON_CMD (
+    echo Validating level data and exact asset paths...
+    %PYTHON_CMD% "%PROJECT_DIR%\tools\validate_level.py" "%PROJECT_DIR%\levels\level01.mox"
 
-if errorlevel 1 (
-    echo.
-    echo ERROR: Content validation failed. Web compilation was cancelled.
-    pause
-    exit /b 1
+    if errorlevel 1 (
+        echo.
+        echo ERROR: Content validation failed. Web compilation was cancelled.
+        pause
+        exit /b 1
+    )
+) else (
+    echo Python 3 was not found. Optional content validation will be skipped.
+    echo The game and web build do not require Python at runtime.
 )
 
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"

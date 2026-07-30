@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "assets": {
     "stone_medallion.png": {
       "source": "Assets/tiles/dungeon_decals.png",
@@ -75,6 +75,70 @@
       "size": [
         640,
         896
+      ]
+    },
+    "stone_pillar.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "billboard obstacle",
+      "size": [
+        220,
+        360
+      ]
+    },
+    "broken_pillar.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "billboard obstacle",
+      "size": [
+        220,
+        360
+      ]
+    },
+    "treasure_chest.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "billboard obstacle",
+      "size": [
+        256,
+        220
+      ]
+    },
+    "rubble_pile.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "billboard obstacle",
+      "size": [
+        300,
+        190
+      ]
+    },
+    "stone_urn.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "billboard obstacle",
+      "size": [
+        180,
+        250
+      ]
+    },
+    "floor_cracks.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "ground decal",
+      "size": [
+        512,
+        512
+      ]
+    },
+    "water_puddle.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "ground decal",
+      "size": [
+        512,
+        360
+      ]
+    },
+    "foreground_gate.png": {
+      "source": "authored from existing dungeon textures",
+      "kind": "foreground billboard",
+      "size": [
+        640,
+        310
       ]
     }
   }
