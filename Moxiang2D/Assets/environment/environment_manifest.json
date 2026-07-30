@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "assets": {
+    "stone_medallion.png": {
+      "source": "Assets/tiles/dungeon_decals.png",
+      "crop": [
+        18,
+        16,
+        325,
+        319
+      ],
+      "size": [
+        299,
+        295
+      ]
+    },
+    "ritual_square.png": {
+      "source": "Assets/tiles/dungeon_decals.png",
+      "crop": [
+        334,
+        42,
+        574,
+        283
+      ],
+      "size": [
+        231,
+        233
+      ]
+    },
+    "dragon_panel.png": {
+      "source": "Assets/tiles/dungeon_decals.png",
+      "crop": [
+        14,
+        493,
+        362,
+        652
+      ],
+      "size": [
+        341,
+        151
+      ]
+    },
+    "hanging_scroll.png": {
+      "source": "Assets/tiles/dungeon_decals.png",
+      "crop": [
+        825,
+        26,
+        1018,
+        315
+      ],
+      "size": [
+        185,
+        281
+      ]
+    },
+    "azure_flame_source.png": {
+      "source": "Assets/tiles/dungeon_decals.png",
+      "crop": [
+        690,
+        800,
+        830,
+        996
+      ],
+      "size": [
+        108,
+        182
+      ]
+    },
+    "azure_flame_4x4.png": {
+      "source": "Assets/environment/azure_flame_source.png",
+      "columns": 4,
+      "rows": 4,
+      "frames": 16,
+      "fps": 10.0,
+      "size": [
+        640,
+        896
+      ]
+    }
+  }
+}

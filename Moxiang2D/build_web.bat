@@ -1,23 +1,42 @@
 @echo off
 setlocal
 
-set EMSDK_QUIET=1
+set "EMSDK_QUIET=1"
 
-set "EMSDK_DIR=D:\Dev\emsdk"
-set "PROJECT_DIR=D:\Dev\Moxiang2D\Moxiang2D"
-set "OUTPUT_DIR=D:\Dev\Moxiang2D\build-web\output"
-set "RAYLIB_INCLUDE=D:\Dev\Libraries\raylib-src\raylib\src"
-set "RAYLIB_WEB_LIB=D:\Dev\Moxiang2D\build-web\lib\libraylib_web.a"
+for %%I in ("%~dp0.") do set "PROJECT_DIR=%%~fI"
+for %%I in ("%PROJECT_DIR%\..") do set "REPO_DIR=%%~fI"
+
+if not defined EMSDK_DIR (
+    if defined EMSDK (
+        set "EMSDK_DIR=%EMSDK%"
+    ) else (
+        set "EMSDK_DIR=D:\Dev\emsdk"
+    )
+)
+
+if not defined OUTPUT_DIR set "OUTPUT_DIR=%REPO_DIR%\build-web\output"
+if not defined RAYLIB_WEB_LIB set "RAYLIB_WEB_LIB=%REPO_DIR%\build-web\lib\libraylib_web.a"
+
+if not defined RAYLIB_INCLUDE (
+    if exist "%REPO_DIR%\external\raylib\src\raylib.h" (
+        set "RAYLIB_INCLUDE=%REPO_DIR%\external\raylib\src"
+    ) else (
+        set "RAYLIB_INCLUDE=D:\Dev\Libraries\raylib-src\raylib\src"
+    )
+)
 
 echo.
 echo ==========================================
 echo Moxiang2D Web Build
 echo ==========================================
+echo Project: %PROJECT_DIR%
+echo Output:  %OUTPUT_DIR%
 echo.
 
 if not exist "%EMSDK_DIR%\emsdk_env.bat" (
     echo ERROR: Emscripten environment file was not found:
     echo %EMSDK_DIR%\emsdk_env.bat
+    echo Set EMSDK_DIR or EMSDK before running this script.
     pause
     exit /b 1
 )
@@ -39,10 +58,6 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-
-echo Emscripten:
-em++ --version
-echo.
 
 if not exist "%PROJECT_DIR%\main.cpp" (
     echo ERROR: Missing main.cpp
@@ -77,6 +92,7 @@ if not exist "%PROJECT_DIR%\levels" (
 if not exist "%RAYLIB_INCLUDE%\raylib.h" (
     echo ERROR: Missing raylib.h:
     echo %RAYLIB_INCLUDE%\raylib.h
+    echo Set RAYLIB_INCLUDE to the raylib src folder.
     pause
     exit /b 1
 )
@@ -84,6 +100,36 @@ if not exist "%RAYLIB_INCLUDE%\raylib.h" (
 if not exist "%RAYLIB_WEB_LIB%" (
     echo ERROR: Missing raylib web library:
     echo %RAYLIB_WEB_LIB%
+    echo Run build_raylib_web.bat first or set RAYLIB_WEB_LIB.
+    pause
+    exit /b 1
+)
+
+set "PYTHON_CMD="
+where py >nul 2>nul
+if not errorlevel 1 set "PYTHON_CMD=py -3"
+
+if not defined PYTHON_CMD (
+    where python >nul 2>nul
+    if not errorlevel 1 set "PYTHON_CMD=python"
+)
+
+if not defined PYTHON_CMD (
+    echo ERROR: Python 3 was not found.
+    echo It is required to validate level and asset paths before the web build.
+    pause
+    exit /b 1
+)
+
+echo Emscripten:
+em++ --version
+echo.
+echo Validating level data and exact asset paths...
+%PYTHON_CMD% "%PROJECT_DIR%\tools\validate_level.py" "%PROJECT_DIR%\levels\level01.mox"
+
+if errorlevel 1 (
+    echo.
+    echo ERROR: Content validation failed. Web compilation was cancelled.
     pause
     exit /b 1
 )
@@ -95,7 +141,7 @@ del /q "%OUTPUT_DIR%\index.js" 2>nul
 del /q "%OUTPUT_DIR%\index.wasm" 2>nul
 del /q "%OUTPUT_DIR%\index.data" 2>nul
 
-cd /d "%PROJECT_DIR%"
+pushd "%PROJECT_DIR%"
 
 echo.
 echo Compiling Moxiang2D Web...
@@ -122,14 +168,17 @@ em++ main.cpp Game.cpp "%RAYLIB_WEB_LIB%" ^
     --emrun ^
     -o "%OUTPUT_DIR%\index.html"
 
-if errorlevel 1 (
+set "BUILD_EXIT_CODE=%ERRORLEVEL%"
+popd
+
+if not "%BUILD_EXIT_CODE%"=="0" (
     echo.
     echo ==========================================
     echo WEB BUILD FAILED
     echo ==========================================
     echo.
     pause
-    exit /b 1
+    exit /b %BUILD_EXIT_CODE%
 )
 
 echo.
@@ -143,8 +192,7 @@ echo.
 echo Generated files:
 dir "%OUTPUT_DIR%\index.*"
 echo.
-echo To run the game:
-echo cd /d "%OUTPUT_DIR%"
-echo emrun index.html
+echo Run run_web.bat from the repository root to serve the build.
 echo.
 pause
+exit /b 0

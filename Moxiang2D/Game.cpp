@@ -1377,6 +1377,12 @@ void Game::Shutdown()
         radialLightTexture = {};
     }
 
+    if (vignetteTexture.id != 0)
+    {
+        UnloadTexture(vignetteTexture);
+        vignetteTexture = {};
+    }
+
     if (playerSpriteSheet.id != 0)
     {
         UnloadTexture(playerSpriteSheet);
@@ -2281,6 +2287,10 @@ void Game::CreateNewMap(
 
     obstacles.clear();
     npcs.clear();
+    lights.clear();
+
+    selectedLightIndex = -1;
+    draggingLight = false;
 
     currentPath.clear();
     pathIndex = 0;
@@ -2298,6 +2308,8 @@ void Game::CreateNewMap(
     player.pos = playerPosition;
     player.moveTarget = playerPosition;
     player.hasMoveTarget = false;
+
+    EnsurePlayerLight();
 
     RebuildChamberBounds();
     UpdateActiveChamber(true);
@@ -3210,7 +3222,7 @@ bool Game::SaveLevel(const char* path) const
         return false;
     }
 
-    out << "MOXIANG_LEVEL 10\n";
+    out << "MOXIANG_LEVEL 11\n";
 
     out << "TILES " << MapWidth << " " << MapHeight << "\n";
 
@@ -3443,6 +3455,31 @@ bool Game::SaveLevel(const char* path) const
     }
 
     out
+        << "CHAMBER_STYLES "
+        << chambers.size()
+        << "\n";
+
+    for (
+        const DungeonChamber& chamber :
+        chambers
+        )
+    {
+        out
+            << chamber.id
+            << " "
+            << static_cast<int>(chamber.ambientLight.r)
+            << " "
+            << static_cast<int>(chamber.ambientLight.g)
+            << " "
+            << static_cast<int>(chamber.ambientLight.b)
+            << " "
+            << static_cast<int>(chamber.ambientLight.a)
+            << " "
+            << chamber.vignetteStrength
+            << "\n";
+    }
+
+    out
         << "CELL_LAYOUT "
         << MapWidth
         << " "
@@ -3539,7 +3576,23 @@ bool Game::SaveLevel(const char* path) const
             << obstacle.heightLevel << " "
             << obstacle.castsShadow << " "
             << obstacle.blocksLight << " "
-            << obstacle.foreground << " "
+            << static_cast<int>(
+                obstacle.renderLayer
+            ) << " "
+            << static_cast<int>(
+                obstacle.renderMode
+            ) << " "
+            << static_cast<int>(obstacle.tint.r) << " "
+            << static_cast<int>(obstacle.tint.g) << " "
+            << static_cast<int>(obstacle.tint.b) << " "
+            << static_cast<int>(obstacle.tint.a) << " "
+            << obstacle.opacity << " "
+            << obstacle.animated << " "
+            << obstacle.animationColumns << " "
+            << obstacle.animationRows << " "
+            << obstacle.animationFrameCount << " "
+            << obstacle.animationFps << " "
+            << obstacle.animationPhase << " "
             << std::quoted(
                 ToPortableAssetPath(
                     obstacle.imagePath
@@ -3551,6 +3604,36 @@ bool Game::SaveLevel(const char* path) const
             << obstacle.colliderSize.x << " "
             << obstacle.colliderSize.y << " "
             << obstacle.colliderRadius << "\n";
+    }
+
+    out << "LIGHTS " << lights.size() << "\n";
+
+    for (const Light2D& light : lights)
+    {
+        out
+            << light.id << " "
+            << std::quoted(light.name) << " "
+            << light.chamberId << " "
+            << light.position.x << " "
+            << light.position.y << " "
+            << light.radius << " "
+            << light.intensity << " "
+            << static_cast<int>(light.color.r) << " "
+            << static_cast<int>(light.color.g) << " "
+            << static_cast<int>(light.color.b) << " "
+            << static_cast<int>(light.color.a) << " "
+            << light.enabled << " "
+            << light.followsPlayer << " "
+            << light.viewOffset.x << " "
+            << light.viewOffset.y << " "
+            << light.scale.x << " "
+            << light.scale.y << " "
+            << light.rotationDegrees << " "
+            << light.flickerAmount << " "
+            << light.flickerSpeed << " "
+            << light.flickerRadiusAmount << " "
+            << light.flickerPhase
+            << "\n";
     }
 
     out << "NPCS " << npcs.size() << "\n";
@@ -3701,6 +3784,7 @@ bool Game::LoadLevel(const char* path)
     InitTileBrushes();
 
     chambers.clear();
+    lights.clear();
 
     bool loadedCellLayout =
         false;
@@ -4123,6 +4207,65 @@ bool Game::LoadLevel(const char* path)
                 );
             }
         }
+        else if (tag == "CHAMBER_STYLES")
+        {
+            int count = 0;
+            in >> count;
+
+            for (int i = 0; i < count; ++i)
+            {
+                int chamberId = -1;
+                int r = 76;
+                int g = 82;
+                int b = 98;
+                int a = 255;
+                float vignetteStrength = 0.18f;
+
+                in
+                    >> chamberId
+                    >> r
+                    >> g
+                    >> b
+                    >> a
+                    >> vignetteStrength;
+
+                EnsureChamberExists(
+                    chamberId
+                );
+
+                DungeonChamber* chamber =
+                    FindChamberById(
+                        chamberId
+                    );
+
+                if (chamber == nullptr)
+                {
+                    continue;
+                }
+
+                chamber->ambientLight = {
+                    static_cast<unsigned char>(
+                        Clamp(r, 0, 255)
+                    ),
+                    static_cast<unsigned char>(
+                        Clamp(g, 0, 255)
+                    ),
+                    static_cast<unsigned char>(
+                        Clamp(b, 0, 255)
+                    ),
+                    static_cast<unsigned char>(
+                        Clamp(a, 0, 255)
+                    )
+                };
+
+                chamber->vignetteStrength =
+                    Clamp(
+                        vignetteStrength,
+                        0.0f,
+                        1.0f
+                    );
+            }
+        }
         else if (tag == "CELL_LAYOUT")
         {
             int savedWidth = 0;
@@ -4341,11 +4484,6 @@ bool Game::LoadLevel(const char* path)
         else if (tag == "OBSTACLES")
         {
             int count = 0;
-
-            int castsShadow = 1;
-            int blocksLight = 0;
-            int foreground = 0;
-
             in >> count;
 
             obstacles.clear();
@@ -4355,11 +4493,63 @@ bool Game::LoadLevel(const char* path)
                 Obstacle obstacle;
                 std::string imagePath;
 
+                int castsShadow = 1;
+                int blocksLight = 0;
+                int renderLayer =
+                    static_cast<int>(
+                        ObstacleRenderLayer::World
+                    );
+                int renderMode =
+                    static_cast<int>(
+                        ObstacleRenderMode::Billboard
+                    );
+
+                int tintR = 255;
+                int tintG = 255;
+                int tintB = 255;
+                int tintA = 255;
+
+                int animated = 0;
                 int collisionEnabled = 1;
                 int colliderAuto = 1;
                 int collisionShape = 0;
-                if (version >= 2)
+
+                if (version >= 11)
                 {
+                    in
+                        >> obstacle.position.x
+                        >> obstacle.position.y
+                        >> obstacle.size.x
+                        >> obstacle.size.y
+                        >> obstacle.type
+                        >> obstacle.heightLevel
+                        >> castsShadow
+                        >> blocksLight
+                        >> renderLayer
+                        >> renderMode
+                        >> tintR
+                        >> tintG
+                        >> tintB
+                        >> tintA
+                        >> obstacle.opacity
+                        >> animated
+                        >> obstacle.animationColumns
+                        >> obstacle.animationRows
+                        >> obstacle.animationFrameCount
+                        >> obstacle.animationFps
+                        >> obstacle.animationPhase
+                        >> std::quoted(imagePath)
+                        >> collisionEnabled
+                        >> colliderAuto
+                        >> collisionShape
+                        >> obstacle.colliderSize.x
+                        >> obstacle.colliderSize.y
+                        >> obstacle.colliderRadius;
+                }
+                else if (version >= 2)
+                {
+                    int foreground = 0;
+
                     in
                         >> obstacle.position.x
                         >> obstacle.position.y
@@ -4377,6 +4567,15 @@ bool Game::LoadLevel(const char* path)
                         >> obstacle.colliderSize.x
                         >> obstacle.colliderSize.y
                         >> obstacle.colliderRadius;
+
+                    renderLayer =
+                        foreground != 0
+                        ? static_cast<int>(
+                            ObstacleRenderLayer::Foreground
+                        )
+                        : static_cast<int>(
+                            ObstacleRenderLayer::World
+                        );
                 }
                 else
                 {
@@ -4397,6 +4596,33 @@ bool Game::LoadLevel(const char* path)
 
                     obstacle.heightLevel = 0;
                 }
+
+                renderLayer =
+                    std::max(
+                        static_cast<int>(
+                            ObstacleRenderLayer::Background
+                        ),
+                        std::min(
+                            static_cast<int>(
+                                ObstacleRenderLayer::Foreground
+                            ),
+                            renderLayer
+                        )
+                    );
+
+                renderMode =
+                    std::max(
+                        static_cast<int>(
+                            ObstacleRenderMode::Billboard
+                        ),
+                        std::min(
+                            static_cast<int>(
+                                ObstacleRenderMode::GroundDecal
+                            ),
+                            renderMode
+                        )
+                    );
+
                 const std::string portablePath =
                     ToPortableAssetPath(
                         imagePath
@@ -4422,13 +4648,76 @@ bool Game::LoadLevel(const char* path)
                 obstacle.blocksLight =
                     blocksLight != 0;
 
-                obstacle.foreground =
-                    foreground != 0;
+                obstacle.renderLayer =
+                    static_cast<ObstacleRenderLayer>(
+                        renderLayer
+                    );
+
+                obstacle.renderMode =
+                    static_cast<ObstacleRenderMode>(
+                        renderMode
+                    );
+
+                obstacle.tint = {
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, tintR))
+                    ),
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, tintG))
+                    ),
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, tintB))
+                    ),
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, tintA))
+                    )
+                };
+
+                obstacle.opacity =
+                    Clamp(
+                        obstacle.opacity,
+                        0.0f,
+                        1.0f
+                    );
+
+                obstacle.animated =
+                    animated != 0;
+
+                obstacle.animationColumns =
+                    std::max(
+                        1,
+                        obstacle.animationColumns
+                    );
+
+                obstacle.animationRows =
+                    std::max(
+                        1,
+                        obstacle.animationRows
+                    );
+
+                const int maximumFrames =
+                    obstacle.animationColumns *
+                    obstacle.animationRows;
+
+                obstacle.animationFrameCount =
+                    std::max(
+                        1,
+                        std::min(
+                            maximumFrames,
+                            obstacle.animationFrameCount
+                        )
+                    );
+
+                obstacle.animationFps =
+                    std::max(
+                        0.01f,
+                        obstacle.animationFps
+                    );
 
                 obstacle.collisionShape =
                     static_cast<CollisionShape>(
                         collisionShape
-                        );
+                    );
 
                 if (!loadPath.empty())
                 {
@@ -4448,6 +4737,118 @@ bool Game::LoadLevel(const char* path)
 
                 obstacles.push_back(
                     obstacle
+                );
+            }
+        }
+        else if (tag == "LIGHTS")
+        {
+            int count = 0;
+            in >> count;
+
+            lights.clear();
+
+            for (int i = 0; i < count; ++i)
+            {
+                Light2D light;
+
+                int colorR = 255;
+                int colorG = 190;
+                int colorB = 100;
+                int colorA = 255;
+                int enabled = 1;
+                int followsPlayer = 0;
+
+                in
+                    >> light.id
+                    >> std::quoted(light.name)
+                    >> light.chamberId
+                    >> light.position.x
+                    >> light.position.y
+                    >> light.radius
+                    >> light.intensity
+                    >> colorR
+                    >> colorG
+                    >> colorB
+                    >> colorA
+                    >> enabled
+                    >> followsPlayer
+                    >> light.viewOffset.x
+                    >> light.viewOffset.y
+                    >> light.scale.x
+                    >> light.scale.y
+                    >> light.rotationDegrees
+                    >> light.flickerAmount
+                    >> light.flickerSpeed
+                    >> light.flickerRadiusAmount
+                    >> light.flickerPhase;
+
+                light.radius =
+                    std::max(
+                        1.0f,
+                        light.radius
+                    );
+
+                light.intensity =
+                    std::max(
+                        0.0f,
+                        light.intensity
+                    );
+
+                light.color = {
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, colorR))
+                    ),
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, colorG))
+                    ),
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, colorB))
+                    ),
+                    static_cast<unsigned char>(
+                        std::max(0, std::min(255, colorA))
+                    )
+                };
+
+                light.enabled =
+                    enabled != 0;
+
+                light.followsPlayer =
+                    followsPlayer != 0;
+
+                light.scale.x =
+                    std::max(
+                        0.01f,
+                        light.scale.x
+                    );
+
+                light.scale.y =
+                    std::max(
+                        0.01f,
+                        light.scale.y
+                    );
+
+                light.flickerAmount =
+                    Clamp(
+                        light.flickerAmount,
+                        0.0f,
+                        1.0f
+                    );
+
+                light.flickerSpeed =
+                    std::max(
+                        0.0f,
+                        light.flickerSpeed
+                    );
+
+                light.flickerRadiusAmount =
+                    Clamp(
+                        light.flickerRadiusAmount,
+                        0.0f,
+                        1.0f
+                    );
+
+                lights.push_back(
+                    light
                 );
             }
         }
@@ -4502,6 +4903,13 @@ bool Game::LoadLevel(const char* path)
 
     editorNewMapWidth = MapWidth;
     editorNewMapHeight = MapHeight;
+
+    selectedObstacleIndex = -1;
+    draggingObstacle = false;
+    selectedLightIndex = -1;
+    draggingLight = false;
+
+    EnsurePlayerLight();
 
     InvalidateGroundCache();
 
@@ -6130,6 +6538,138 @@ bool Game::LoadObstacleTexture(Obstacle& obstacle, const std::string& path)
     return true;
 }
 
+Rectangle Game::GetObstacleSourceRect(
+    const Obstacle& obstacle
+) const
+{
+    if (
+        obstacle.texture.id == 0 ||
+        obstacle.texture.width <= 0 ||
+        obstacle.texture.height <= 0
+        )
+    {
+        return {};
+    }
+
+    const int columns =
+        std::max(
+            1,
+            obstacle.animationColumns
+        );
+
+    const int rows =
+        std::max(
+            1,
+            obstacle.animationRows
+        );
+
+    const int maximumFrames =
+        columns *
+        rows;
+
+    const int frameCount =
+        std::max(
+            1,
+            std::min(
+                maximumFrames,
+                obstacle.animationFrameCount
+            )
+        );
+
+    int frame = 0;
+
+    if (
+        obstacle.animated &&
+        frameCount > 1
+        )
+    {
+        const float animationTime =
+            std::max(
+                0.0f,
+                environmentAnimationTime +
+                obstacle.animationPhase
+            );
+
+        frame =
+            static_cast<int>(
+                floorf(
+                    animationTime *
+                    std::max(
+                        0.01f,
+                        obstacle.animationFps
+                    )
+                )
+            ) %
+            frameCount;
+    }
+
+    const float frameWidth =
+        static_cast<float>(
+            obstacle.texture.width
+        ) /
+        static_cast<float>(
+            columns
+        );
+
+    const float frameHeight =
+        static_cast<float>(
+            obstacle.texture.height
+        ) /
+        static_cast<float>(
+            rows
+        );
+
+    return Rectangle{
+        static_cast<float>(
+            frame % columns
+        ) * frameWidth,
+
+        static_cast<float>(
+            frame / columns
+        ) * frameHeight,
+
+        frameWidth,
+        frameHeight
+    };
+}
+
+Color Game::GetObstacleDrawTint(
+    const Obstacle& obstacle
+) const
+{
+    Color tint =
+        obstacle.tint;
+
+    const int chamberId =
+        FindChamberAtWorld(
+            obstacle.position
+        );
+
+    const float visibility =
+        GetChamberVisibility(
+            chamberId
+        );
+
+    tint.a =
+        static_cast<unsigned char>(
+            Clamp(
+                static_cast<float>(
+                    tint.a
+                ) *
+                Clamp(
+                    obstacle.opacity,
+                    0.0f,
+                    1.0f
+                ) *
+                visibility,
+                0.0f,
+                255.0f
+            )
+        );
+
+    return tint;
+}
+
 void Game::UpdatePerformanceStats(float dt)
 {
     perfFrameMs = dt * 1000.0f;
@@ -6331,6 +6871,21 @@ void Game::Update(float dt)
 
     UpdatePerformanceStats(dt);
 
+    environmentAnimationTime +=
+        std::max(
+            0.0f,
+            dt
+        );
+
+    if (environmentAnimationTime > 3600.0f)
+    {
+        environmentAnimationTime =
+            fmodf(
+                environmentAnimationTime,
+                3600.0f
+            );
+    }
+
     if (playerDamageFlashTimer > 0.0f)
     {
         playerDamageFlashTimer -= dt;
@@ -6402,7 +6957,7 @@ void Game::Update(float dt)
 
         TraceLog(
             LOG_INFO,
-            "[LIGHTING] Random test lights regenerated."
+            "[LIGHTING] Fallback light rig regenerated."
         );
     }
 #if MOXIANG_USE_IMGUI
@@ -6469,6 +7024,19 @@ void Game::Update(float dt)
 
         UpdateInput(dt);
         UpdatePlayer(dt);
+        UpdateActiveChamber();
+        UpdateChamberVisibility(dt);
+
+        player.pos = playerPosition;
+
+        for (Light2D& light : lights)
+        {
+            if (light.followsPlayer)
+            {
+                light.position = playerPosition;
+            }
+        }
+
         UpdateCamera(dt);
 
         return;
@@ -6686,9 +7254,12 @@ void Game::Draw()
         PERF_DRAW_BLOCK(
             perfDrawCombatWorldMs,
             {
+                DrawGroundDecals2D();
                 DrawWorldGroundEffects();
+                DrawBackgroundObstacles2D();
                 DrawWorldDepthSorted();
                 DrawWorldForegroundEffects();
+                DrawForegroundObstacles2D();
             }
         );
 
@@ -6770,6 +7341,10 @@ void Game::Draw()
 
         EndShaderMode();
     }
+
+    // Chamber-authored vignette is applied after the lit world composite,
+    // but before intentionally unlit combat flashes and the HUD.
+    DrawAtmosphereOverlay();
 
     // --------------------------------------------------
     // PASS 4:
@@ -7300,6 +7875,7 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
     {
         draggingObstacle = false;
         selectedObstacleIndex = -1;
+        draggingLight = false;
         return;
     }
 
@@ -8167,14 +8743,73 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         obstacle.blocksLight =
             newObstacleBlocksLight;
 
-        obstacle.foreground =
-            newObstacleForeground;
+        obstacle.renderLayer =
+            static_cast<ObstacleRenderLayer>(
+                std::max(
+                    static_cast<int>(ObstacleRenderLayer::Background),
+                    std::min(
+                        static_cast<int>(ObstacleRenderLayer::Foreground),
+                        newObstacleRenderLayer
+                    )
+                )
+            );
+
+        obstacle.renderMode =
+            static_cast<ObstacleRenderMode>(
+                std::max(
+                    static_cast<int>(ObstacleRenderMode::Billboard),
+                    std::min(
+                        static_cast<int>(ObstacleRenderMode::GroundDecal),
+                        newObstacleRenderMode
+                    )
+                )
+            );
+
+        obstacle.tint =
+            newObstacleTint;
+
+        obstacle.opacity =
+            Clamp(newObstacleOpacity, 0.0f, 1.0f);
+
+        obstacle.animated =
+            newObstacleAnimated;
+
+        obstacle.animationColumns =
+            std::max(1, newObstacleAnimationColumns);
+
+        obstacle.animationRows =
+            std::max(1, newObstacleAnimationRows);
+
+        obstacle.animationFrameCount =
+            std::max(
+                1,
+                std::min(
+                    obstacle.animationColumns * obstacle.animationRows,
+                    newObstacleAnimationFrameCount
+                )
+            );
+
+        obstacle.animationFps =
+            std::max(0.01f, newObstacleAnimationFps);
+
+        obstacle.animationPhase =
+            newObstacleAnimationPhase;
 
         obstacle.collisionEnabled = newObstacleCollision;
         obstacle.colliderAuto = newObstacleColliderAuto;
         obstacle.collisionShape = static_cast<CollisionShape>(newObstacleCollisionShape);
         obstacle.colliderSize = newObstacleColliderSize;
         obstacle.colliderRadius = newObstacleColliderRadius;
+
+        if (
+            obstacle.renderMode ==
+            ObstacleRenderMode::GroundDecal
+            )
+        {
+            obstacle.castsShadow = false;
+            obstacle.blocksLight = false;
+            obstacle.collisionEnabled = false;
+        }
 
         if (currentObstacleHasTexture)
         {
@@ -8252,6 +8887,97 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
 
             currentPath.clear();
             hasPath = false;
+        }
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::PlaceLight)
+        )
+    {
+        if (!pressed)
+        {
+            return;
+        }
+
+        Light2D light;
+        light.id = GetNextLightId();
+        light.name = "Environment Light " + std::to_string(light.id);
+        light.position = worldPosition;
+        light.chamberId = FindChamberAtWorld(worldPosition);
+        light.radius = std::max(16.0f, newLightRadius);
+        light.intensity = Clamp(newLightIntensity, 0.0f, 2.0f);
+        light.color = newLightColor;
+        light.enabled = true;
+        light.followsPlayer = false;
+        light.flickerAmount = Clamp(newLightFlickerAmount, 0.0f, 0.95f);
+        light.flickerSpeed = std::max(0.01f, newLightFlickerSpeed);
+        light.flickerRadiusAmount = Clamp(newLightFlickerRadiusAmount, 0.0f, 0.75f);
+        light.flickerPhase = static_cast<float>(light.id) * 1.618f;
+        lights.push_back(light);
+        selectedLightIndex =
+            static_cast<int>(lights.size()) - 1;
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::EraseLight)
+        )
+    {
+        if (!pressed)
+        {
+            return;
+        }
+
+        const int lightIndex = GetLightAt(worldPosition);
+
+        if (
+            lightIndex >= 0 &&
+            lightIndex < static_cast<int>(lights.size()) &&
+            !lights[lightIndex].followsPlayer
+            )
+        {
+            lights.erase(lights.begin() + lightIndex);
+            selectedLightIndex = -1;
+            draggingLight = false;
+        }
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::MoveLight)
+        )
+    {
+        if (pressed)
+        {
+            selectedLightIndex = GetLightAt(worldPosition);
+
+            if (
+                selectedLightIndex >= 0 &&
+                selectedLightIndex < static_cast<int>(lights.size()) &&
+                !lights[selectedLightIndex].followsPlayer
+                )
+            {
+                draggingLight = true;
+                lightDragOffset =
+                    Vector2Subtract(
+                        lights[selectedLightIndex].position,
+                        worldPosition
+                    );
+            }
+            else
+            {
+                selectedLightIndex = -1;
+            }
+        }
+
+        if (
+            down &&
+            draggingLight &&
+            selectedLightIndex >= 0 &&
+            selectedLightIndex < static_cast<int>(lights.size())
+            )
+        {
+            Light2D& light = lights[selectedLightIndex];
+            light.position = Vector2Add(worldPosition, lightDragOffset);
+            light.chamberId = FindChamberAtWorld(light.position);
         }
     }
 }
@@ -8441,15 +9167,36 @@ int Game::GetObstacleAt(
             continue;
         }
 
+        Vector2 selectionSize =
+            obstacle.colliderSize;
+
+        if (
+            obstacle.renderMode ==
+            ObstacleRenderMode::GroundDecal
+            )
+        {
+            selectionSize = {
+                std::max(8.0f, obstacle.size.x),
+                std::max(8.0f, obstacle.size.y)
+            };
+        }
+        else if (!obstacle.collisionEnabled)
+        {
+            selectionSize = {
+                std::max(TileSize * 0.50f, obstacle.size.x * 0.35f),
+                std::max(TileSize * 0.35f, obstacle.size.y * 0.18f)
+            };
+        }
+
         Rectangle footprint{
             obstacle.position.x -
-                obstacle.colliderSize.x * 0.5f,
+                selectionSize.x * 0.5f,
 
             obstacle.position.y -
-                obstacle.colliderSize.y * 0.5f,
+                selectionSize.y * 0.5f,
 
-            obstacle.colliderSize.x,
-            obstacle.colliderSize.y
+            selectionSize.x,
+            selectionSize.y
         };
 
         if (
@@ -8464,6 +9211,57 @@ int Game::GetObstacleAt(
     }
 
     return -1;
+}
+
+
+int Game::GetLightAt(
+    Vector2 worldPosition
+) const
+{
+    int bestIndex = -1;
+    float bestDistanceSquared = 0.0f;
+
+    for (int index = 0; index < static_cast<int>(lights.size()); ++index)
+    {
+        const Light2D& light = lights[index];
+
+        if (light.followsPlayer)
+        {
+            continue;
+        }
+
+        const float selectionRadius =
+            std::max(
+                28.0f,
+                std::min(96.0f, light.radius * 0.20f)
+            );
+
+        const float deltaX =
+            worldPosition.x -
+            light.position.x;
+
+        const float deltaY =
+            worldPosition.y -
+            light.position.y;
+
+        const float distanceSquared =
+            deltaX * deltaX +
+            deltaY * deltaY;
+
+        if (
+            distanceSquared <= selectionRadius * selectionRadius &&
+            (
+                bestIndex < 0 ||
+                distanceSquared < bestDistanceSquared
+                )
+            )
+        {
+            bestIndex = index;
+            bestDistanceSquared = distanceSquared;
+        }
+    }
+
+    return bestIndex;
 }
 
 void Game::StartDialogue(int npcIndex)
@@ -11637,20 +12435,36 @@ Rectangle Game::GetObstacleVisualRect(const Obstacle& obstacle) const
 
 void Game::DrawObstacleVisual(const Obstacle& obstacle)
 {
+    if (
+        obstacle.renderMode !=
+        ObstacleRenderMode::Billboard
+        )
+    {
+        return;
+    }
+
     Vector2 basePosition =
         GetObstacleViewPosition(
             obstacle
         );
 
+    const Color drawTint =
+        GetObstacleDrawTint(
+            obstacle
+        );
+
+    if (drawTint.a == 0)
+    {
+        return;
+    }
+
     if (obstacle.hasTexture &&
         obstacle.texture.id != 0)
     {
-        Rectangle source{
-            0.0f,
-            0.0f,
-            static_cast<float>(obstacle.texture.width),
-            static_cast<float>(obstacle.texture.height)
-        };
+        const Rectangle source =
+            GetObstacleSourceRect(
+                obstacle
+            );
 
         Rectangle destination{
             basePosition.x,
@@ -11671,7 +12485,7 @@ void Game::DrawObstacleVisual(const Obstacle& obstacle)
             destination,
             origin,
             0.0f,
-            WHITE
+            drawTint
         );
 
         return;
@@ -11690,10 +12504,112 @@ void Game::DrawObstacleVisual(const Obstacle& obstacle)
             basePosition.y - radius
         },
         radius,
-        obstacle.type == 0
-        ? Color{ 48, 126, 54, 255 }
-        : Color{ 94, 93, 88, 255 }
+        Fade(
+            obstacle.type == 0
+            ? Color{ 48, 126, 54, 255 }
+            : Color{ 94, 93, 88, 255 },
+            static_cast<float>(drawTint.a) /
+            255.0f
+        )
     );
+}
+
+void Game::DrawBackgroundObstacles2D()
+{
+    for (const Obstacle& obstacle : obstacles)
+    {
+        if (
+            obstacle.renderMode != ObstacleRenderMode::Billboard ||
+            obstacle.renderLayer != ObstacleRenderLayer::Background ||
+            !IsWorldPositionInVisibleChamber(obstacle.position)
+            )
+        {
+            continue;
+        }
+
+        DrawObstacleVisual(obstacle);
+    }
+}
+
+void Game::DrawGroundDecals2D()
+{
+    BeginBlendMode(BLEND_ALPHA);
+
+    for (const Obstacle& obstacle : obstacles)
+    {
+        if (
+            obstacle.renderMode != ObstacleRenderMode::GroundDecal ||
+            !obstacle.hasTexture ||
+            obstacle.texture.id == 0 ||
+            !IsWorldPositionInVisibleChamber(obstacle.position)
+            )
+        {
+            continue;
+        }
+
+        const Color tint = GetObstacleDrawTint(obstacle);
+
+        if (tint.a == 0)
+        {
+            continue;
+        }
+
+        const float halfWidth = std::max(1.0f, obstacle.size.x) * 0.5f;
+        const float halfDepth = std::max(1.0f, obstacle.size.y) * 0.5f;
+        const float heightBias =
+            static_cast<float>(std::max(0, obstacle.heightLevel)) *
+            obstacleHeightStep +
+            0.75f;
+
+        const Vector2 northWest{
+            obstacle.position.x - halfWidth,
+            obstacle.position.y - halfDepth
+        };
+
+        const Vector2 northEast{
+            obstacle.position.x + halfWidth,
+            obstacle.position.y - halfDepth
+        };
+
+        const Vector2 southEast{
+            obstacle.position.x + halfWidth,
+            obstacle.position.y + halfDepth
+        };
+
+        const Vector2 southWest{
+            obstacle.position.x - halfWidth,
+            obstacle.position.y + halfDepth
+        };
+
+        DrawTextureFrameOnQuad2D(
+            obstacle.texture,
+            GetObstacleSourceRect(obstacle),
+            WorldToViewElevated(northWest, heightBias),
+            WorldToViewElevated(northEast, heightBias),
+            WorldToViewElevated(southEast, heightBias),
+            WorldToViewElevated(southWest, heightBias),
+            tint
+        );
+    }
+
+    EndBlendMode();
+}
+
+void Game::DrawForegroundObstacles2D()
+{
+    for (const Obstacle& obstacle : obstacles)
+    {
+        if (
+            obstacle.renderMode != ObstacleRenderMode::Billboard ||
+            obstacle.renderLayer != ObstacleRenderLayer::Foreground ||
+            !IsWorldPositionInVisibleChamber(obstacle.position)
+            )
+        {
+            continue;
+        }
+
+        DrawObstacleVisual(obstacle);
+    }
 }
 
 Rectangle Game::GetObstacleCollisionRect(const Obstacle& obstacle) const
@@ -12525,6 +13441,50 @@ void Game::DrawEditorWorldOverlay()
             YELLOW
         );
     }
+
+    for (const Light2D& light : lights)
+    {
+        if (light.followsPlayer)
+        {
+            continue;
+        }
+
+        const Color guideColor{
+            light.color.r,
+            light.color.g,
+            light.color.b,
+            190
+        };
+
+        DrawGroundCircleLines(
+            light.position,
+            light.radius,
+            guideColor
+        );
+
+        const Vector2 marker =
+            WorldToViewElevated(
+                light.position,
+                5.0f
+            );
+
+        DrawCircleV(marker, 7.0f, guideColor);
+        DrawCircleLines(
+            static_cast<int>(marker.x),
+            static_cast<int>(marker.y),
+            10.0f,
+            WHITE
+        );
+
+        DrawText(
+            TextFormat("L%d", light.id),
+            static_cast<int>(marker.x + 12.0f),
+            static_cast<int>(marker.y - 10.0f),
+            14,
+            WHITE
+        );
+    }
+
 }
 void Game::DrawEditorUi()
 {
@@ -12779,6 +13739,43 @@ void Game::DrawEditorUi()
         RebuildChamberBounds();
     }
 
+    if (
+        DungeonChamber* selectedChamber =
+            FindChamberById(editorSelectedChamberId)
+        )
+    {
+        float ambientColor[4] = {
+            static_cast<float>(selectedChamber->ambientLight.r) / 255.0f,
+            static_cast<float>(selectedChamber->ambientLight.g) / 255.0f,
+            static_cast<float>(selectedChamber->ambientLight.b) / 255.0f,
+            1.0f
+        };
+
+        if (
+            ImGui::ColorEdit4(
+                "Chamber Ambient",
+                ambientColor,
+                ImGuiColorEditFlags_NoAlpha
+            )
+            )
+        {
+            selectedChamber->ambientLight = Color{
+                static_cast<unsigned char>(Clamp(ambientColor[0] * 255.0f, 0.0f, 255.0f)),
+                static_cast<unsigned char>(Clamp(ambientColor[1] * 255.0f, 0.0f, 255.0f)),
+                static_cast<unsigned char>(Clamp(ambientColor[2] * 255.0f, 0.0f, 255.0f)),
+                255
+            };
+        }
+
+        ImGui::SliderFloat(
+            "Chamber Vignette",
+            &selectedChamber->vignetteStrength,
+            0.0f,
+            0.85f,
+            "%.2f"
+        );
+    }
+
     ImGui::Checkbox(
         "Show Chamber Overlay",
         &showChamberOverlay
@@ -12818,14 +13815,18 @@ void Game::DrawEditorUi()
 
         "Place Obstacle",
         "Erase Obstacle",
-        "Move Obstacle"
+        "Move Obstacle",
+
+        "Place Light",
+        "Erase Light",
+        "Move Light"
     };
 
     ImGui::Combo(
         "Tool",
         &editorTool,
         tools,
-        15
+        18
     );
 
     const bool usingBuiltWallTool =
@@ -13363,9 +14364,319 @@ void Game::DrawEditorUi()
         &newObstacleBlocksLight
     );
 
+    const char* obstacleLayers[] = {
+        "Background",
+        "World / Depth Sorted",
+        "Foreground"
+    };
+
+    ImGui::Combo(
+        "Render Layer",
+        &newObstacleRenderLayer,
+        obstacleLayers,
+        3
+    );
+
+    const char* obstacleModes[] = {
+        "Upright Billboard",
+        "Ground Decal"
+    };
+
+    ImGui::Combo(
+        "Render Mode",
+        &newObstacleRenderMode,
+        obstacleModes,
+        2
+    );
+
+    float obstacleTintFloat[4] = {
+        static_cast<float>(newObstacleTint.r) / 255.0f,
+        static_cast<float>(newObstacleTint.g) / 255.0f,
+        static_cast<float>(newObstacleTint.b) / 255.0f,
+        1.0f
+    };
+
+    if (
+        ImGui::ColorEdit4(
+            "Obstacle Tint",
+            obstacleTintFloat,
+            ImGuiColorEditFlags_NoAlpha
+        )
+        )
+    {
+        newObstacleTint = Color{
+            static_cast<unsigned char>(Clamp(obstacleTintFloat[0] * 255.0f, 0.0f, 255.0f)),
+            static_cast<unsigned char>(Clamp(obstacleTintFloat[1] * 255.0f, 0.0f, 255.0f)),
+            static_cast<unsigned char>(Clamp(obstacleTintFloat[2] * 255.0f, 0.0f, 255.0f)),
+            255
+        };
+    }
+
+    ImGui::SliderFloat(
+        "Opacity",
+        &newObstacleOpacity,
+        0.0f,
+        1.0f,
+        "%.2f"
+    );
+
+    if (
+        newObstacleRenderMode ==
+        static_cast<int>(ObstacleRenderMode::GroundDecal)
+        )
+    {
+        ImGui::TextDisabled(
+            "Ground decals are automatically non-colliding and do not cast shadows."
+        );
+    }
+
     ImGui::Checkbox(
-        "Foreground Object",
-        &newObstacleForeground
+        "Animated Environment Sprite",
+        &newObstacleAnimated
+    );
+
+    if (newObstacleAnimated)
+    {
+        ImGui::InputInt(
+            "Animation Columns",
+            &newObstacleAnimationColumns
+        );
+
+        ImGui::InputInt(
+            "Animation Rows",
+            &newObstacleAnimationRows
+        );
+
+        newObstacleAnimationColumns =
+            std::max(1, newObstacleAnimationColumns);
+
+        newObstacleAnimationRows =
+            std::max(1, newObstacleAnimationRows);
+
+        const int maximumFrames =
+            newObstacleAnimationColumns *
+            newObstacleAnimationRows;
+
+        ImGui::SliderInt(
+            "Animation Frames",
+            &newObstacleAnimationFrameCount,
+            1,
+            maximumFrames
+        );
+
+        ImGui::DragFloat(
+            "Animation FPS",
+            &newObstacleAnimationFps,
+            0.1f,
+            0.1f,
+            60.0f,
+            "%.1f"
+        );
+
+        ImGui::DragFloat(
+            "Animation Phase",
+            &newObstacleAnimationPhase,
+            0.05f,
+            0.0f,
+            60.0f,
+            "%.2f s"
+        );
+    }
+
+    ImGui::Separator();
+
+    ImGui::Text("Environment Lights");
+
+    float newLightColorFloat[4] = {
+        static_cast<float>(newLightColor.r) / 255.0f,
+        static_cast<float>(newLightColor.g) / 255.0f,
+        static_cast<float>(newLightColor.b) / 255.0f,
+        1.0f
+    };
+
+    if (
+        ImGui::ColorEdit4(
+            "New Light Color",
+            newLightColorFloat,
+            ImGuiColorEditFlags_NoAlpha
+        )
+        )
+    {
+        newLightColor = Color{
+            static_cast<unsigned char>(Clamp(newLightColorFloat[0] * 255.0f, 0.0f, 255.0f)),
+            static_cast<unsigned char>(Clamp(newLightColorFloat[1] * 255.0f, 0.0f, 255.0f)),
+            static_cast<unsigned char>(Clamp(newLightColorFloat[2] * 255.0f, 0.0f, 255.0f)),
+            255
+        };
+    }
+
+    ImGui::DragFloat(
+        "New Light Radius",
+        &newLightRadius,
+        2.0f,
+        16.0f,
+        1200.0f,
+        "%.0f px"
+    );
+
+    ImGui::SliderFloat(
+        "New Light Intensity",
+        &newLightIntensity,
+        0.0f,
+        2.0f,
+        "%.2f"
+    );
+
+    ImGui::SliderFloat(
+        "Flicker Intensity",
+        &newLightFlickerAmount,
+        0.0f,
+        0.60f,
+        "%.2f"
+    );
+
+    ImGui::DragFloat(
+        "Flicker Speed",
+        &newLightFlickerSpeed,
+        0.1f,
+        0.1f,
+        24.0f,
+        "%.1f"
+    );
+
+    ImGui::SliderFloat(
+        "Flicker Radius",
+        &newLightFlickerRadiusAmount,
+        0.0f,
+        0.30f,
+        "%.2f"
+    );
+
+    if (
+        selectedLightIndex >= 0 &&
+        selectedLightIndex < static_cast<int>(lights.size()) &&
+        !lights[selectedLightIndex].followsPlayer
+        )
+    {
+        Light2D& selectedLight =
+            lights[selectedLightIndex];
+
+        ImGui::Separator();
+        ImGui::Text(
+            "Selected Light: %s",
+            selectedLight.name.c_str()
+        );
+        ImGui::Text(
+            "ID %d | Chamber %d",
+            selectedLight.id,
+            selectedLight.chamberId
+        );
+
+        ImGui::Checkbox(
+            "Selected Light Enabled",
+            &selectedLight.enabled
+        );
+
+        float selectedLightColorFloat[4] = {
+            static_cast<float>(selectedLight.color.r) / 255.0f,
+            static_cast<float>(selectedLight.color.g) / 255.0f,
+            static_cast<float>(selectedLight.color.b) / 255.0f,
+            1.0f
+        };
+
+        if (
+            ImGui::ColorEdit4(
+                "Selected Light Color",
+                selectedLightColorFloat,
+                ImGuiColorEditFlags_NoAlpha
+            )
+            )
+        {
+            selectedLight.color = Color{
+                static_cast<unsigned char>(Clamp(selectedLightColorFloat[0] * 255.0f, 0.0f, 255.0f)),
+                static_cast<unsigned char>(Clamp(selectedLightColorFloat[1] * 255.0f, 0.0f, 255.0f)),
+                static_cast<unsigned char>(Clamp(selectedLightColorFloat[2] * 255.0f, 0.0f, 255.0f)),
+                255
+            };
+        }
+
+        ImGui::DragFloat(
+            "Selected Light Radius",
+            &selectedLight.radius,
+            2.0f,
+            16.0f,
+            1200.0f,
+            "%.0f px"
+        );
+
+        ImGui::SliderFloat(
+            "Selected Light Intensity",
+            &selectedLight.intensity,
+            0.0f,
+            2.0f,
+            "%.2f"
+        );
+
+        ImGui::SliderFloat(
+            "Selected Flicker Intensity",
+            &selectedLight.flickerAmount,
+            0.0f,
+            0.60f,
+            "%.2f"
+        );
+
+        ImGui::DragFloat(
+            "Selected Flicker Speed",
+            &selectedLight.flickerSpeed,
+            0.1f,
+            0.0f,
+            24.0f,
+            "%.1f"
+        );
+
+        ImGui::SliderFloat(
+            "Selected Flicker Radius",
+            &selectedLight.flickerRadiusAmount,
+            0.0f,
+            0.30f,
+            "%.2f"
+        );
+
+        selectedLight.radius =
+            std::max(16.0f, selectedLight.radius);
+
+        selectedLight.intensity =
+            Clamp(selectedLight.intensity, 0.0f, 2.0f);
+
+        selectedLight.flickerAmount =
+            Clamp(selectedLight.flickerAmount, 0.0f, 0.95f);
+
+        selectedLight.flickerSpeed =
+            std::max(0.0f, selectedLight.flickerSpeed);
+
+        selectedLight.flickerRadiusAmount =
+            Clamp(selectedLight.flickerRadiusAmount, 0.0f, 0.75f);
+
+        if (ImGui::Button("Clear Light Selection"))
+        {
+            selectedLightIndex = -1;
+            draggingLight = false;
+        }
+    }
+
+    int authoredLightCount = 0;
+
+    for (const Light2D& light : lights)
+    {
+        if (!light.followsPlayer)
+        {
+            ++authoredLightCount;
+        }
+    }
+
+    ImGui::Text(
+        "Authored lights: %d",
+        authoredLightCount
     );
 
     ImGui::Separator();
@@ -13379,6 +14690,8 @@ void Game::DrawEditorUi()
     ImGui::BulletText("Place Obstacle: left click");
     ImGui::BulletText("Move Obstacle: drag obstacle");
     ImGui::BulletText("Erase Obstacle: click obstacle");
+    ImGui::BulletText("Place Light: set defaults above, then click the floor");
+    ImGui::BulletText("Move Light: drag a marker, then edit the selected light");
 
     ImGui::Separator();
 
@@ -25059,6 +26372,14 @@ void Game::DrawWorldDepthSorted()
         const Obstacle& obstacle =
             obstacles[i];
 
+        if (
+            obstacle.renderMode != ObstacleRenderMode::Billboard ||
+            obstacle.renderLayer != ObstacleRenderLayer::World
+            )
+        {
+            continue;
+        }
+
         const int terrainElevation =
             GetTerrainElevationAtWorld(
                 obstacle.position
@@ -26114,7 +27435,7 @@ void Game::DrawLightMap()
     // Every part of the map starts with this base lighting.
     // Lower RGB values create darker shadows.
     ClearBackground(
-        ambientLight
+        GetBlendedAmbientLight()
     );
 
     const bool useLegacyCamera =
@@ -26137,17 +27458,10 @@ void Game::DrawLightMap()
             continue;
         }
 
-        if (
-            !IsWorldPositionInVisibleChamber(
-                light.position
-            )
-            )
-        {
-            continue;
-        }
-
         const int lightChamberId =
-            FindChamberAtWorld(
+            light.chamberId >= 0
+            ? light.chamberId
+            : FindChamberAtWorld(
                 light.position
             );
 
@@ -26182,15 +27496,41 @@ void Game::DrawLightMap()
                 hybridUnitsPerPixel;
         }
 
+        float flickerWave = 0.0f;
+
+        if (
+            light.flickerAmount > 0.0f ||
+            light.flickerRadiusAmount > 0.0f
+            )
+        {
+            const float time = environmentAnimationTime;
+            const float speed = std::max(0.01f, light.flickerSpeed);
+
+            flickerWave =
+                sinf(time * speed + light.flickerPhase) * 0.58f +
+                sinf(time * speed * 1.73f + light.flickerPhase * 1.91f) * 0.29f +
+                sinf(time * speed * 2.47f + light.flickerPhase * 0.63f) * 0.13f;
+        }
+
+        const float radiusScale =
+            std::max(
+                0.25f,
+                1.0f +
+                flickerWave *
+                Clamp(light.flickerRadiusAmount, 0.0f, 0.75f)
+            );
+
         float width =
             light.radius * 2.0f *
             light.scale.x *
-            screenScale;
+            screenScale *
+            radiusScale;
 
         float height =
             light.radius * 2.0f *
             light.scale.y *
-            screenScale;
+            screenScale *
+            radiusScale;
 
         Rectangle source{
             0.0f,
@@ -26215,9 +27555,18 @@ void Game::DrawLightMap()
           height * 0.5f
         };
 
+        const float intensityScale =
+            std::max(
+                0.0f,
+                1.0f +
+                flickerWave *
+                Clamp(light.flickerAmount, 0.0f, 0.95f)
+            );
+
         float strength =
             Clamp(
                 light.intensity *
+                intensityScale *
                 chamberVisibility,
                 0.0f,
                 1.0f
@@ -26394,6 +27743,23 @@ void Game::InitLighting()
         TEXTURE_FILTER_BILINEAR
     );
 
+    const char* vignettePath =
+        "Assets/effects/vignette.png";
+
+    if (FileExists(vignettePath))
+    {
+        vignetteTexture =
+            LoadTexture(vignettePath);
+
+        if (vignetteTexture.id != 0)
+        {
+            SetTextureFilter(
+                vignetteTexture,
+                TEXTURE_FILTER_BILINEAR
+            );
+        }
+    }
+
     // ------------------------------------------
     // Select desktop or web shader
     // ------------------------------------------
@@ -26470,9 +27836,16 @@ void Game::InitLighting()
         return;
     }
 
-    // Create permanent player light and
-    // random environmental test lights.
-    CreateTestLights();
+    // Keep authored lights loaded from the level. Older maps receive a
+    // deterministic fallback rig so the editor is never completely dark.
+    if (lights.empty())
+    {
+        CreateTestLights();
+    }
+    else
+    {
+        EnsurePlayerLight();
+    }
 
     lightingReady = true;
 
@@ -26680,6 +28053,8 @@ void Game::DrawWorldShadows() const
     for (const Obstacle& obstacle : obstacles)
     {
         if (
+            obstacle.renderMode != ObstacleRenderMode::Billboard ||
+            obstacle.renderLayer == ObstacleRenderLayer::Foreground ||
             !IsWorldPositionInVisibleChamber(
                 obstacle.position
             )
@@ -26696,166 +28071,203 @@ void Game::DrawWorldShadows() const
     EndBlendMode();
 }
 
+void Game::EnsurePlayerLight()
+{
+    for (Light2D& light : lights)
+    {
+        if (light.followsPlayer)
+        {
+            light.position = playerPosition;
+
+            if (light.id < 0)
+            {
+                light.id = GetNextLightId();
+            }
+
+            if (light.name.empty())
+            {
+                light.name = "Player Readability";
+            }
+
+            return;
+        }
+    }
+
+    Light2D playerLight;
+    playerLight.id = GetNextLightId();
+    playerLight.name = "Player Readability";
+    playerLight.position = playerPosition;
+    playerLight.radius = 125.0f;
+    playerLight.intensity = 0.52f;
+    playerLight.color = Color{ 255, 242, 220, 255 };
+    playerLight.enabled = true;
+    playerLight.followsPlayer = true;
+    playerLight.viewOffset = Vector2{ 0.0f, -48.0f };
+    playerLight.scale = Vector2{ 1.0f, 1.0f };
+    playerLight.rotationDegrees = 0.0f;
+    lights.push_back(playerLight);
+}
+
+int Game::GetNextLightId() const
+{
+    int nextId = 0;
+
+    for (const Light2D& light : lights)
+    {
+        nextId = std::max(nextId, light.id + 1);
+    }
+
+    return nextId;
+}
+
+Color Game::GetBlendedAmbientLight() const
+{
+    if (chambers.empty())
+    {
+        return ambientLight;
+    }
+
+    float totalWeight = 0.0f;
+    float red = 0.0f;
+    float green = 0.0f;
+    float blue = 0.0f;
+
+    for (const DungeonChamber& chamber : chambers)
+    {
+        const float weight = Clamp(chamber.visibility, 0.0f, 1.0f);
+
+        if (weight <= 0.001f)
+        {
+            continue;
+        }
+
+        red += static_cast<float>(chamber.ambientLight.r) * weight;
+        green += static_cast<float>(chamber.ambientLight.g) * weight;
+        blue += static_cast<float>(chamber.ambientLight.b) * weight;
+        totalWeight += weight;
+    }
+
+    if (totalWeight <= 0.001f)
+    {
+        return ambientLight;
+    }
+
+    return Color{
+        static_cast<unsigned char>(Clamp(red / totalWeight, 0.0f, 255.0f)),
+        static_cast<unsigned char>(Clamp(green / totalWeight, 0.0f, 255.0f)),
+        static_cast<unsigned char>(Clamp(blue / totalWeight, 0.0f, 255.0f)),
+        255
+    };
+}
+
+float Game::GetBlendedVignetteStrength() const
+{
+    float totalWeight = 0.0f;
+    float strength = 0.0f;
+
+    for (const DungeonChamber& chamber : chambers)
+    {
+        const float weight = Clamp(chamber.visibility, 0.0f, 1.0f);
+
+        if (weight <= 0.001f)
+        {
+            continue;
+        }
+
+        strength += Clamp(chamber.vignetteStrength, 0.0f, 0.85f) * weight;
+        totalWeight += weight;
+    }
+
+    if (totalWeight <= 0.001f)
+    {
+        return 0.18f;
+    }
+
+    return Clamp(strength / totalWeight, 0.0f, 0.85f);
+}
+
+void Game::DrawAtmosphereOverlay() const
+{
+    if (vignetteTexture.id == 0)
+    {
+        return;
+    }
+
+    const float strength = GetBlendedVignetteStrength();
+
+    if (strength <= 0.001f)
+    {
+        return;
+    }
+
+    DrawTexturePro(
+        vignetteTexture,
+        Rectangle{
+            0.0f,
+            0.0f,
+            static_cast<float>(vignetteTexture.width),
+            static_cast<float>(vignetteTexture.height)
+        },
+        Rectangle{
+            0.0f,
+            0.0f,
+            static_cast<float>(GetScreenWidth()),
+            static_cast<float>(GetScreenHeight())
+        },
+        Vector2{ 0.0f, 0.0f },
+        0.0f,
+        Color{
+            255,
+            255,
+            255,
+            static_cast<unsigned char>(255.0f * strength)
+        }
+    );
+}
+
 void Game::CreateTestLights()
 {
     lights.clear();
+    selectedLightIndex = -1;
+    draggingLight = false;
+    EnsurePlayerLight();
 
-    // --------------------------------------------------
-    // Permanent player light
-    // --------------------------------------------------
-
-    Light2D playerLight;
-
-    playerLight.position =
-        playerPosition;
-
-    // Small readability light rather than
-    // the main environmental light.
-    playerLight.radius =
-        125.0f;
-
-    playerLight.intensity =
-        0.52f;
-
-    playerLight.color = {
-        255,
-        242,
-        220,
-        255
+    const Vector2 fallbackPositions[] = {
+        CellToWorld(MapWidth / 2 - 3, MapHeight / 2 - 2),
+        CellToWorld(MapWidth / 2 + 3, MapHeight / 2 - 2),
+        CellToWorld(MapWidth / 2 - 3, MapHeight / 2 + 3),
+        CellToWorld(MapWidth / 2 + 3, MapHeight / 2 + 3)
     };
 
-    playerLight.enabled = true;
-    playerLight.followsPlayer = true;
-
-    // The player's world position is at the feet.
-    // Move the light upward toward the torso.
-    playerLight.viewOffset = {
-        0.0f,
-        -48.0f
+    const Color fallbackColors[] = {
+        Color{ 255, 158, 74, 255 },
+        Color{ 255, 194, 112, 255 },
+        Color{ 96, 196, 220, 255 },
+        Color{ 255, 142, 64, 255 }
     };
 
-    playerLight.scale = {
-        1.0f,
-        1.0f
-    };
-
-    playerLight.rotationDegrees =
-        0.0f;
-
-    lights.push_back(
-        playerLight
-    );
-
-    // --------------------------------------------------
-    // Random test environment lights
-    // --------------------------------------------------
-
-    constexpr int testLightCount = 10;
-
-    float halfMapWidth =
-        static_cast<float>(
-            MapWidth
-            ) *
-        TileSize *
-        0.5f;
-
-    float halfMapHeight =
-        static_cast<float>(
-            MapHeight
-            ) *
-        TileSize *
-        0.5f;
-
-    const Color testColors[] = {
-        // Warm torch
-        Color{ 255, 170, 90, 255 },
-
-        // Soft sunlight
-        Color{ 255, 225, 175, 255 },
-
-        // Cool magic
-        Color{ 120, 175, 255, 255 },
-
-        // Pale neutral light
-        Color{ 225, 235, 255, 255 },
-
-        // Soft green magical light
-        Color{ 145, 255, 185, 255 }
-    };
-
-    constexpr int colorCount =
-        sizeof(testColors) /
-        sizeof(testColors[0]);
-
-    for (int i = 0; i < testLightCount; ++i)
+    for (int index = 0; index < 4; ++index)
     {
-        Light2D testLight;
-
-        testLight.position = {
-            static_cast<float>(
-                GetRandomValue(
-                    static_cast<int>(
-                        -halfMapWidth + 160.0f
-                    ),
-                    static_cast<int>(
-                        halfMapWidth - 160.0f
-                    )
-                )
-            ),
-
-            static_cast<float>(
-                GetRandomValue(
-                    static_cast<int>(
-                        -halfMapHeight + 160.0f
-                    ),
-                    static_cast<int>(
-                        halfMapHeight - 160.0f
-                    )
-                )
-            )
-        };
-
-        testLight.radius =
-            static_cast<float>(
-                GetRandomValue(
-                    180,
-                    430
-                )
-                );
-
-        // 0.18 to 0.62
-        testLight.intensity =
-            static_cast<float>(
-                GetRandomValue(
-                    18,
-                    62
-                )
-                ) /
-            100.0f;
-
-        int colorIndex =
-            GetRandomValue(
-                0,
-                colorCount - 1
-            );
-
-        testLight.color =
-            testColors[colorIndex];
-
-        testLight.enabled = true;
-        testLight.followsPlayer = false;
-
-        lights.push_back(
-            testLight
-        );
+        Light2D light;
+        light.id = GetNextLightId();
+        light.name = "Fallback Light " + std::to_string(index + 1);
+        light.position = fallbackPositions[index];
+        light.chamberId = FindChamberAtWorld(light.position);
+        light.radius = index == 2 ? 330.0f : 260.0f;
+        light.intensity = index == 2 ? 0.50f : 0.58f;
+        light.color = fallbackColors[index];
+        light.enabled = true;
+        light.flickerAmount = index == 2 ? 0.04f : 0.12f;
+        light.flickerSpeed = 5.8f + static_cast<float>(index) * 0.7f;
+        light.flickerRadiusAmount = index == 2 ? 0.02f : 0.05f;
+        light.flickerPhase = static_cast<float>(index) * 1.37f;
+        lights.push_back(light);
     }
 
     TraceLog(
         LOG_INFO,
-        "[LIGHTING] Created %d lights, including player light.",
-        static_cast<int>(
-            lights.size()
-            )
+        "[LIGHTING] Created deterministic fallback rig with %d lights.",
+        static_cast<int>(lights.size())
     );
 }
 
@@ -30851,6 +32263,10 @@ void Game::DrawHybridGroundEffects3D()
         BLEND_ALPHA
     );
 
+    // Authored decals sit directly on the terrain and can use the same
+    // animation system as environmental props.
+    DrawHybridGroundDecals3D();
+
     // --------------------------------------------------
  // Player contact shadow
  //
@@ -32870,6 +34286,24 @@ void Game::DrawHybridObstacle3D(
     const Obstacle& obstacle
 )
 {
+    if (
+        obstacle.renderMode !=
+        ObstacleRenderMode::Billboard
+        )
+    {
+        return;
+    }
+
+    const Color drawTint =
+        GetObstacleDrawTint(
+            obstacle
+        );
+
+    if (drawTint.a == 0)
+    {
+        return;
+    }
+
     const float localHeight =
         static_cast<float>(
             std::max(
@@ -32890,24 +34324,15 @@ void Game::DrawHybridObstacle3D(
     {
         DrawHybridBillboardFrame(
             obstacle.texture,
-            {
-                0.0f,
-                0.0f,
-
-                static_cast<float>(
-                    obstacle.texture.width
-                ),
-
-                static_cast<float>(
-                    obstacle.texture.height
-                )
-            },
+            GetObstacleSourceRect(
+                obstacle
+            ),
             obstacle.position,
             obstacle.size.x,
             obstacle.size.y,
             1.0f,
             localHeight,
-            WHITE
+            drawTint
         );
 
         return;
@@ -32932,7 +34357,7 @@ void Game::DrawHybridObstacle3D(
         ) *
         0.5f;
 
-    const Color fallbackColor =
+    Color fallbackColor =
         obstacle.type == 0
         ? Color{
             48,
@@ -32946,6 +34371,20 @@ void Game::DrawHybridObstacle3D(
             88,
             255
     };
+
+    fallbackColor.r = static_cast<unsigned char>(
+        static_cast<int>(fallbackColor.r) *
+        static_cast<int>(drawTint.r) / 255
+    );
+    fallbackColor.g = static_cast<unsigned char>(
+        static_cast<int>(fallbackColor.g) *
+        static_cast<int>(drawTint.g) / 255
+    );
+    fallbackColor.b = static_cast<unsigned char>(
+        static_cast<int>(fallbackColor.b) *
+        static_cast<int>(drawTint.b) / 255
+    );
+    fallbackColor.a = drawTint.a;
 
     DrawHybridBillboardFrame(
         hybridCircleTexture,
@@ -33176,8 +34615,159 @@ void Game::DrawHybridDongfeng3D()
 
 
 
+void Game::DrawHybridGroundDecals3D()
+{
+    for (const Obstacle& obstacle : obstacles)
+    {
+        if (
+            obstacle.renderMode != ObstacleRenderMode::GroundDecal ||
+            !obstacle.hasTexture ||
+            obstacle.texture.id == 0 ||
+            !IsWorldPositionInVisibleChamber(obstacle.position)
+            )
+        {
+            continue;
+        }
+
+        const Color tint = GetObstacleDrawTint(obstacle);
+
+        if (tint.a == 0)
+        {
+            continue;
+        }
+
+        const Vector3 center =
+            WorldToHybrid3D(
+                obstacle.position,
+                static_cast<float>(std::max(0, obstacle.heightLevel)) *
+                    obstacleHeightStep +
+                    1.5f
+            );
+
+        const float halfWidth =
+            PixelsToHybridUnits(std::max(1.0f, obstacle.size.x) * 0.5f);
+
+        const float halfDepth =
+            PixelsToHybridUnits(std::max(1.0f, obstacle.size.y) * 0.5f);
+
+        const Vector3 northWest{
+            center.x - halfWidth,
+            center.y,
+            center.z - halfDepth
+        };
+
+        const Vector3 northEast{
+            center.x + halfWidth,
+            center.y,
+            center.z - halfDepth
+        };
+
+        const Vector3 southEast{
+            center.x + halfWidth,
+            center.y,
+            center.z + halfDepth
+        };
+
+        const Vector3 southWest{
+            center.x - halfWidth,
+            center.y,
+            center.z + halfDepth
+        };
+
+        const Rectangle source = GetObstacleSourceRect(obstacle);
+        const float inverseWidth = 1.0f / static_cast<float>(obstacle.texture.width);
+        const float inverseHeight = 1.0f / static_cast<float>(obstacle.texture.height);
+        const float u0 = source.x * inverseWidth;
+        const float v0 = source.y * inverseHeight;
+        const float u1 = (source.x + source.width) * inverseWidth;
+        const float v1 = (source.y + source.height) * inverseHeight;
+
+        rlSetTexture(obstacle.texture.id);
+        rlBegin(RL_QUADS);
+        rlColor4ub(tint.r, tint.g, tint.b, tint.a);
+
+        rlTexCoord2f(u0, v0);
+        rlVertex3f(northWest.x, northWest.y, northWest.z);
+
+        rlTexCoord2f(u0, v1);
+        rlVertex3f(southWest.x, southWest.y, southWest.z);
+
+        rlTexCoord2f(u1, v1);
+        rlVertex3f(southEast.x, southEast.y, southEast.z);
+
+        rlTexCoord2f(u1, v0);
+        rlVertex3f(northEast.x, northEast.y, northEast.z);
+
+        rlEnd();
+        rlSetTexture(0);
+    }
+}
+
+void Game::DrawHybridObstacleLayer3D(
+    ObstacleRenderLayer layer,
+    bool ignoreDepth
+)
+{
+    if (ignoreDepth)
+    {
+        rlDrawRenderBatchActive();
+        rlDisableDepthTest();
+        rlDisableDepthMask();
+    }
+
+    if (hybridBillboardShaderLoaded)
+    {
+        BeginShaderMode(hybridBillboardShader);
+
+        if (hybridBillboardFlashLocation >= 0)
+        {
+            const float noFlash = 0.0f;
+
+            SetShaderValue(
+                hybridBillboardShader,
+                hybridBillboardFlashLocation,
+                &noFlash,
+                SHADER_UNIFORM_FLOAT
+            );
+        }
+    }
+
+    for (const Obstacle& obstacle : obstacles)
+    {
+        if (
+            obstacle.renderMode != ObstacleRenderMode::Billboard ||
+            obstacle.renderLayer != layer ||
+            !IsWorldPositionInVisibleChamber(obstacle.position)
+            )
+        {
+            continue;
+        }
+
+        DrawHybridObstacle3D(obstacle);
+    }
+
+    if (hybridBillboardShaderLoaded)
+    {
+        EndShaderMode();
+    }
+
+    if (ignoreDepth)
+    {
+        rlDrawRenderBatchActive();
+        rlEnableDepthMask();
+        rlEnableDepthTest();
+    }
+}
+
 void Game::DrawHybridActors3D()
 {
+    // Background ornaments are authored separately so they can sit behind
+    // combat actors without entering the normal world depth-sort layer.
+    DrawHybridObstacleLayer3D(
+        ObstacleRenderLayer::Background,
+        false
+    );
+
     // --------------------------------------------------
     // Opaque / alpha-tested billboard pass
     // --------------------------------------------------
@@ -33206,6 +34796,8 @@ void Game::DrawHybridActors3D()
     for (const Obstacle& obstacle : obstacles)
     {
         if (
+            obstacle.renderMode != ObstacleRenderMode::Billboard ||
+            obstacle.renderLayer != ObstacleRenderLayer::World ||
             !IsWorldPositionInVisibleChamber(
                 obstacle.position
             )
@@ -33384,6 +34976,13 @@ void Game::DrawHybridActors3D()
             );
         }
     }
+
+    // Foreground ornaments intentionally ignore world depth. This supports
+    // near-camera archways, pillars and silhouettes that frame a chamber.
+    DrawHybridObstacleLayer3D(
+        ObstacleRenderLayer::Foreground,
+        true
+    );
 }
 
 void Game::DrawHybridEditorOverlay3D()
@@ -33808,6 +35407,44 @@ void Game::DrawHybridEditorOverlay3D()
             );
         }
     }
+
+    // Authored light guides. The radius ring is intentionally visible
+    // through nearby props so placement remains practical in dense rooms.
+    rlDisableDepthTest();
+
+    for (const Light2D& light : lights)
+    {
+        if (light.followsPlayer)
+        {
+            continue;
+        }
+
+        const Color guideColor{
+            light.color.r,
+            light.color.g,
+            light.color.b,
+            210
+        };
+
+        DrawCircle3D(
+            WorldToHybrid3D(light.position, 4.0f),
+            PixelsToHybridUnits(light.radius),
+            Vector3{ 1.0f, 0.0f, 0.0f },
+            90.0f,
+            guideColor
+        );
+
+        DrawSphereWires(
+            WorldToHybrid3D(light.position, 12.0f),
+            PixelsToHybridUnits(8.0f),
+            8,
+            8,
+            WHITE
+        );
+    }
+
+    rlEnableDepthTest();
+
 }
 
 void Game::DrawHybridWorld3D()
