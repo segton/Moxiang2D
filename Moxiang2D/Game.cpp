@@ -869,6 +869,122 @@ namespace
             );
         }
 
+        void AddWallQuad(
+            Vector3 topStart,
+            Vector3 topEnd,
+            Vector3 bottomEnd,
+            Vector3 bottomStart,
+            Vector3 normal,
+            Color color,
+            bool twoSided = false
+        )
+        {
+            // A two-sided wall used to submit two perfectly coplanar
+            // surfaces. That caused z-fighting which looked like a
+            // strange extrusion on East-facing walls. Give the front
+            // and back faces a tiny physical separation instead.
+            constexpr float halfThickness = 0.00075f;
+
+            Vector3 frontTopStart = topStart;
+            Vector3 frontTopEnd = topEnd;
+            Vector3 frontBottomEnd = bottomEnd;
+            Vector3 frontBottomStart = bottomStart;
+
+            if (twoSided)
+            {
+                const Vector3 frontOffset =
+                    Vector3Scale(
+                        normal,
+                        halfThickness
+                    );
+
+                frontTopStart =
+                    Vector3Add(frontTopStart, frontOffset);
+
+                frontTopEnd =
+                    Vector3Add(frontTopEnd, frontOffset);
+
+                frontBottomEnd =
+                    Vector3Add(frontBottomEnd, frontOffset);
+
+                frontBottomStart =
+                    Vector3Add(frontBottomStart, frontOffset);
+            }
+
+            AddTriangle(
+                frontTopStart,
+                frontTopEnd,
+                frontBottomEnd,
+                { 0.0f, 0.0f },
+                { 1.0f, 0.0f },
+                { 1.0f, 1.0f },
+                normal,
+                color
+            );
+
+            AddTriangle(
+                frontTopStart,
+                frontBottomEnd,
+                frontBottomStart,
+                { 0.0f, 0.0f },
+                { 1.0f, 1.0f },
+                { 0.0f, 1.0f },
+                normal,
+                color
+            );
+
+            if (!twoSided)
+            {
+                return;
+            }
+
+            const Vector3 reverseNormal{
+                -normal.x,
+                -normal.y,
+                -normal.z
+            };
+
+            const Vector3 backOffset =
+                Vector3Scale(
+                    normal,
+                    -halfThickness
+                );
+
+            const Vector3 backTopStart =
+                Vector3Add(topStart, backOffset);
+
+            const Vector3 backTopEnd =
+                Vector3Add(topEnd, backOffset);
+
+            const Vector3 backBottomEnd =
+                Vector3Add(bottomEnd, backOffset);
+
+            const Vector3 backBottomStart =
+                Vector3Add(bottomStart, backOffset);
+
+            AddTriangle(
+                backTopEnd,
+                backTopStart,
+                backBottomStart,
+                { 0.0f, 0.0f },
+                { 1.0f, 0.0f },
+                { 1.0f, 1.0f },
+                reverseNormal,
+                color
+            );
+
+            AddTriangle(
+                backTopEnd,
+                backBottomStart,
+                backBottomEnd,
+                { 0.0f, 0.0f },
+                { 1.0f, 1.0f },
+                { 0.0f, 1.0f },
+                reverseNormal,
+                color
+            );
+        }
+
         void RemapUv(
             float u0,
             float v0,
@@ -3094,7 +3210,7 @@ bool Game::SaveLevel(const char* path) const
         return false;
     }
 
-    out << "MOXIANG_LEVEL 7\n";
+    out << "MOXIANG_LEVEL 10\n";
 
     out << "TILES " << MapWidth << " " << MapHeight << "\n";
 
@@ -3177,6 +3293,131 @@ bool Game::SaveLevel(const char* path) const
                 << " "
                 << cell.westWallTile
                 << " ";
+        }
+
+        out << "\n";
+    }
+
+    out
+        << "WALL_HEIGHTS "
+        << MapWidth
+        << " "
+        << MapHeight
+        << "\n";
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(
+                        x,
+                        y
+                    )
+                ];
+
+            out
+                << cell.northWallHeight
+                << " "
+                << cell.eastWallHeight
+                << " "
+                << cell.southWallHeight
+                << " "
+                << cell.westWallHeight
+                << " ";
+        }
+
+        out << "\n";
+    }
+
+    out
+        << "BUILT_WALL_PIECES "
+        << MapWidth
+        << " "
+        << MapHeight
+        << " "
+        << MaximumBuiltWallPieceRows
+        << "\n";
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(x, y)
+                ];
+
+            const BuiltWallPieceMaterials* faces[] = {
+                &cell.northBuiltWallPieces,
+                &cell.eastBuiltWallPieces,
+                &cell.southBuiltWallPieces,
+                &cell.westBuiltWallPieces
+            };
+
+            for (
+                const BuiltWallPieceMaterials* face :
+                faces
+                )
+            {
+                for (
+                    int wallRow = 0;
+                    wallRow < MaximumBuiltWallPieceRows;
+                    ++wallRow
+                    )
+                {
+                    out
+                        << face->tileIndices[wallRow]
+                        << " ";
+                }
+            }
+        }
+
+        out << "\n";
+    }
+
+    out
+        << "CLIFF_WALL_PIECES "
+        << MapWidth
+        << " "
+        << MapHeight
+        << " "
+        << MaximumBuiltWallPieceRows
+        << "\n";
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(x, y)
+                ];
+
+            const BuiltWallPieceMaterials* faces[] = {
+                &cell.northCliffWallPieces,
+                &cell.eastCliffWallPieces,
+                &cell.southCliffWallPieces,
+                &cell.westCliffWallPieces
+            };
+
+            for (
+                const BuiltWallPieceMaterials* face :
+                faces
+                )
+            {
+                for (
+                    int wallRow = 0;
+                    wallRow < MaximumBuiltWallPieceRows;
+                    ++wallRow
+                    )
+                {
+                    out
+                        << face->tileIndices[wallRow]
+                        << " ";
+                }
+            }
         }
 
         out << "\n";
@@ -3667,7 +3908,198 @@ bool Game::LoadLevel(const char* path)
                         westTile;
                 }
             }
+        }
+
+        else if (tag == "WALL_HEIGHTS")
+        {
+            int width = 0;
+            int height = 0;
+
+            in
+                >> width
+                >> height;
+
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    int northHeight = 0;
+                    int eastHeight = 0;
+                    int southHeight = 0;
+                    int westHeight = 0;
+
+                    in
+                        >> northHeight
+                        >> eastHeight
+                        >> southHeight
+                        >> westHeight;
+
+                    if (
+                        x >= MapWidth ||
+                        y >= MapHeight
+                        )
+                    {
+                        continue;
+                    }
+
+                    TerrainCell& cell =
+                        terrainCells[
+                            CellIndex(
+                                x,
+                                y
+                            )
+                        ];
+
+                    cell.northWallHeight =
+                        std::max(
+                            0,
+                            northHeight
+                        );
+
+                    cell.eastWallHeight =
+                        std::max(
+                            0,
+                            eastHeight
+                        );
+
+                    cell.southWallHeight =
+                        std::max(
+                            0,
+                            southHeight
+                        );
+
+                    cell.westWallHeight =
+                        std::max(
+                            0,
+                            westHeight
+                        );
+                }
             }
+        }
+
+        else if (tag == "BUILT_WALL_PIECES")
+        {
+            int width = 0;
+            int height = 0;
+            int savedRows = 0;
+
+            in
+                >> width
+                >> height
+                >> savedRows;
+
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    TerrainCell* cell = nullptr;
+
+                    if (x < MapWidth && y < MapHeight)
+                    {
+                        cell =
+                            &terrainCells[
+                                CellIndex(x, y)
+                            ];
+                    }
+
+                    BuiltWallPieceMaterials* faces[4] = {
+                        cell != nullptr
+                            ? &cell->northBuiltWallPieces
+                            : nullptr,
+                        cell != nullptr
+                            ? &cell->eastBuiltWallPieces
+                            : nullptr,
+                        cell != nullptr
+                            ? &cell->southBuiltWallPieces
+                            : nullptr,
+                        cell != nullptr
+                            ? &cell->westBuiltWallPieces
+                            : nullptr
+                    };
+
+                    for (int faceIndex = 0; faceIndex < 4; ++faceIndex)
+                    {
+                        for (int wallRow = 0; wallRow < savedRows; ++wallRow)
+                        {
+                            int tileIndex = -1;
+                            in >> tileIndex;
+
+                            if (
+                                faces[faceIndex] != nullptr &&
+                                wallRow < MaximumBuiltWallPieceRows
+                                )
+                            {
+                                faces[faceIndex]
+                                    ->tileIndices[wallRow] =
+                                    tileIndex;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        else if (tag == "CLIFF_WALL_PIECES")
+        {
+            int width = 0;
+            int height = 0;
+            int savedRows = 0;
+
+            in
+                >> width
+                >> height
+                >> savedRows;
+
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    TerrainCell* cell = nullptr;
+
+                    if (x < MapWidth && y < MapHeight)
+                    {
+                        cell =
+                            &terrainCells[
+                                CellIndex(x, y)
+                            ];
+                    }
+
+                    BuiltWallPieceMaterials* faces[4] = {
+                        cell != nullptr
+                            ? &cell->northCliffWallPieces
+                            : nullptr,
+                        cell != nullptr
+                            ? &cell->eastCliffWallPieces
+                            : nullptr,
+                        cell != nullptr
+                            ? &cell->southCliffWallPieces
+                            : nullptr,
+                        cell != nullptr
+                            ? &cell->westCliffWallPieces
+                            : nullptr
+                    };
+
+                    for (int faceIndex = 0; faceIndex < 4; ++faceIndex)
+                    {
+                        for (int wallRow = 0; wallRow < savedRows; ++wallRow)
+                        {
+                            int tileIndex = -1;
+                            in >> tileIndex;
+
+                            if (
+                                faces[faceIndex] != nullptr &&
+                                wallRow < MaximumBuiltWallPieceRows
+                                )
+                            {
+                                faces[faceIndex]
+                                    ->tileIndices[wallRow] =
+                                    tileIndex;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         else if (tag == "CHAMBERS")
         {
@@ -3787,7 +4219,7 @@ bool Game::LoadLevel(const char* path)
                     savedPath.c_str()
                 );
             }
-            }
+        }
         else if (tag == "TILE_WALKABILITY")
         {
             int count = 0;
@@ -3823,7 +4255,7 @@ bool Game::LoadLevel(const char* path)
                 ].walkable =
                     walkableValue != 0;
             }
-            }
+        }
         else if (tag == "TILE_BRUSHES")
         {
             int count = 0;
@@ -4518,6 +4950,903 @@ int Game::GetTerrainWallTileIndex(
     return floorTileIndex;
 }
 
+int Game::GetTerrainWallHeight(
+    int cellX,
+    int cellY,
+    TerrainWallFace face
+) const
+{
+    if (
+        !IsCellInside(
+            cellX,
+            cellY
+        )
+        )
+    {
+        return 0;
+    }
+
+    const TerrainCell& cell =
+        terrainCells[
+            CellIndex(
+                cellX,
+                cellY
+            )
+        ];
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        return
+            std::max(
+                0,
+                cell.northWallHeight
+            );
+
+    case TerrainWallFace::East:
+        return
+            std::max(
+                0,
+                cell.eastWallHeight
+            );
+
+    case TerrainWallFace::South:
+        return
+            std::max(
+                0,
+                cell.southWallHeight
+            );
+
+    case TerrainWallFace::West:
+        return
+            std::max(
+                0,
+                cell.westWallHeight
+            );
+
+    case TerrainWallFace::None:
+    default:
+        return 0;
+    }
+}
+
+int Game::GetBuiltWallPieceTileIndex(
+    int cellX,
+    int cellY,
+    TerrainWallFace face,
+    int wallRow
+) const
+{
+    const int fallbackTile =
+        GetTerrainWallTileIndex(
+            cellX,
+            cellY,
+            face
+        );
+
+    if (
+        !IsCellInside(cellX, cellY) ||
+        wallRow < 0 ||
+        wallRow >= MaximumBuiltWallPieceRows
+        )
+    {
+        return fallbackTile;
+    }
+
+    const TerrainCell& cell =
+        terrainCells[
+            CellIndex(cellX, cellY)
+        ];
+
+    const BuiltWallPieceMaterials* materials =
+        nullptr;
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        materials =
+            &cell.northBuiltWallPieces;
+        break;
+
+    case TerrainWallFace::East:
+        materials =
+            &cell.eastBuiltWallPieces;
+        break;
+
+    case TerrainWallFace::South:
+        materials =
+            &cell.southBuiltWallPieces;
+        break;
+
+    case TerrainWallFace::West:
+        materials =
+            &cell.westBuiltWallPieces;
+        break;
+
+    case TerrainWallFace::None:
+    default:
+        break;
+    }
+
+    if (materials == nullptr)
+    {
+        return fallbackTile;
+    }
+
+    const int tileIndex =
+        materials->tileIndices[
+            wallRow
+        ];
+
+    if (
+        tileIndex >= 0 &&
+        tileIndex <
+        static_cast<int>(
+            tileBrushes.size()
+            )
+        )
+    {
+        return tileIndex;
+    }
+
+    return fallbackTile;
+}
+
+int Game::GetTerrainCliffPieceTileIndex(
+    int cellX,
+    int cellY,
+    TerrainWallFace face,
+    int wallRow
+) const
+{
+    const int fallbackTile =
+        GetTerrainWallTileIndex(
+            cellX,
+            cellY,
+            face
+        );
+
+    if (
+        !IsCellInside(cellX, cellY) ||
+        wallRow < 0 ||
+        wallRow >= MaximumBuiltWallPieceRows
+        )
+    {
+        return fallbackTile;
+    }
+
+    const TerrainCell& cell =
+        terrainCells[
+            CellIndex(cellX, cellY)
+        ];
+
+    const BuiltWallPieceMaterials* materials =
+        nullptr;
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        materials =
+            &cell.northCliffWallPieces;
+        break;
+
+    case TerrainWallFace::East:
+        materials =
+            &cell.eastCliffWallPieces;
+        break;
+
+    case TerrainWallFace::South:
+        materials =
+            &cell.southCliffWallPieces;
+        break;
+
+    case TerrainWallFace::West:
+        materials =
+            &cell.westCliffWallPieces;
+        break;
+
+    case TerrainWallFace::None:
+    default:
+        break;
+    }
+
+    if (materials == nullptr)
+    {
+        return fallbackTile;
+    }
+
+    const int tileIndex =
+        materials->tileIndices[wallRow];
+
+    if (
+        tileIndex >= 0 &&
+        tileIndex <
+        static_cast<int>(
+            tileBrushes.size()
+            )
+        )
+    {
+        return tileIndex;
+    }
+
+    return fallbackTile;
+}
+
+bool Game::GetBuiltWallPieceQuad3D(
+    int cellX,
+    int cellY,
+    TerrainWallFace face,
+    int wallRow,
+    Vector3& outTopStart,
+    Vector3& outTopEnd,
+    Vector3& outBottomEnd,
+    Vector3& outBottomStart,
+    Vector3* outNormal
+) const
+{
+    if (
+        !IsCellInside(cellX, cellY) ||
+        !IsCellEnabled(cellX, cellY) ||
+        face == TerrainWallFace::None ||
+        wallRow < 0 ||
+        wallRow >=
+        GetTerrainWallHeight(
+            cellX,
+            cellY,
+            face
+        ) ||
+        wallRow >= MaximumBuiltWallPieceRows
+        )
+    {
+        return false;
+    }
+
+    const float levelHeight =
+        PixelsToHybridUnits(
+            terrainElevationStep
+        );
+
+    const float originX =
+        -static_cast<float>(MapWidth) *
+        TileSize *
+        0.5f;
+
+    const float originY =
+        -static_cast<float>(MapHeight) *
+        TileSize *
+        0.5f;
+
+    const float x0 =
+        (
+            originX +
+            static_cast<float>(cellX) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    const float x1 =
+        (
+            originX +
+            static_cast<float>(cellX + 1) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    const float z0 =
+        (
+            originY +
+            static_cast<float>(cellY) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    const float z1 =
+        (
+            originY +
+            static_cast<float>(cellY + 1) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    const TerrainCell& cell =
+        terrainCells[
+            CellIndex(cellX, cellY)
+        ];
+
+    const int elevation =
+        GetTerrainElevation(
+            cellX,
+            cellY
+        );
+
+    float nwHeight =
+        static_cast<float>(elevation) *
+        levelHeight;
+
+    float neHeight = nwHeight;
+    float seHeight = nwHeight;
+    float swHeight = nwHeight;
+
+    int rampOffsetX = 0;
+    int rampOffsetY = 0;
+
+    if (
+        GetRampDirectionOffset(
+            cell.rampDirection,
+            rampOffsetX,
+            rampOffsetY
+        )
+        )
+    {
+        const int targetX =
+            cellX +
+            rampOffsetX;
+
+        const int targetY =
+            cellY +
+            rampOffsetY;
+
+        if (
+            IsCellInside(targetX, targetY) &&
+            IsCellEnabled(targetX, targetY) &&
+            GetTerrainElevation(targetX, targetY) ==
+            elevation + 1
+            )
+        {
+            const float highHeight =
+                nwHeight +
+                levelHeight;
+
+            switch (cell.rampDirection)
+            {
+            case RampDirection::North:
+                nwHeight = highHeight;
+                neHeight = highHeight;
+                break;
+
+            case RampDirection::East:
+                neHeight = highHeight;
+                seHeight = highHeight;
+                break;
+
+            case RampDirection::South:
+                swHeight = highHeight;
+                seHeight = highHeight;
+                break;
+
+            case RampDirection::West:
+                nwHeight = highHeight;
+                swHeight = highHeight;
+                break;
+
+            case RampDirection::None:
+            default:
+                break;
+            }
+        }
+    }
+
+    Vector3 baseStart{};
+    Vector3 baseEnd{};
+    Vector3 normal{};
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        baseStart = { x0, nwHeight, z0 };
+        baseEnd = { x1, neHeight, z0 };
+        normal = { 0.0f, 0.0f, -1.0f };
+        break;
+
+    case TerrainWallFace::East:
+        baseStart = { x1, neHeight, z0 };
+        baseEnd = { x1, seHeight, z1 };
+        normal = { 1.0f, 0.0f, 0.0f };
+        break;
+
+    case TerrainWallFace::South:
+        baseStart = { x1, seHeight, z1 };
+        baseEnd = { x0, swHeight, z1 };
+        normal = { 0.0f, 0.0f, 1.0f };
+        break;
+
+    case TerrainWallFace::West:
+        baseStart = { x0, swHeight, z1 };
+        baseEnd = { x0, nwHeight, z0 };
+        normal = { -1.0f, 0.0f, 0.0f };
+        break;
+
+    case TerrainWallFace::None:
+    default:
+        return false;
+    }
+
+    const float bottomOffset =
+        static_cast<float>(wallRow) *
+        levelHeight;
+
+    const float topOffset =
+        static_cast<float>(wallRow + 1) *
+        levelHeight;
+
+    outBottomStart = baseStart;
+    outBottomEnd = baseEnd;
+    outTopStart = baseStart;
+    outTopEnd = baseEnd;
+
+    outBottomStart.y += bottomOffset;
+    outBottomEnd.y += bottomOffset;
+    outTopStart.y += topOffset;
+    outTopEnd.y += topOffset;
+
+    if (outNormal != nullptr)
+    {
+        *outNormal = normal;
+    }
+
+    return true;
+}
+
+bool Game::GetTerrainCliffPieceQuad3D(
+    int cellX,
+    int cellY,
+    TerrainWallFace face,
+    int wallRow,
+    Vector3& outTopStart,
+    Vector3& outTopEnd,
+    Vector3& outBottomEnd,
+    Vector3& outBottomStart,
+    Vector3* outNormal
+) const
+{
+    if (
+        !IsCellInside(cellX, cellY) ||
+        !IsCellEnabled(cellX, cellY) ||
+        face == TerrainWallFace::None ||
+        wallRow < 0 ||
+        wallRow >= MaximumBuiltWallPieceRows
+        )
+    {
+        return false;
+    }
+
+    int neighbourX = cellX;
+    int neighbourY = cellY;
+    Vector3 normal{};
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        neighbourY -= 1;
+        normal = { 0.0f, 0.0f, -1.0f };
+        break;
+
+    case TerrainWallFace::East:
+        neighbourX += 1;
+        normal = { 1.0f, 0.0f, 0.0f };
+        break;
+
+    case TerrainWallFace::South:
+        neighbourY += 1;
+        normal = { 0.0f, 0.0f, 1.0f };
+        break;
+
+    case TerrainWallFace::West:
+        neighbourX -= 1;
+        normal = { -1.0f, 0.0f, 0.0f };
+        break;
+
+    case TerrainWallFace::None:
+    default:
+        return false;
+    }
+
+    if (
+        IsRampConnectionBetweenCells(
+            cellX,
+            cellY,
+            neighbourX,
+            neighbourY
+        )
+        )
+    {
+        return false;
+    }
+
+    const float levelHeight =
+        PixelsToHybridUnits(
+            terrainElevationStep
+        );
+
+    struct CornerHeights
+    {
+        float nw = 0.0f;
+        float ne = 0.0f;
+        float se = 0.0f;
+        float sw = 0.0f;
+    };
+
+    auto GetCornerHeights =
+        [this, levelHeight](
+            int queryX,
+            int queryY
+            )
+        {
+            CornerHeights heights{};
+
+            if (
+                !IsCellInside(queryX, queryY) ||
+                !IsCellEnabled(queryX, queryY)
+                )
+            {
+                return heights;
+            }
+
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(queryX, queryY)
+                ];
+
+            const int elevation =
+                GetTerrainElevation(
+                    queryX,
+                    queryY
+                );
+
+            const float baseHeight =
+                static_cast<float>(elevation) *
+                levelHeight;
+
+            heights.nw = baseHeight;
+            heights.ne = baseHeight;
+            heights.se = baseHeight;
+            heights.sw = baseHeight;
+
+            int offsetX = 0;
+            int offsetY = 0;
+
+            if (
+                !GetRampDirectionOffset(
+                    cell.rampDirection,
+                    offsetX,
+                    offsetY
+                )
+                )
+            {
+                return heights;
+            }
+
+            const int targetX =
+                queryX + offsetX;
+
+            const int targetY =
+                queryY + offsetY;
+
+            if (
+                !IsCellInside(targetX, targetY) ||
+                !IsCellEnabled(targetX, targetY) ||
+                GetTerrainElevation(targetX, targetY) !=
+                elevation + 1
+                )
+            {
+                return heights;
+            }
+
+            const float highHeight =
+                baseHeight + levelHeight;
+
+            switch (cell.rampDirection)
+            {
+            case RampDirection::North:
+                heights.nw = highHeight;
+                heights.ne = highHeight;
+                break;
+
+            case RampDirection::East:
+                heights.ne = highHeight;
+                heights.se = highHeight;
+                break;
+
+            case RampDirection::South:
+                heights.sw = highHeight;
+                heights.se = highHeight;
+                break;
+
+            case RampDirection::West:
+                heights.nw = highHeight;
+                heights.sw = highHeight;
+                break;
+
+            case RampDirection::None:
+            default:
+                break;
+            }
+
+            return heights;
+        };
+
+    const CornerHeights current =
+        GetCornerHeights(cellX, cellY);
+
+    const CornerHeights neighbour =
+        GetCornerHeights(neighbourX, neighbourY);
+
+    float topStartHeight = 0.0f;
+    float topEndHeight = 0.0f;
+    float bottomStartHeight = 0.0f;
+    float bottomEndHeight = 0.0f;
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        topStartHeight = current.nw;
+        topEndHeight = current.ne;
+        bottomStartHeight =
+            std::min(current.nw, neighbour.sw);
+        bottomEndHeight =
+            std::min(current.ne, neighbour.se);
+        break;
+
+    case TerrainWallFace::East:
+        topStartHeight = current.ne;
+        topEndHeight = current.se;
+        bottomStartHeight =
+            std::min(current.ne, neighbour.nw);
+        bottomEndHeight =
+            std::min(current.se, neighbour.sw);
+        break;
+
+    case TerrainWallFace::South:
+        topStartHeight = current.se;
+        topEndHeight = current.sw;
+        bottomStartHeight =
+            std::min(current.se, neighbour.ne);
+        bottomEndHeight =
+            std::min(current.sw, neighbour.nw);
+        break;
+
+    case TerrainWallFace::West:
+        topStartHeight = current.sw;
+        topEndHeight = current.nw;
+        bottomStartHeight =
+            std::min(current.sw, neighbour.se);
+        bottomEndHeight =
+            std::min(current.nw, neighbour.ne);
+        break;
+
+    case TerrainWallFace::None:
+    default:
+        return false;
+    }
+
+    const float rowBottomHeight =
+        static_cast<float>(wallRow) *
+        levelHeight;
+
+    const float rowTopHeight =
+        static_cast<float>(wallRow + 1) *
+        levelHeight;
+
+    const float clippedBottomStart =
+        Clamp(
+            rowBottomHeight,
+            bottomStartHeight,
+            topStartHeight
+        );
+
+    const float clippedTopStart =
+        Clamp(
+            rowTopHeight,
+            bottomStartHeight,
+            topStartHeight
+        );
+
+    const float clippedBottomEnd =
+        Clamp(
+            rowBottomHeight,
+            bottomEndHeight,
+            topEndHeight
+        );
+
+    const float clippedTopEnd =
+        Clamp(
+            rowTopHeight,
+            bottomEndHeight,
+            topEndHeight
+        );
+
+    constexpr float epsilon = 0.0001f;
+
+    if (
+        clippedTopStart - clippedBottomStart <= epsilon &&
+        clippedTopEnd - clippedBottomEnd <= epsilon
+        )
+    {
+        return false;
+    }
+
+    const float originX =
+        -static_cast<float>(MapWidth) *
+        TileSize *
+        0.5f;
+
+    const float originY =
+        -static_cast<float>(MapHeight) *
+        TileSize *
+        0.5f;
+
+    const float x0 =
+        (
+            originX +
+            static_cast<float>(cellX) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    const float x1 =
+        (
+            originX +
+            static_cast<float>(cellX + 1) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    const float z0 =
+        (
+            originY +
+            static_cast<float>(cellY) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    const float z1 =
+        (
+            originY +
+            static_cast<float>(cellY + 1) *
+            TileSize
+            ) *
+        hybridUnitsPerPixel;
+
+    switch (face)
+    {
+    case TerrainWallFace::North:
+        outTopStart = { x0, clippedTopStart, z0 };
+        outTopEnd = { x1, clippedTopEnd, z0 };
+        outBottomEnd = { x1, clippedBottomEnd, z0 };
+        outBottomStart = { x0, clippedBottomStart, z0 };
+        break;
+
+    case TerrainWallFace::East:
+        outTopStart = { x1, clippedTopStart, z0 };
+        outTopEnd = { x1, clippedTopEnd, z1 };
+        outBottomEnd = { x1, clippedBottomEnd, z1 };
+        outBottomStart = { x1, clippedBottomStart, z0 };
+        break;
+
+    case TerrainWallFace::South:
+        outTopStart = { x1, clippedTopStart, z1 };
+        outTopEnd = { x0, clippedTopEnd, z1 };
+        outBottomEnd = { x0, clippedBottomEnd, z1 };
+        outBottomStart = { x1, clippedBottomStart, z1 };
+        break;
+
+    case TerrainWallFace::West:
+        outTopStart = { x0, clippedTopStart, z1 };
+        outTopEnd = { x0, clippedTopEnd, z0 };
+        outBottomEnd = { x0, clippedBottomEnd, z0 };
+        outBottomStart = { x0, clippedBottomStart, z1 };
+        break;
+
+    case TerrainWallFace::None:
+    default:
+        return false;
+    }
+
+    if (outNormal != nullptr)
+    {
+        *outNormal = normal;
+    }
+
+    return true;
+}
+
+bool Game::HasBuiltWallBetween(
+    int cellAX,
+    int cellAY,
+    int cellBX,
+    int cellBY
+) const
+{
+    if (
+        !IsCellInside(
+            cellAX,
+            cellAY
+        ) ||
+        !IsCellInside(
+            cellBX,
+            cellBY
+        )
+        )
+    {
+        return false;
+    }
+
+    const int differenceX =
+        cellBX -
+        cellAX;
+
+    const int differenceY =
+        cellBY -
+        cellAY;
+
+    TerrainWallFace faceA =
+        TerrainWallFace::None;
+
+    TerrainWallFace faceB =
+        TerrainWallFace::None;
+
+    if (
+        differenceX == 1 &&
+        differenceY == 0
+        )
+    {
+        faceA =
+            TerrainWallFace::East;
+
+        faceB =
+            TerrainWallFace::West;
+    }
+    else if (
+        differenceX == -1 &&
+        differenceY == 0
+        )
+    {
+        faceA =
+            TerrainWallFace::West;
+
+        faceB =
+            TerrainWallFace::East;
+    }
+    else if (
+        differenceX == 0 &&
+        differenceY == 1
+        )
+    {
+        faceA =
+            TerrainWallFace::South;
+
+        faceB =
+            TerrainWallFace::North;
+    }
+    else if (
+        differenceX == 0 &&
+        differenceY == -1
+        )
+    {
+        faceA =
+            TerrainWallFace::North;
+
+        faceB =
+            TerrainWallFace::South;
+    }
+    else
+    {
+        return false;
+    }
+
+    return
+        GetTerrainWallHeight(
+            cellAX,
+            cellAY,
+            faceA
+        ) > 0 ||
+        GetTerrainWallHeight(
+            cellBX,
+            cellBY,
+            faceB
+        ) > 0;
+}
+
 Rectangle Game::GetTileBrushSourceRect(
     int tileIndex
 ) const
@@ -5107,6 +6436,18 @@ void Game::Update(float dt)
         buildMode =
             !buildMode;
     }
+
+    if (
+        buildMode &&
+        !buildModeWasActive
+        )
+    {
+        ResetBuildCameraView();
+    }
+
+    buildModeWasActive =
+        buildMode;
+
 #endif
 
     // B creates a Boss for animation and behaviour testing.
@@ -5989,16 +7330,22 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
 
         int wallCellX = -1;
         int wallCellY = -1;
+        int wallRow = -1;
 
         TerrainWallFace wallFace =
             TerrainWallFace::None;
+
+        TerrainWallPieceKind wallPieceKind =
+            TerrainWallPieceKind::None;
 
         if (
             !ScreenToTerrainWall3D(
                 screenPosition,
                 wallCellX,
                 wallCellY,
-                wallFace
+                wallFace,
+                wallPieceKind,
+                wallRow
             )
             )
         {
@@ -6006,10 +7353,9 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         }
 
         if (
-            !IsCellEnabled(
-                wallCellX,
-                wallCellY
-            )
+            !IsCellEnabled(wallCellX, wallCellY) ||
+            wallRow < 0 ||
+            wallRow >= MaximumBuiltWallPieceRows
             )
         {
             return;
@@ -6017,46 +7363,78 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
 
         TerrainCell& wallCell =
             terrainCells[
-                CellIndex(
-                    wallCellX,
-                    wallCellY
-                )
+                CellIndex(wallCellX, wallCellY)
             ];
 
-        int* wallTileOverride =
+        BuiltWallPieceMaterials* pieceMaterials =
             nullptr;
 
-        switch (wallFace)
+        if (wallPieceKind == TerrainWallPieceKind::Built)
         {
-        case TerrainWallFace::North:
-            wallTileOverride =
-                &wallCell.northWallTile;
-            break;
+            switch (wallFace)
+            {
+            case TerrainWallFace::North:
+                pieceMaterials =
+                    &wallCell.northBuiltWallPieces;
+                break;
 
-        case TerrainWallFace::East:
-            wallTileOverride =
-                &wallCell.eastWallTile;
-            break;
+            case TerrainWallFace::East:
+                pieceMaterials =
+                    &wallCell.eastBuiltWallPieces;
+                break;
 
-        case TerrainWallFace::South:
-            wallTileOverride =
-                &wallCell.southWallTile;
-            break;
+            case TerrainWallFace::South:
+                pieceMaterials =
+                    &wallCell.southBuiltWallPieces;
+                break;
 
-        case TerrainWallFace::West:
-            wallTileOverride =
-                &wallCell.westWallTile;
-            break;
+            case TerrainWallFace::West:
+                pieceMaterials =
+                    &wallCell.westBuiltWallPieces;
+                break;
 
-        case TerrainWallFace::None:
-        default:
-            break;
+            case TerrainWallFace::None:
+            default:
+                break;
+            }
+        }
+        else if (wallPieceKind == TerrainWallPieceKind::Cliff)
+        {
+            switch (wallFace)
+            {
+            case TerrainWallFace::North:
+                pieceMaterials =
+                    &wallCell.northCliffWallPieces;
+                break;
+
+            case TerrainWallFace::East:
+                pieceMaterials =
+                    &wallCell.eastCliffWallPieces;
+                break;
+
+            case TerrainWallFace::South:
+                pieceMaterials =
+                    &wallCell.southCliffWallPieces;
+                break;
+
+            case TerrainWallFace::West:
+                pieceMaterials =
+                    &wallCell.westCliffWallPieces;
+                break;
+
+            case TerrainWallFace::None:
+            default:
+                break;
+            }
         }
 
-        if (wallTileOverride == nullptr)
+        if (pieceMaterials == nullptr)
         {
             return;
         }
+
+        int& wallTileOverride =
+            pieceMaterials->tileIndices[wallRow];
 
         if (
             editorTool ==
@@ -6073,14 +7451,14 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
                     )
                 )
             {
-                *wallTileOverride =
+                wallTileOverride =
                     selectedTile;
             }
         }
         else
         {
-            // Return to inheriting the floor tile.
-            *wallTileOverride =
+            // Restore this one wall block to its face/floor fallback.
+            wallTileOverride =
                 -1;
         }
 
@@ -6132,6 +7510,163 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
                     pickedCellY
                 );
         }
+    }
+
+    // --------------------------------------------------
+    // Build or erase one complete wall column.
+    // Individual rows are painted afterward with PaintWall.
+    // --------------------------------------------------
+
+    if (
+        editorTool ==
+        static_cast<int>(
+            EditorTool::BuildWall
+            ) ||
+        editorTool ==
+        static_cast<int>(
+            EditorTool::EraseWall
+            )
+        )
+    {
+        if (
+            rendererMode !=
+            WorldRendererMode::Hybrid3D
+            )
+        {
+            return;
+        }
+
+        if (!IsCellEnabled(pickedCellX, pickedCellY))
+        {
+            return;
+        }
+
+        TerrainCell& cell =
+            terrainCells[
+                CellIndex(pickedCellX, pickedCellY)
+            ];
+
+        const TerrainWallFace wallFace =
+            static_cast<TerrainWallFace>(
+                editorWallDirection
+                );
+
+        int* wallHeight = nullptr;
+        int* wallTile = nullptr;
+        BuiltWallPieceMaterials* pieceMaterials =
+            nullptr;
+
+        switch (wallFace)
+        {
+        case TerrainWallFace::North:
+            wallHeight =
+                &cell.northWallHeight;
+            wallTile =
+                &cell.northWallTile;
+            pieceMaterials =
+                &cell.northBuiltWallPieces;
+            break;
+
+        case TerrainWallFace::East:
+            wallHeight =
+                &cell.eastWallHeight;
+            wallTile =
+                &cell.eastWallTile;
+            pieceMaterials =
+                &cell.eastBuiltWallPieces;
+            break;
+
+        case TerrainWallFace::South:
+            wallHeight =
+                &cell.southWallHeight;
+            wallTile =
+                &cell.southWallTile;
+            pieceMaterials =
+                &cell.southBuiltWallPieces;
+            break;
+
+        case TerrainWallFace::West:
+            wallHeight =
+                &cell.westWallHeight;
+            wallTile =
+                &cell.westWallTile;
+            pieceMaterials =
+                &cell.westBuiltWallPieces;
+            break;
+
+        case TerrainWallFace::None:
+        default:
+            break;
+        }
+
+        if (
+            wallHeight == nullptr ||
+            wallTile == nullptr ||
+            pieceMaterials == nullptr
+            )
+        {
+            return;
+        }
+
+        if (
+            editorTool ==
+            static_cast<int>(
+                EditorTool::BuildWall
+                )
+            )
+        {
+            const int newHeight =
+                std::max(
+                    1,
+                    std::min(
+                        MaximumBuiltWallPieceRows,
+                        editorWallHeight
+                    )
+                );
+
+            *wallHeight =
+                newHeight;
+
+            // Rows above the new height must not reappear if this
+            // wall was previously taller and is later expanded again.
+            for (
+                int wallRow = newHeight;
+                wallRow < MaximumBuiltWallPieceRows;
+                ++wallRow
+                )
+            {
+                pieceMaterials->tileIndices[wallRow] =
+                    -1;
+            }
+
+            if (
+                selectedTile >= 0 &&
+                selectedTile <
+                static_cast<int>(
+                    tileBrushes.size()
+                    )
+                )
+            {
+                // This is the default material inherited by rows
+                // that do not have their own override.
+                *wallTile =
+                    selectedTile;
+            }
+        }
+        else
+        {
+            *wallHeight = 0;
+            *wallTile = -1;
+            pieceMaterials->tileIndices.fill(-1);
+        }
+
+        InvalidateGroundCache();
+
+        currentPath.clear();
+        pathIndex = 0;
+        hasPath = false;
+
+        return;
     }
 
     if (
@@ -6263,6 +7798,21 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
                 cell.eastWallTile = -1;
                 cell.southWallTile = -1;
                 cell.westWallTile = -1;
+
+                cell.northWallHeight = 0;
+                cell.eastWallHeight = 0;
+                cell.southWallHeight = 0;
+                cell.westWallHeight = 0;
+
+                cell.northBuiltWallPieces.tileIndices.fill(-1);
+                cell.eastBuiltWallPieces.tileIndices.fill(-1);
+                cell.southBuiltWallPieces.tileIndices.fill(-1);
+                cell.westBuiltWallPieces.tileIndices.fill(-1);
+
+                cell.northCliffWallPieces.tileIndices.fill(-1);
+                cell.eastCliffWallPieces.tileIndices.fill(-1);
+                cell.southCliffWallPieces.tileIndices.fill(-1);
+                cell.westCliffWallPieces.tileIndices.fill(-1);
 
                 cell.elevation = 0;
                 cell.rampDirection =
@@ -7273,6 +8823,53 @@ bool Game::CanTraverseTerrainEdge(
         return false;
     }
 
+    const bool cardinalStep =
+        std::abs(
+            deltaX
+        ) +
+        std::abs(
+            deltaY
+        ) ==
+        1;
+
+    if (
+        cardinalStep &&
+        HasBuiltWallBetween(
+            fromX,
+            fromY,
+            toX,
+            toY
+        )
+        )
+    {
+        return false;
+    }
+
+    // Prevent diagonal movement through the corner of a wall.
+    if (
+        deltaX != 0 &&
+        deltaY != 0
+        )
+    {
+        if (
+            HasBuiltWallBetween(
+                fromX,
+                fromY,
+                fromX + deltaX,
+                fromY
+            ) ||
+            HasBuiltWallBetween(
+                fromX,
+                fromY,
+                fromX,
+                fromY + deltaY
+            )
+            )
+        {
+            return false;
+        }
+    }
+
     int fromElevation =
         GetTerrainElevation(
             fromX,
@@ -7951,6 +9548,36 @@ bool Game::IsTerrainCircleBlocked(
                 )
             {
                 continue;
+            }
+
+            const int cellDifferenceX =
+                cellX -
+                targetX;
+
+            const int cellDifferenceY =
+                cellY -
+                targetY;
+
+            const bool cardinalNeighbour =
+                std::abs(
+                    cellDifferenceX
+                ) +
+                std::abs(
+                    cellDifferenceY
+                ) ==
+                1;
+
+            if (
+                cardinalNeighbour &&
+                HasBuiltWallBetween(
+                    targetX,
+                    targetY,
+                    cellX,
+                    cellY
+                )
+                )
+            {
+                return true;
             }
 
             if (
@@ -11177,8 +12804,11 @@ void Game::DrawEditorUi()
         "Lower Terrain",
         "Flatten Terrain",
 
-        "Paint Wall",
-        "Clear Wall",
+        "Paint Wall Piece",
+        "Clear Wall Piece",
+
+        "Build Dungeon Wall",
+        "Erase Dungeon Wall",
 
         "Paint Chamber",
         "Erase Map Cell",
@@ -11195,8 +12825,60 @@ void Game::DrawEditorUi()
         "Tool",
         &editorTool,
         tools,
-        13
+        15
     );
+
+    const bool usingBuiltWallTool =
+        editorTool ==
+        static_cast<int>(
+            EditorTool::BuildWall
+            ) ||
+        editorTool ==
+        static_cast<int>(
+            EditorTool::EraseWall
+            );
+
+    if (usingBuiltWallTool)
+    {
+        const char* wallDirections[] = {
+            "North (-Y)",
+            "East (+X)",
+            "South (+Y)",
+            "West (-X)"
+        };
+
+        ImGui::Combo(
+            "Wall Direction",
+            &editorWallDirection,
+            wallDirections,
+            4
+        );
+
+        if (
+            editorTool ==
+            static_cast<int>(
+                EditorTool::BuildWall
+                )
+            )
+        {
+            ImGui::SliderInt(
+                "Wall Height",
+                &editorWallHeight,
+                1,
+                MaximumBuiltWallPieceRows
+            );
+
+            ImGui::TextDisabled(
+                "Click a floor cell to build the selected edge."
+            );
+        }
+        else
+        {
+            ImGui::TextDisabled(
+                "Click a floor cell to erase the selected edge."
+            );
+        }
+    }
 
     if (
         editorTool ==
@@ -11206,8 +12888,24 @@ void Game::DrawEditorUi()
         )
     {
         ImGui::TextDisabled(
-            "Hybrid 3D: click directly on a visible side wall."
+            "Hybrid 3D: click one highlighted wall block to repaint it."
         );
+
+        if (
+            hybridHoveredWallRow >= 0 &&
+            hybridHoveredWallKind !=
+            TerrainWallPieceKind::None
+            )
+        {
+            ImGui::Text(
+                "%s block level: %d",
+                hybridHoveredWallKind ==
+                TerrainWallPieceKind::Cliff
+                ? "Cliff"
+                : "Built wall",
+                hybridHoveredWallRow + 1
+            );
+        }
     }
     else if (
         editorTool ==
@@ -11217,7 +12915,7 @@ void Game::DrawEditorUi()
         )
     {
         ImGui::TextDisabled(
-            "Click a wall to restore its inherited floor material."
+            "Click one highlighted wall block to restore its default material."
         );
     }
 
@@ -26248,6 +27946,9 @@ void Game::InitHybrid3D()
     hybridCameraOrthoSize =
         GetHybridOrthoSizeFromSharedZoom();
 
+    // Recalculate every update because camera.zoom may have
+    // changed through the Hybrid 3D editor mouse wheel.
+
     hybridCamera.fovy =
         hybridCameraOrthoSize;
 
@@ -26279,6 +27980,35 @@ void Game::InitHybrid3D()
         hybridTerrainReady ? 1 : 0,
         hybridBillboardShaderLoaded ? 1 : 0
     );
+}
+
+void Game::ResetBuildCameraView()
+{
+    camera.zoom =
+        buildModeDefaultZoom;
+
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        hybridCameraTargetWorld =
+            playerPosition;
+
+        hybridCameraOrthoSize =
+            GetHybridOrthoSizeFromSharedZoom();
+
+        UpdateHybridCamera(
+            0.0f
+        );
+    }
+    else
+    {
+        camera.target =
+            WorldToViewElevated(
+                playerPosition
+            );
+    }
 }
 
 void Game::ShutdownHybrid3D()
@@ -26336,7 +28066,10 @@ void Game::RebuildHybridTerrain()
     }
 
     const size_t expectedCellCount =
-        static_cast<size_t>(MapWidth * MapHeight);
+        static_cast<size_t>(
+            MapWidth *
+            MapHeight
+            );
 
     if (
         tiles.size() != expectedCellCount ||
@@ -26344,25 +28077,42 @@ void Game::RebuildHybridTerrain()
         tileBrushes.empty()
         )
     {
-        hybridTerrainReady = false;
+        hybridTerrainReady =
+            false;
+
         return;
     }
 
-    for (HybridTerrainBatch& batch : hybridTerrainBatches)
+    // --------------------------------------------------
+    // Release old terrain batches.
+    // --------------------------------------------------
+
+    for (
+        HybridTerrainBatch& batch :
+        hybridTerrainBatches
+        )
     {
         if (batch.ready)
         {
-            UnloadModel(batch.model);
-            batch = {};
+            UnloadModel(
+                batch.model
+            );
         }
+
+        batch = {};
     }
 
     hybridTerrainBatches.clear();
+
+    // --------------------------------------------------
+    // One mesh builder per chamber and tile material.
+    // --------------------------------------------------
 
     struct ChamberTerrainBuilder
     {
         int chamberId = -1;
         int tileIndex = -1;
+
         HybridMeshBuilder meshBuilder;
     };
 
@@ -26385,29 +28135,44 @@ void Game::RebuildHybridTerrain()
                     entry.tileIndex == tileIndex
                     )
                 {
-                    return entry.meshBuilder;
+                    return
+                        entry.meshBuilder;
                 }
             }
 
-            ChamberTerrainBuilder entry;
-            entry.chamberId = chamberId;
-            entry.tileIndex = tileIndex;
+            ChamberTerrainBuilder newEntry;
+
+            newEntry.chamberId =
+                chamberId;
+
+            newEntry.tileIndex =
+                tileIndex;
 
             builders.push_back(
-                std::move(entry)
+                std::move(
+                    newEntry
+                )
             );
 
             return
                 builders.back().meshBuilder;
         };
 
+    // --------------------------------------------------
+    // Map measurements.
+    // --------------------------------------------------
+
     const float originX =
-        -static_cast<float>(MapWidth) *
+        -static_cast<float>(
+            MapWidth
+            ) *
         TileSize *
         0.5f;
 
     const float originY =
-        -static_cast<float>(MapHeight) *
+        -static_cast<float>(
+            MapHeight
+            ) *
         TileSize *
         0.5f;
 
@@ -26416,29 +28181,54 @@ void Game::RebuildHybridTerrain()
             terrainElevationStep
         );
 
+    // --------------------------------------------------
+    // Validate a floor or wall tile index.
+    // --------------------------------------------------
+
     auto GetValidTileIndex =
-        [this](int cellX, int cellY)
+        [this](
+            int cellX,
+            int cellY
+            )
         {
-            if (!IsCellInside(cellX, cellY))
+            if (
+                !IsCellInside(
+                    cellX,
+                    cellY
+                )
+                )
             {
-                return static_cast<int>(TileType::Grass);
+                return 0;
             }
 
             int tileIndex =
-                tiles[CellIndex(cellX, cellY)];
+                tiles[
+                    CellIndex(
+                        cellX,
+                        cellY
+                    )
+                ];
 
             if (
                 tileIndex < 0 ||
                 tileIndex >=
-                static_cast<int>(tileBrushes.size())
+                static_cast<int>(
+                    tileBrushes.size()
+                    )
                 )
             {
                 tileIndex =
-                    static_cast<int>(TileType::Grass);
+                    0;
             }
 
-            return tileIndex;
+            return
+                tileIndex;
         };
+
+    // --------------------------------------------------
+    // Calculate the four corner heights of one cell.
+    // Ramps may raise two of its corners by one level.
+    // --------------------------------------------------
 
     struct CornerHeights
     {
@@ -26449,7 +28239,10 @@ void Game::RebuildHybridTerrain()
     };
 
     auto GetCornerHeights =
-        [this, levelHeight](
+        [
+            this,
+            levelHeight
+        ](
             int cellX,
             int cellY
             )
@@ -26467,12 +28260,16 @@ void Game::RebuildHybridTerrain()
                 )
                 )
             {
-                return heights;
+                return
+                    heights;
             }
 
             const TerrainCell& cell =
                 terrainCells[
-                    CellIndex(cellX, cellY)
+                    CellIndex(
+                        cellX,
+                        cellY
+                    )
                 ];
 
             const int elevation =
@@ -26482,13 +28279,22 @@ void Game::RebuildHybridTerrain()
                 );
 
             const float baseHeight =
-                static_cast<float>(elevation) *
+                static_cast<float>(
+                    elevation
+                    ) *
                 levelHeight;
 
-            heights.nw = baseHeight;
-            heights.ne = baseHeight;
-            heights.se = baseHeight;
-            heights.sw = baseHeight;
+            heights.nw =
+                baseHeight;
+
+            heights.ne =
+                baseHeight;
+
+            heights.se =
+                baseHeight;
+
+            heights.sw =
+                baseHeight;
 
             int offsetX = 0;
             int offsetY = 0;
@@ -26501,47 +28307,74 @@ void Game::RebuildHybridTerrain()
                 )
                 )
             {
-                return heights;
+                return
+                    heights;
             }
 
             const int targetX =
-                cellX + offsetX;
+                cellX +
+                offsetX;
 
             const int targetY =
-                cellY + offsetY;
+                cellY +
+                offsetY;
 
             if (
-                !IsCellInside(targetX, targetY) ||
-                GetTerrainElevation(targetX, targetY) !=
+                !IsCellInside(
+                    targetX,
+                    targetY
+                ) ||
+                !IsCellEnabled(
+                    targetX,
+                    targetY
+                ) ||
+                GetTerrainElevation(
+                    targetX,
+                    targetY
+                ) !=
                 elevation + 1
                 )
             {
-                return heights;
+                return
+                    heights;
             }
 
             const float highHeight =
-                baseHeight + levelHeight;
+                baseHeight +
+                levelHeight;
 
             switch (cell.rampDirection)
             {
             case RampDirection::North:
-                heights.nw = highHeight;
-                heights.ne = highHeight;
+                heights.nw =
+                    highHeight;
+
+                heights.ne =
+                    highHeight;
                 break;
 
             case RampDirection::East:
-                heights.ne = highHeight;
-                heights.se = highHeight;
+                heights.ne =
+                    highHeight;
+
+                heights.se =
+                    highHeight;
                 break;
 
             case RampDirection::South:
-                heights.sw = highHeight;
-                heights.se = highHeight;
+                heights.sw =
+                    highHeight;
+
+                heights.se =
+                    highHeight;
                 break;
 
             case RampDirection::West:
-                heights.nw = highHeight;
-                heights.sw = highHeight;
+                heights.nw =
+                    highHeight;
+
+                heights.sw =
+                    highHeight;
                 break;
 
             case RampDirection::None:
@@ -26549,58 +28382,228 @@ void Game::RebuildHybridTerrain()
                 break;
             }
 
-            return heights;
+            return
+                heights;
         };
 
-    constexpr float wallEpsilon = 0.0001f;
+    constexpr float wallEpsilon =
+        0.0001f;
 
-    for (int y = 0; y < MapHeight; ++y)
-    {
-        for (int x = 0; x < MapWidth; ++x)
+    // --------------------------------------------------
+    // Build a vertical wall as one grid tile per level.
+    //
+    // This prevents a single texture from stretching over
+    // several elevation levels.
+    // --------------------------------------------------
+
+    auto AddWallGrid =
+        [
+            levelHeight
+        ](
+            HybridMeshBuilder& builder,
+            Vector3 topStart,
+            Vector3 topEnd,
+            Vector3 bottomEnd,
+            Vector3 bottomStart,
+            Vector3 normal,
+            Color tint,
+            bool twoSided
+            )
         {
-            if (!IsCellEnabled(x, y))
+            const float startSpan =
+                std::max(
+                    0.0f,
+                    topStart.y -
+                    bottomStart.y
+                );
+
+            const float endSpan =
+                std::max(
+                    0.0f,
+                    topEnd.y -
+                    bottomEnd.y
+                );
+
+            const float maximumSpan =
+                std::max(
+                    startSpan,
+                    endSpan
+                );
+
+            if (
+                maximumSpan <=
+                0.0001f
+                )
+            {
+                return;
+            }
+
+            const float safeLevelHeight =
+                std::max(
+                    0.0001f,
+                    levelHeight
+                );
+
+            const int rowCount =
+                std::max(
+                    1,
+                    static_cast<int>(
+                        std::ceil(
+                            maximumSpan /
+                            safeLevelHeight
+                        )
+                        )
+                );
+
+            for (
+                int rowIndex = 0;
+                rowIndex < rowCount;
+                ++rowIndex
+                )
+            {
+                const float lowerAmount =
+                    static_cast<float>(
+                        rowIndex
+                        ) /
+                    static_cast<float>(
+                        rowCount
+                        );
+
+                const float upperAmount =
+                    static_cast<float>(
+                        rowIndex + 1
+                        ) /
+                    static_cast<float>(
+                        rowCount
+                        );
+
+                const Vector3 rowBottomStart =
+                    Vector3Lerp(
+                        bottomStart,
+                        topStart,
+                        lowerAmount
+                    );
+
+                const Vector3 rowBottomEnd =
+                    Vector3Lerp(
+                        bottomEnd,
+                        topEnd,
+                        lowerAmount
+                    );
+
+                const Vector3 rowTopStart =
+                    Vector3Lerp(
+                        bottomStart,
+                        topStart,
+                        upperAmount
+                    );
+
+                const Vector3 rowTopEnd =
+                    Vector3Lerp(
+                        bottomEnd,
+                        topEnd,
+                        upperAmount
+                    );
+
+                builder.AddWallQuad(
+                    rowTopStart,
+                    rowTopEnd,
+                    rowBottomEnd,
+                    rowBottomStart,
+                    normal,
+                    tint,
+                    twoSided
+                );
+            }
+        };
+
+    // --------------------------------------------------
+    // Generate terrain geometry.
+    // --------------------------------------------------
+
+    for (
+        int y = 0;
+        y < MapHeight;
+        ++y
+        )
+    {
+        for (
+            int x = 0;
+            x < MapWidth;
+            ++x
+            )
+        {
+            if (
+                !IsCellEnabled(
+                    x,
+                    y
+                )
+                )
             {
                 continue;
             }
 
+            const int cellIndex =
+                CellIndex(
+                    x,
+                    y
+                );
+
             const int tileIndex =
-                GetValidTileIndex(x, y);
+                GetValidTileIndex(
+                    x,
+                    y
+                );
 
             const int chamberId =
                 terrainCells[
-                    CellIndex(
-                        x,
-                        y
-                    )
+                    cellIndex
                 ].chamberId;
 
-            HybridMeshBuilder& topBuilder =
-                GetBuilder(
-                    chamberId,
-                    tileIndex
+            const CornerHeights current =
+                GetCornerHeights(
+                    x,
+                    y
                 );
 
-            const CornerHeights current =
-                GetCornerHeights(x, y);
-
             const float x0 =
-                (originX +
-                    static_cast<float>(x) * TileSize) *
+                (
+                    originX +
+                    static_cast<float>(
+                        x
+                        ) *
+                    TileSize
+                    ) *
                 hybridUnitsPerPixel;
 
             const float x1 =
-                (originX +
-                    static_cast<float>(x + 1) * TileSize) *
+                (
+                    originX +
+                    static_cast<float>(
+                        x + 1
+                        ) *
+                    TileSize
+                    ) *
                 hybridUnitsPerPixel;
 
             const float z0 =
-                (originY +
-                    static_cast<float>(y) * TileSize) *
+                (
+                    originY +
+                    static_cast<float>(
+                        y
+                        ) *
+                    TileSize
+                    ) *
                 hybridUnitsPerPixel;
 
             const float z1 =
-                (originY +
-                    static_cast<float>(y + 1) * TileSize) *
+                (
+                    originY +
+                    static_cast<float>(
+                        y + 1
+                        ) *
+                    TileSize
+                    ) *
                 hybridUnitsPerPixel;
 
             const Vector3 nw{
@@ -26627,270 +28630,303 @@ void Game::RebuildHybridTerrain()
                 z1
             };
 
+            // ------------------------------------------
+            // Floor or ramp surface.
+            // ------------------------------------------
+
+            HybridMeshBuilder& topBuilder =
+                GetBuilder(
+                    chamberId,
+                    tileIndex
+                );
+
             topBuilder.AddQuad(
                 nw,
                 sw,
                 se,
                 ne,
-                { 0.0f, 1.0f, 0.0f },
+                {
+                    0.0f,
+                    1.0f,
+                    0.0f
+                },
                 WHITE
             );
 
-            // East edge.
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x + 1,
-                    y
-                )
-                )
-            {
-                const CornerHeights neighbour =
-                    GetCornerHeights(x + 1, y);
+            // ------------------------------------------
+            // Automatic terrain cliffs below raised cells.
+            //
+            // Each exposed elevation level is emitted as one
+            // independent wall block. This lets elevation 6 expose
+            // six separately paintable cliff tiles rather than one
+            // face-wide material stretched across the whole side.
+            // ------------------------------------------
 
-                const float lowerNe =
-                    std::min(current.ne, neighbour.nw);
+            auto AddTerrainCliffFace =
+                [&](TerrainWallFace face, float shade)
+                {
+                    for (
+                        int wallRow = 0;
+                        wallRow < MaximumBuiltWallPieceRows;
+                        ++wallRow
+                        )
+                    {
+                        Vector3 topStart{};
+                        Vector3 topEnd{};
+                        Vector3 bottomEnd{};
+                        Vector3 bottomStart{};
+                        Vector3 normal{};
 
-                const float lowerSe =
-                    std::min(current.se, neighbour.sw);
+                        if (
+                            !GetTerrainCliffPieceQuad3D(
+                                x,
+                                y,
+                                face,
+                                wallRow,
+                                topStart,
+                                topEnd,
+                                bottomEnd,
+                                bottomStart,
+                                &normal
+                            )
+                            )
+                        {
+                            continue;
+                        }
 
-                if (
-                    current.ne - lowerNe > wallEpsilon ||
-                    current.se - lowerSe > wallEpsilon
+                        const int wallTileIndex =
+                            GetTerrainCliffPieceTileIndex(
+                                x,
+                                y,
+                                face,
+                                wallRow
+                            );
+
+                        HybridMeshBuilder& wallBuilder =
+                            GetBuilder(
+                                chamberId,
+                                wallTileIndex
+                            );
+
+                        wallBuilder.AddWallQuad(
+                            topStart,
+                            topEnd,
+                            bottomEnd,
+                            bottomStart,
+                            normal,
+                            ScaleHybridColor(
+                                WHITE,
+                                shade
+                            ),
+                            false
+                        );
+                    }
+                };
+
+            AddTerrainCliffFace(
+                TerrainWallFace::North,
+                0.74f
+            );
+
+            AddTerrainCliffFace(
+                TerrainWallFace::East,
+                0.70f
+            );
+
+            AddTerrainCliffFace(
+                TerrainWallFace::South,
+                0.82f
+            );
+
+            AddTerrainCliffFace(
+                TerrainWallFace::West,
+                0.62f
+            );
+
+            // ------------------------------------------
+            // Explicit dungeon walls above the floor.
+            //
+            // Unlike automatic cliffs, these begin at the
+            // current floor surface and rise upward.
+            // ------------------------------------------
+
+            auto AddBuiltWall =
+                [&](
+                    TerrainWallFace face,
+                    Vector3 baseStart,
+                    Vector3 baseEnd,
+                    Vector3 normal,
+                    float shade
                     )
                 {
-                    const int eastWallTile =
-                        GetTerrainWallTileIndex(
-                            x,
-                            y,
-                            TerrainWallFace::East
+                    const int wallLevels =
+                        std::min(
+                            MaximumBuiltWallPieceRows,
+                            GetTerrainWallHeight(
+                                x,
+                                y,
+                                face
+                            )
                         );
 
-                    HybridMeshBuilder& eastWallBuilder =
-                        GetBuilder(
-                            chamberId,
-                            eastWallTile
-                        );
+                    if (wallLevels <= 0)
+                    {
+                        return;
+                    }
 
-                    eastWallBuilder.AddQuad(
-                        ne,
-                        se,
+                    // If the same physical edge is stored by both
+                    // neighbouring cells, render only East/South ownership.
+                    // This prevents duplicate coplanar walls and the apparent
+                    // extrusion visible at East-facing corners.
+                    if (face == TerrainWallFace::North)
+                    {
+                        const int neighbourY = y - 1;
+
+                        if (
+                            IsCellInside(x, neighbourY) &&
+                            GetTerrainWallHeight(
+                                x,
+                                neighbourY,
+                                TerrainWallFace::South
+                            ) > 0
+                            )
                         {
-                            x1,
-                            lowerSe,
-                            z1
-                        },
+                            return;
+                        }
+                    }
+                    else if (face == TerrainWallFace::West)
+                    {
+                        const int neighbourX = x - 1;
+
+                        if (
+                            IsCellInside(neighbourX, y) &&
+                            GetTerrainWallHeight(
+                                neighbourX,
+                                y,
+                                TerrainWallFace::East
+                            ) > 0
+                            )
                         {
-                            x1,
-                            lowerNe,
-                            z0
-                        },
-                        {
-                            1.0f,
-                            0.0f,
-                            0.0f
-                        },
-                        ScaleHybridColor(
-                            WHITE,
-                            0.70f
+                            return;
+                        }
+                    }
+
+                    for (
+                        int wallRow = 0;
+                        wallRow < wallLevels;
+                        ++wallRow
                         )
-                    );
-                }
-            }
+                    {
+                        const int wallTileIndex =
+                            GetBuiltWallPieceTileIndex(
+                                x,
+                                y,
+                                face,
+                                wallRow
+                            );
 
-            // West edge.
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x - 1,
-                    y
-                )
-                )
-            {
-                const CornerHeights neighbour =
-                    GetCornerHeights(x - 1, y);
+                        HybridMeshBuilder& wallBuilder =
+                            GetBuilder(
+                                chamberId,
+                                wallTileIndex
+                            );
 
-                const float lowerNw =
-                    std::min(current.nw, neighbour.ne);
+                        Vector3 rowBottomStart =
+                            baseStart;
 
-                const float lowerSw =
-                    std::min(current.sw, neighbour.se);
+                        Vector3 rowBottomEnd =
+                            baseEnd;
 
-                if (
-                    current.nw - lowerNw > wallEpsilon ||
-                    current.sw - lowerSw > wallEpsilon
-                    )
+                        Vector3 rowTopStart =
+                            baseStart;
+
+                        Vector3 rowTopEnd =
+                            baseEnd;
+
+                        const float bottomOffset =
+                            static_cast<float>(wallRow) *
+                            levelHeight;
+
+                        const float topOffset =
+                            static_cast<float>(wallRow + 1) *
+                            levelHeight;
+
+                        rowBottomStart.y += bottomOffset;
+                        rowBottomEnd.y += bottomOffset;
+                        rowTopStart.y += topOffset;
+                        rowTopEnd.y += topOffset;
+
+                        wallBuilder.AddWallQuad(
+                            rowTopStart,
+                            rowTopEnd,
+                            rowBottomEnd,
+                            rowBottomStart,
+                            normal,
+                            ScaleHybridColor(
+                                WHITE,
+                                shade
+                            ),
+                            true
+                        );
+                    }
+                };
+
+            AddBuiltWall(
+                TerrainWallFace::North,
+                nw,
+                ne,
                 {
-                    const int westWallTile =
-                        GetTerrainWallTileIndex(
-                            x,
-                            y,
-                            TerrainWallFace::West
-                        );
+                    0.0f,
+                    0.0f,
+                    -1.0f
+                },
+                0.74f
+            );
 
-                    HybridMeshBuilder& westWallBuilder =
-                        GetBuilder(
-                            chamberId,
-                            westWallTile
-                        );
-
-                    westWallBuilder.AddQuad(
-                        sw,
-                        nw,
-                        {
-                            x0,
-                            lowerNw,
-                            z0
-                        },
-                        {
-                            x0,
-                            lowerSw,
-                            z1
-                        },
-                        {
-                            -1.0f,
-                            0.0f,
-                            0.0f
-                        },
-                        ScaleHybridColor(
-                            WHITE,
-                            0.62f
-                        )
-                    );
-                }
-            }
-
-            // South edge.
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x,
-                    y + 1
-                )
-                )
-            {
-                const CornerHeights neighbour =
-                    GetCornerHeights(x, y + 1);
-
-                const float lowerSw =
-                    std::min(current.sw, neighbour.nw);
-
-                const float lowerSe =
-                    std::min(current.se, neighbour.ne);
-
-                if (
-                    current.sw - lowerSw > wallEpsilon ||
-                    current.se - lowerSe > wallEpsilon
-                    )
+            AddBuiltWall(
+                TerrainWallFace::East,
+                ne,
+                se,
                 {
-                    const int southWallTile =
-                        GetTerrainWallTileIndex(
-                            x,
-                            y,
-                            TerrainWallFace::South
-                        );
+                    1.0f,
+                    0.0f,
+                    0.0f
+                },
+                0.70f
+            );
 
-                    HybridMeshBuilder& southWallBuilder =
-                        GetBuilder(
-                            chamberId,
-                            southWallTile
-                        );
-
-                    southWallBuilder.AddQuad(
-                        se,
-                        sw,
-                        {
-                            x0,
-                            lowerSw,
-                            z1
-                        },
-                        {
-                            x1,
-                            lowerSe,
-                            z1
-                        },
-                        {
-                            0.0f,
-                            0.0f,
-                            1.0f
-                        },
-                        ScaleHybridColor(
-                            WHITE,
-                            0.82f
-                        )
-                    );
-                }
-            }
-
-            // North edge.
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x,
-                    y - 1
-                )
-                )
-            {
-                const CornerHeights neighbour =
-                    GetCornerHeights(x, y - 1);
-
-                const float lowerNw =
-                    std::min(current.nw, neighbour.sw);
-
-                const float lowerNe =
-                    std::min(current.ne, neighbour.se);
-
-                if (
-                    current.nw - lowerNw > wallEpsilon ||
-                    current.ne - lowerNe > wallEpsilon
-                    )
+            AddBuiltWall(
+                TerrainWallFace::South,
+                se,
+                sw,
                 {
-                    const int northWallTile =
-                        GetTerrainWallTileIndex(
-                            x,
-                            y,
-                            TerrainWallFace::North
-                        );
+                    0.0f,
+                    0.0f,
+                    1.0f
+                },
+                0.82f
+            );
 
-                    HybridMeshBuilder& northWallBuilder =
-                        GetBuilder(
-                            chamberId,
-                            northWallTile
-                        );
-
-                    northWallBuilder.AddQuad(
-                        nw,
-                        ne,
-                        {
-                            x1,
-                            lowerNe,
-                            z0
-                        },
-                        {
-                            x0,
-                            lowerNw,
-                            z0
-                        },
-                        {
-                            0.0f,
-                            0.0f,
-                            -1.0f
-                        },
-                        ScaleHybridColor(
-                            WHITE,
-                            0.74f
-                        )
-                    );
-                }
-            }
+            AddBuiltWall(
+                TerrainWallFace::West,
+                sw,
+                nw,
+                {
+                    -1.0f,
+                    0.0f,
+                    0.0f
+                },
+                0.62f
+            );
         }
     }
 
-    bool builtAnyBatch = false;
+    // --------------------------------------------------
+    // Convert every builder into a drawable model batch.
+    // --------------------------------------------------
+
+    bool builtAnyBatch =
+        false;
 
     for (
         ChamberTerrainBuilder& builderEntry :
@@ -26905,6 +28941,8 @@ void Game::RebuildHybridTerrain()
                 tileIndex
             );
 
+        // Remap this batch's local 0-1 UVs into the
+        // selected source rectangle of the terrain atlas.
         if (
             brushTexture.id != 0 &&
             brushTexture.width > 0 &&
@@ -26995,7 +29033,7 @@ void Game::RebuildHybridTerrain()
                 hybridTerrainShader;
         }
 
-        Texture2D batchTexture =
+        const Texture2D batchTexture =
             GetTileBrushTexture(
                 tileIndex
             );
@@ -27021,14 +29059,21 @@ void Game::RebuildHybridTerrain()
             true;
     }
 
-    hybridTerrainDirty = false;
-    hybridTerrainReady = builtAnyBatch;
+    hybridTerrainDirty =
+        false;
+
+    hybridTerrainReady =
+        builtAnyBatch;
 
     TraceLog(
         LOG_INFO,
         "[HYBRID3D] Terrain rebuilt | ready=%d batches=%d",
-        hybridTerrainReady ? 1 : 0,
-        static_cast<int>(hybridTerrainBatches.size())
+        hybridTerrainReady
+        ? 1
+        : 0,
+        static_cast<int>(
+            hybridTerrainBatches.size()
+            )
     );
 }
 
@@ -27312,6 +29357,11 @@ void Game::UpdateHybridCamera(float dt)
         0.0f
     };
 
+    // camera.zoom may have changed through the
+    // Hybrid 3D editor mouse wheel.
+    hybridCameraOrthoSize =
+        GetHybridOrthoSizeFromSharedZoom();
+
     hybridCamera.fovy =
         hybridCameraOrthoSize;
 
@@ -27571,13 +29621,16 @@ bool Game::ScreenToTerrainWall3D(
     Vector2 screenPosition,
     int& outCellX,
     int& outCellY,
-    TerrainWallFace& outFace
+    TerrainWallFace& outFace,
+    TerrainWallPieceKind& outPieceKind,
+    int& outWallRow
 ) const
 {
     outCellX = -1;
     outCellY = -1;
-    outFace =
-        TerrainWallFace::None;
+    outFace = TerrainWallFace::None;
+    outPieceKind = TerrainWallPieceKind::None;
+    outWallRow = -1;
 
     if (
         rendererMode !=
@@ -27593,175 +29646,35 @@ bool Game::ScreenToTerrainWall3D(
             hybridCamera
         );
 
-    const float originX =
-        -static_cast<float>(
-            MapWidth
-            ) *
-        TileSize *
-        0.5f;
-
-    const float originY =
-        -static_cast<float>(
-            MapHeight
-            ) *
-        TileSize *
-        0.5f;
-
-    const float levelHeight =
-        PixelsToHybridUnits(
-            terrainElevationStep
-        );
-
-    struct WallCornerHeights
-    {
-        float nw = 0.0f;
-        float ne = 0.0f;
-        float se = 0.0f;
-        float sw = 0.0f;
-    };
-
-    auto GetCornerHeights =
-        [
-            this,
-            levelHeight
-        ](
-            int cellX,
-            int cellY
-            )
-        {
-            WallCornerHeights heights{};
-
-            if (
-                !IsCellInside(
-                    cellX,
-                    cellY
-                ) ||
-                !IsCellEnabled(
-                    cellX,
-                    cellY
-                )
-                )
-            {
-                return heights;
-            }
-
-            const TerrainCell& cell =
-                terrainCells[
-                    CellIndex(
-                        cellX,
-                        cellY
-                    )
-                ];
-
-            const int elevation =
-                GetTerrainElevation(
-                    cellX,
-                    cellY
-                );
-
-            const float baseHeight =
-                static_cast<float>(
-                    elevation
-                    ) *
-                levelHeight;
-
-            heights.nw = baseHeight;
-            heights.ne = baseHeight;
-            heights.se = baseHeight;
-            heights.sw = baseHeight;
-
-            int offsetX = 0;
-            int offsetY = 0;
-
-            if (
-                !GetRampDirectionOffset(
-                    cell.rampDirection,
-                    offsetX,
-                    offsetY
-                )
-                )
-            {
-                return heights;
-            }
-
-            const int targetX =
-                cellX +
-                offsetX;
-
-            const int targetY =
-                cellY +
-                offsetY;
-
-            if (
-                !IsCellInside(
-                    targetX,
-                    targetY
-                ) ||
-                !IsCellEnabled(
-                    targetX,
-                    targetY
-                ) ||
-                GetTerrainElevation(
-                    targetX,
-                    targetY
-                ) !=
-                elevation + 1
-                )
-            {
-                return heights;
-            }
-
-            const float highHeight =
-                baseHeight +
-                levelHeight;
-
-            switch (cell.rampDirection)
-            {
-            case RampDirection::North:
-                heights.nw = highHeight;
-                heights.ne = highHeight;
-                break;
-
-            case RampDirection::East:
-                heights.ne = highHeight;
-                heights.se = highHeight;
-                break;
-
-            case RampDirection::South:
-                heights.sw = highHeight;
-                heights.se = highHeight;
-                break;
-
-            case RampDirection::West:
-                heights.nw = highHeight;
-                heights.sw = highHeight;
-                break;
-
-            case RampDirection::None:
-            default:
-                break;
-            }
-
-            return heights;
-        };
-
     float nearestDistance =
         std::numeric_limits<float>::max();
 
     int nearestCellX = -1;
     int nearestCellY = -1;
+    int nearestWallRow = -1;
 
     TerrainWallFace nearestFace =
         TerrainWallFace::None;
 
+    TerrainWallPieceKind nearestPieceKind =
+        TerrainWallPieceKind::None;
+
     auto TestTriangle =
-        [&](
+        [&ray,
+        &nearestDistance,
+        &nearestCellX,
+        &nearestCellY,
+        &nearestFace,
+        &nearestPieceKind,
+        &nearestWallRow](
             Vector3 pointA,
             Vector3 pointB,
             Vector3 pointC,
             int cellX,
             int cellY,
-            TerrainWallFace face
+            TerrainWallFace face,
+            TerrainWallPieceKind pieceKind,
+            int wallRow
             )
         {
             RayCollision collision =
@@ -27772,8 +29685,6 @@ bool Game::ScreenToTerrainWall3D(
                     pointC
                 );
 
-            // Test the reverse winding as well so wall picking
-            // works from either side.
             if (!collision.hit)
             {
                 collision =
@@ -27787,8 +29698,7 @@ bool Game::ScreenToTerrainWall3D(
 
             if (
                 !collision.hit ||
-                collision.distance >=
-                nearestDistance
+                collision.distance >= nearestDistance
                 )
             {
                 return;
@@ -27805,17 +29715,25 @@ bool Game::ScreenToTerrainWall3D(
 
             nearestFace =
                 face;
+
+            nearestPieceKind =
+                pieceKind;
+
+            nearestWallRow =
+                wallRow;
         };
 
     auto TestQuad =
-        [&](
+        [&TestTriangle](
             Vector3 point0,
             Vector3 point1,
             Vector3 point2,
             Vector3 point3,
             int cellX,
             int cellY,
-            TerrainWallFace face
+            TerrainWallFace face,
+            TerrainWallPieceKind pieceKind,
+            int wallRow
             )
         {
             TestTriangle(
@@ -27824,7 +29742,9 @@ bool Game::ScreenToTerrainWall3D(
                 point2,
                 cellX,
                 cellY,
-                face
+                face,
+                pieceKind,
+                wallRow
             );
 
             TestTriangle(
@@ -27833,313 +29753,157 @@ bool Game::ScreenToTerrainWall3D(
                 point3,
                 cellX,
                 cellY,
-                face
+                face,
+                pieceKind,
+                wallRow
             );
         };
 
-    constexpr float wallEpsilon =
-        0.0001f;
+    const TerrainWallFace faces[] = {
+        TerrainWallFace::North,
+        TerrainWallFace::East,
+        TerrainWallFace::South,
+        TerrainWallFace::West
+    };
 
     for (int y = 0; y < MapHeight; ++y)
     {
         for (int x = 0; x < MapWidth; ++x)
         {
-            if (
-                !IsCellEnabled(
-                    x,
-                    y
-                )
-                )
+            if (!IsCellEnabled(x, y))
             {
                 continue;
             }
 
-            const WallCornerHeights current =
-                GetCornerHeights(
-                    x,
-                    y
-                );
+            // ------------------------------------------
+            // Explicit built-wall blocks above the floor.
+            // ------------------------------------------
 
-            const float x0 =
-                (
-                    originX +
-                    static_cast<float>(
-                        x
-                        ) *
-                    TileSize
-                    ) *
-                hybridUnitsPerPixel;
-
-            const float x1 =
-                (
-                    originX +
-                    static_cast<float>(
-                        x + 1
-                        ) *
-                    TileSize
-                    ) *
-                hybridUnitsPerPixel;
-
-            const float z0 =
-                (
-                    originY +
-                    static_cast<float>(
-                        y
-                        ) *
-                    TileSize
-                    ) *
-                hybridUnitsPerPixel;
-
-            const float z1 =
-                (
-                    originY +
-                    static_cast<float>(
-                        y + 1
-                        ) *
-                    TileSize
-                    ) *
-                hybridUnitsPerPixel;
-
-            const Vector3 nw{
-                x0,
-                current.nw,
-                z0
-            };
-
-            const Vector3 ne{
-                x1,
-                current.ne,
-                z0
-            };
-
-            const Vector3 se{
-                x1,
-                current.se,
-                z1
-            };
-
-            const Vector3 sw{
-                x0,
-                current.sw,
-                z1
-            };
-
-            // East
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x + 1,
-                    y
-                )
-                )
+            for (TerrainWallFace face : faces)
             {
-                const WallCornerHeights neighbour =
-                    GetCornerHeights(
-                        x + 1,
-                        y
-                    );
-
-                const float lowerNe =
-                    std::min(
-                        current.ne,
-                        neighbour.nw
-                    );
-
-                const float lowerSe =
-                    std::min(
-                        current.se,
-                        neighbour.sw
-                    );
-
+                // Match the duplicate-edge ownership rule used by
+                // RebuildHybridTerrain().
                 if (
-                    current.ne - lowerNe >
-                    wallEpsilon ||
-                    current.se - lowerSe >
-                    wallEpsilon
+                    face == TerrainWallFace::North &&
+                    IsCellInside(x, y - 1) &&
+                    GetTerrainWallHeight(
+                        x,
+                        y - 1,
+                        TerrainWallFace::South
+                    ) > 0
                     )
                 {
-                    TestQuad(
-                        ne,
-                        se,
-                        {
-                            x1,
-                            lowerSe,
-                            z1
-                        },
-                        {
-                            x1,
-                            lowerNe,
-                            z0
-                        },
-                        x,
+                    continue;
+                }
+
+                if (
+                    face == TerrainWallFace::West &&
+                    IsCellInside(x - 1, y) &&
+                    GetTerrainWallHeight(
+                        x - 1,
                         y,
                         TerrainWallFace::East
+                    ) > 0
+                    )
+                {
+                    continue;
+                }
+
+                const int wallHeight =
+                    std::min(
+                        MaximumBuiltWallPieceRows,
+                        GetTerrainWallHeight(
+                            x,
+                            y,
+                            face
+                        )
+                    );
+
+                for (
+                    int wallRow = 0;
+                    wallRow < wallHeight;
+                    ++wallRow
+                    )
+                {
+                    Vector3 topStart{};
+                    Vector3 topEnd{};
+                    Vector3 bottomEnd{};
+                    Vector3 bottomStart{};
+
+                    if (
+                        !GetBuiltWallPieceQuad3D(
+                            x,
+                            y,
+                            face,
+                            wallRow,
+                            topStart,
+                            topEnd,
+                            bottomEnd,
+                            bottomStart
+                        )
+                        )
+                    {
+                        continue;
+                    }
+
+                    TestQuad(
+                        topStart,
+                        topEnd,
+                        bottomEnd,
+                        bottomStart,
+                        x,
+                        y,
+                        face,
+                        TerrainWallPieceKind::Built,
+                        wallRow
                     );
                 }
             }
 
-            // West
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x - 1,
-                    y
-                )
-                )
+            // ------------------------------------------
+            // Automatic terrain-cliff blocks below the floor.
+            // Each exposed elevation level is tested independently.
+            // ------------------------------------------
+
+            for (TerrainWallFace face : faces)
             {
-                const WallCornerHeights neighbour =
-                    GetCornerHeights(
-                        x - 1,
-                        y
-                    );
-
-                const float lowerNw =
-                    std::min(
-                        current.nw,
-                        neighbour.ne
-                    );
-
-                const float lowerSw =
-                    std::min(
-                        current.sw,
-                        neighbour.se
-                    );
-
-                if (
-                    current.nw - lowerNw >
-                    wallEpsilon ||
-                    current.sw - lowerSw >
-                    wallEpsilon
+                for (
+                    int wallRow = 0;
+                    wallRow < MaximumBuiltWallPieceRows;
+                    ++wallRow
                     )
                 {
+                    Vector3 topStart{};
+                    Vector3 topEnd{};
+                    Vector3 bottomEnd{};
+                    Vector3 bottomStart{};
+
+                    if (
+                        !GetTerrainCliffPieceQuad3D(
+                            x,
+                            y,
+                            face,
+                            wallRow,
+                            topStart,
+                            topEnd,
+                            bottomEnd,
+                            bottomStart
+                        )
+                        )
+                    {
+                        continue;
+                    }
+
                     TestQuad(
-                        sw,
-                        nw,
-                        {
-                            x0,
-                            lowerNw,
-                            z0
-                        },
-                        {
-                            x0,
-                            lowerSw,
-                            z1
-                        },
+                        topStart,
+                        topEnd,
+                        bottomEnd,
+                        bottomStart,
                         x,
                         y,
-                        TerrainWallFace::West
-                    );
-                }
-            }
-
-            // South
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x,
-                    y + 1
-                )
-                )
-            {
-                const WallCornerHeights neighbour =
-                    GetCornerHeights(
-                        x,
-                        y + 1
-                    );
-
-                const float lowerSw =
-                    std::min(
-                        current.sw,
-                        neighbour.nw
-                    );
-
-                const float lowerSe =
-                    std::min(
-                        current.se,
-                        neighbour.ne
-                    );
-
-                if (
-                    current.sw - lowerSw >
-                    wallEpsilon ||
-                    current.se - lowerSe >
-                    wallEpsilon
-                    )
-                {
-                    TestQuad(
-                        se,
-                        sw,
-                        {
-                            x0,
-                            lowerSw,
-                            z1
-                        },
-                        {
-                            x1,
-                            lowerSe,
-                            z1
-                        },
-                        x,
-                        y,
-                        TerrainWallFace::South
-                    );
-                }
-            }
-
-            // North
-            if (
-                !IsRampConnectionBetweenCells(
-                    x,
-                    y,
-                    x,
-                    y - 1
-                )
-                )
-            {
-                const WallCornerHeights neighbour =
-                    GetCornerHeights(
-                        x,
-                        y - 1
-                    );
-
-                const float lowerNw =
-                    std::min(
-                        current.nw,
-                        neighbour.sw
-                    );
-
-                const float lowerNe =
-                    std::min(
-                        current.ne,
-                        neighbour.se
-                    );
-
-                if (
-                    current.nw - lowerNw >
-                    wallEpsilon ||
-                    current.ne - lowerNe >
-                    wallEpsilon
-                    )
-                {
-                    TestQuad(
-                        nw,
-                        ne,
-                        {
-                            x1,
-                            lowerNe,
-                            z0
-                        },
-                        {
-                            x0,
-                            lowerNw,
-                            z0
-                        },
-                        x,
-                        y,
-                        TerrainWallFace::North
+                        face,
+                        TerrainWallPieceKind::Cliff,
+                        wallRow
                     );
                 }
             }
@@ -28148,21 +29912,18 @@ bool Game::ScreenToTerrainWall3D(
 
     if (
         nearestCellX < 0 ||
-        nearestFace ==
-        TerrainWallFace::None
+        nearestFace == TerrainWallFace::None ||
+        nearestPieceKind == TerrainWallPieceKind::None
         )
     {
         return false;
     }
 
-    outCellX =
-        nearestCellX;
-
-    outCellY =
-        nearestCellY;
-
-    outFace =
-        nearestFace;
+    outCellX = nearestCellX;
+    outCellY = nearestCellY;
+    outFace = nearestFace;
+    outPieceKind = nearestPieceKind;
+    outWallRow = nearestWallRow;
 
     return true;
 }
@@ -31023,26 +32784,64 @@ void Game::DrawHybridEditorOverlay3D()
     return;
 #endif
 
-    Vector2 pickedWorld{};
-    int pickedX = -1;
-    int pickedY = -1;
+    const bool usingWallPaintTool =
+        editorTool ==
+        static_cast<int>(
+            EditorTool::PaintWall
+            ) ||
+        editorTool ==
+        static_cast<int>(
+            EditorTool::ClearWall
+            );
 
-    if (
-        ScreenToTerrainWorld3D(
-            GetMousePosition(),
-            pickedWorld,
-            &pickedX,
-            &pickedY
-        )
-        )
+    const bool usingBuiltWallTool =
+        editorTool ==
+        static_cast<int>(
+            EditorTool::BuildWall
+            ) ||
+        editorTool ==
+        static_cast<int>(
+            EditorTool::EraseWall
+            );
+
+    hybridHoveredCellX = -1;
+    hybridHoveredCellY = -1;
+
+    hybridHoveredWallCellX = -1;
+    hybridHoveredWallCellY = -1;
+    hybridHoveredWallFace =
+        TerrainWallFace::None;
+    hybridHoveredWallKind =
+        TerrainWallPieceKind::None;
+    hybridHoveredWallRow = -1;
+
+    if (usingWallPaintTool)
     {
-        hybridHoveredCellX = pickedX;
-        hybridHoveredCellY = pickedY;
+        ScreenToTerrainWall3D(
+            GetMousePosition(),
+            hybridHoveredWallCellX,
+            hybridHoveredWallCellY,
+            hybridHoveredWallFace,
+            hybridHoveredWallKind,
+            hybridHoveredWallRow
+        );
+
+        hybridHoveredCellX =
+            hybridHoveredWallCellX;
+
+        hybridHoveredCellY =
+            hybridHoveredWallCellY;
     }
     else
     {
-        hybridHoveredCellX = -1;
-        hybridHoveredCellY = -1;
+        Vector2 pickedWorld{};
+
+        ScreenToTerrainWorld3D(
+            GetMousePosition(),
+            pickedWorld,
+            &hybridHoveredCellX,
+            &hybridHoveredCellY
+        );
     }
 
     const float originX =
@@ -31073,7 +32872,8 @@ void Game::DrawHybridEditorOverlay3D()
                 TileSize;
 
             const float x1 =
-                x0 + TileSize;
+                x0 +
+                TileSize;
 
             const float y0 =
                 originY +
@@ -31081,7 +32881,8 @@ void Game::DrawHybridEditorOverlay3D()
                 TileSize;
 
             const float y1 =
-                y0 + TileSize;
+                y0 +
+                TileSize;
 
             Vector2 corners2D[4] = {
                 { x0, y0 },
@@ -31092,11 +32893,11 @@ void Game::DrawHybridEditorOverlay3D()
 
             Vector3 corners3D[4]{};
 
-            for (int i = 0; i < 4; ++i)
+            for (int index = 0; index < 4; ++index)
             {
-                corners3D[i] =
+                corners3D[index] =
                     WorldToHybrid3D(
-                        corners2D[i],
+                        corners2D[index],
                         2.0f
                     );
             }
@@ -31107,10 +32908,42 @@ void Game::DrawHybridEditorOverlay3D()
             DrawLine3D(corners3D[3], corners3D[0], color);
         };
 
-    if (
-        showGrid ||
-        showChamberOverlay
-        )
+    auto DrawQuadOutline =
+        [](
+            Vector3 topStart,
+            Vector3 topEnd,
+            Vector3 bottomEnd,
+            Vector3 bottomStart,
+            Vector3 normal,
+            Color color
+            )
+        {
+            // Move the guide slightly toward the viewer-facing side so
+            // it does not disappear into the wall because of z-fighting.
+            const Vector3 offset =
+                Vector3Scale(
+                    normal,
+                    0.008f
+                );
+
+            topStart = Vector3Add(topStart, offset);
+            topEnd = Vector3Add(topEnd, offset);
+            bottomEnd = Vector3Add(bottomEnd, offset);
+            bottomStart = Vector3Add(bottomStart, offset);
+
+            // The hovered guide is an editor affordance. Disable depth
+            // testing briefly so the complete selected block remains clear.
+            rlDisableDepthTest();
+
+            DrawLine3D(topStart, topEnd, color);
+            DrawLine3D(topEnd, bottomEnd, color);
+            DrawLine3D(bottomEnd, bottomStart, color);
+            DrawLine3D(bottomStart, topStart, color);
+
+            rlEnableDepthTest();
+        };
+
+    if (showGrid || showChamberOverlay)
     {
         for (int y = 0; y < MapHeight; ++y)
         {
@@ -31125,12 +32958,11 @@ void Game::DrawHybridEditorOverlay3D()
 
                 if (!IsCellEnabled(x, y))
                 {
-                    cellColor =
-                        Color{
-                            255,
-                            70,
-                            70,
-                            80
+                    cellColor = {
+                        255,
+                        70,
+                        70,
+                        80
                     };
                 }
                 else if (showChamberOverlay)
@@ -31156,7 +32988,9 @@ void Game::DrawHybridEditorOverlay3D()
         }
     }
 
+    // Floor-cell hover is used by all tools except direct wall painting.
     if (
+        !usingWallPaintTool &&
         hybridHoveredCellX >= 0 &&
         hybridHoveredCellY >= 0
         )
@@ -31168,6 +33002,150 @@ void Game::DrawHybridEditorOverlay3D()
         );
     }
 
+    // Build/erase tools also highlight the exact floor edge selected
+    // by Wall Direction, rather than only outlining the whole cell.
+    if (
+        usingBuiltWallTool &&
+        hybridHoveredCellX >= 0 &&
+        hybridHoveredCellY >= 0
+        )
+    {
+        const int cellX = hybridHoveredCellX;
+        const int cellY = hybridHoveredCellY;
+
+        const float x0 =
+            originX +
+            static_cast<float>(cellX) *
+            TileSize;
+
+        const float x1 = x0 + TileSize;
+
+        const float y0 =
+            originY +
+            static_cast<float>(cellY) *
+            TileSize;
+
+        const float y1 = y0 + TileSize;
+
+        Vector2 edgeStartWorld{};
+        Vector2 edgeEndWorld{};
+
+        switch (
+            static_cast<TerrainWallFace>(
+                editorWallDirection
+                )
+            )
+        {
+        case TerrainWallFace::North:
+            edgeStartWorld = { x0, y0 };
+            edgeEndWorld = { x1, y0 };
+            break;
+
+        case TerrainWallFace::East:
+            edgeStartWorld = { x1, y0 };
+            edgeEndWorld = { x1, y1 };
+            break;
+
+        case TerrainWallFace::South:
+            edgeStartWorld = { x1, y1 };
+            edgeEndWorld = { x0, y1 };
+            break;
+
+        case TerrainWallFace::West:
+            edgeStartWorld = { x0, y1 };
+            edgeEndWorld = { x0, y0 };
+            break;
+
+        case TerrainWallFace::None:
+        default:
+            break;
+        }
+
+        rlDisableDepthTest();
+
+        DrawLine3D(
+            WorldToHybrid3D(edgeStartWorld, 4.0f),
+            WorldToHybrid3D(edgeEndWorld, 4.0f),
+            ORANGE
+        );
+
+        rlEnableDepthTest();
+    }
+
+    // --------------------------------------------------
+    // Exact wall-piece hover outline.
+    // Built walls and automatic elevation cliffs both use
+    // one selectable quad per vertical grid level.
+    // --------------------------------------------------
+
+    if (
+        usingWallPaintTool &&
+        hybridHoveredWallCellX >= 0 &&
+        hybridHoveredWallCellY >= 0 &&
+        hybridHoveredWallFace != TerrainWallFace::None &&
+        hybridHoveredWallKind != TerrainWallPieceKind::None &&
+        hybridHoveredWallRow >= 0
+        )
+    {
+        Vector3 topStart{};
+        Vector3 topEnd{};
+        Vector3 bottomEnd{};
+        Vector3 bottomStart{};
+        Vector3 normal{};
+
+        bool hasQuad = false;
+
+        if (
+            hybridHoveredWallKind ==
+            TerrainWallPieceKind::Built
+            )
+        {
+            hasQuad =
+                GetBuiltWallPieceQuad3D(
+                    hybridHoveredWallCellX,
+                    hybridHoveredWallCellY,
+                    hybridHoveredWallFace,
+                    hybridHoveredWallRow,
+                    topStart,
+                    topEnd,
+                    bottomEnd,
+                    bottomStart,
+                    &normal
+                );
+        }
+        else if (
+            hybridHoveredWallKind ==
+            TerrainWallPieceKind::Cliff
+            )
+        {
+            hasQuad =
+                GetTerrainCliffPieceQuad3D(
+                    hybridHoveredWallCellX,
+                    hybridHoveredWallCellY,
+                    hybridHoveredWallFace,
+                    hybridHoveredWallRow,
+                    topStart,
+                    topEnd,
+                    bottomEnd,
+                    bottomStart,
+                    &normal
+                );
+        }
+
+        if (hasQuad)
+        {
+            DrawQuadOutline(
+                topStart,
+                topEnd,
+                bottomEnd,
+                bottomStart,
+                normal,
+                YELLOW
+            );
+        }
+    }
+
+    // Ramp-direction guides.
     for (int y = 0; y < MapHeight; ++y)
     {
         for (int x = 0; x < MapWidth; ++x)

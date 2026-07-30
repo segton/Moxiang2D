@@ -2,6 +2,7 @@
 
 #include "raylib.h"
 
+#include <array>
 #include <string>
 #include <vector>
 #include <deque>
@@ -60,6 +61,26 @@ enum class TerrainWallFace
     East,
     South,
     West
+};
+
+enum class TerrainWallPieceKind
+{
+    None = 0,
+    Built,
+    Cliff
+};
+
+// Shared vertical-grid limit for built walls and automatic terrain cliffs.
+inline constexpr int MaximumBuiltWallPieceRows = 12;
+
+struct BuiltWallPieceMaterials
+{
+    std::array<int, MaximumBuiltWallPieceRows> tileIndices{};
+
+    BuiltWallPieceMaterials()
+    {
+        tileIndices.fill(-1);
+    }
 };
 
 struct Light2D
@@ -287,8 +308,13 @@ enum class EditorTool
     LowerTerrain,
     FlattenTerrain,
 
+    // Changes the material on an existing visible side.
     PaintWall,
     ClearWall,
+
+    // Builds or removes an above-floor dungeon wall.
+    BuildWall,
+    EraseWall,
 
     PaintChamber,
     EraseMapCell,
@@ -335,24 +361,43 @@ struct TileBrush
 
 struct TerrainCell
 {
-    // False means this cell is outside the playable map shape.
-    // Void cells are neither rendered nor walkable.
     bool enabled = true;
 
-    // Exact chamber membership. -1 means no chamber.
     int chamberId = 0;
 
-    // -1 means inherit the floor tile of this cell.
+    // Material overrides.
+    // -1 means inherit the floor material.
     int northWallTile = -1;
     int eastWallTile = -1;
     int southWallTile = -1;
     int westWallTile = -1;
 
-    // Walkable terrain height.
+    // Explicit dungeon-wall height above this cell edge.
+    // 0 means no built wall.
+    int northWallHeight = 0;
+    int eastWallHeight = 0;
+    int southWallHeight = 0;
+    int westWallHeight = 0;
+
+    // Per-row material overrides for built dungeon walls.
+    // Row 0 is the lowest wall block above the floor.
+    // -1 means inherit northWallTile/eastWallTile/etc.
+    BuiltWallPieceMaterials northBuiltWallPieces;
+    BuiltWallPieceMaterials eastBuiltWallPieces;
+    BuiltWallPieceMaterials southBuiltWallPieces;
+    BuiltWallPieceMaterials westBuiltWallPieces;
+
+    // Per-level material overrides for automatic terrain cliffs.
+    // Index 0 covers world elevation 0 -> 1, index 1 covers 1 -> 2,
+    // and so on. A terrain cell raised to elevation 6 can therefore
+    // expose and paint six separate cliff blocks on each visible side.
+    BuiltWallPieceMaterials northCliffWallPieces;
+    BuiltWallPieceMaterials eastCliffWallPieces;
+    BuiltWallPieceMaterials southCliffWallPieces;
+    BuiltWallPieceMaterials westCliffWallPieces;
+
     int elevation = 0;
 
-    // A ramp is stored on the lower cell and points
-    // toward one adjacent cell at elevation + 1.
     RampDirection rampDirection =
         RampDirection::None;
 };
@@ -1578,7 +1623,21 @@ private:
         Vector2 screenPosition,
         int& outCellX,
         int& outCellY,
-        TerrainWallFace& outFace
+        TerrainWallFace& outFace,
+        TerrainWallPieceKind& outPieceKind,
+        int& outWallRow
+    ) const;
+
+    bool GetBuiltWallPieceQuad3D(
+        int cellX,
+        int cellY,
+        TerrainWallFace face,
+        int wallRow,
+        Vector3& outTopStart,
+        Vector3& outTopEnd,
+        Vector3& outBottomEnd,
+        Vector3& outBottomStart,
+        Vector3* outNormal = nullptr
     ) const;
 
     int GetTerrainWallTileIndex(
@@ -1586,6 +1645,47 @@ private:
         int cellY,
         TerrainWallFace face
     ) const;
+
+    int GetTerrainWallHeight(
+        int cellX,
+        int cellY,
+        TerrainWallFace face
+    ) const;
+
+    int GetBuiltWallPieceTileIndex(
+        int cellX,
+        int cellY,
+        TerrainWallFace face,
+        int wallRow
+    ) const;
+
+    int GetTerrainCliffPieceTileIndex(
+        int cellX,
+        int cellY,
+        TerrainWallFace face,
+        int wallRow
+    ) const;
+
+    bool GetTerrainCliffPieceQuad3D(
+        int cellX,
+        int cellY,
+        TerrainWallFace face,
+        int wallRow,
+        Vector3& outTopStart,
+        Vector3& outTopEnd,
+        Vector3& outBottomEnd,
+        Vector3& outBottomStart,
+        Vector3* outNormal = nullptr
+    ) const;
+
+    bool HasBuiltWallBetween(
+        int cellAX,
+        int cellAY,
+        int cellBX,
+        int cellBY
+    ) const;
+
+    void ResetBuildCameraView();
 
     void DrawHybridWorld3D();
     void DrawHybridTerrain3D();
@@ -1792,6 +1892,14 @@ private:
     int hybridHoveredCellX = -1;
     int hybridHoveredCellY = -1;
 
+    int hybridHoveredWallCellX = -1;
+    int hybridHoveredWallCellY = -1;
+    TerrainWallFace hybridHoveredWallFace =
+        TerrainWallFace::None;
+    TerrainWallPieceKind hybridHoveredWallKind =
+        TerrainWallPieceKind::None;
+    int hybridHoveredWallRow = -1;
+
     // F6 toggles the old top-down/isometric view only in legacy mode.
     bool useIsometricView = true;
     float isoVerticalScale = 0.62f;
@@ -1956,6 +2064,17 @@ private:
     bool showChamberOverlay = true;
 
     int editorTool = static_cast<int>(EditorTool::PaintTile);
+
+    int editorWallDirection =
+        static_cast<int>(
+            TerrainWallFace::East
+            );
+
+    int editorWallHeight = 1;
+
+    float buildModeDefaultZoom = 1.5f;
+
+    bool buildModeWasActive = false;
 
     int editorNewMapWidth = 40;
     int editorNewMapHeight = 30;
