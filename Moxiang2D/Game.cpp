@@ -15518,6 +15518,14 @@ bool Game::CanEnemyStandAt(
     float collisionRadius
 ) const
 {
+    collisionRadius =
+        Clamp(
+            collisionRadius,
+            2.0f,
+            TileSize *
+            0.45f
+        );
+
     int targetX = 0;
     int targetY = 0;
 
@@ -15533,21 +15541,201 @@ bool Game::CanEnemyStandAt(
     }
 
     if (
-        IsCellBlocked(
+        !IsCellEnabled(
             targetX,
             targetY
+        ) ||
+        !IsTileWalkable(
+            tiles[
+                CellIndex(
+                    targetX,
+                    targetY
+                )
+            ]
         )
         )
     {
         return false;
     }
 
-    return
-        !IsTerrainCircleBlocked(
+    // Validates map boundaries, disabled tiles, terrain
+    // elevation changes, cliff edges and ramp connections.
+    if (
+        IsTerrainCircleBlocked(
             fromPosition,
             worldPosition,
             collisionRadius
+        )
+        )
+    {
+        return false;
+    }
+
+    // --------------------------------------------------
+    // Check obstacle collision along the complete movement.
+    //
+    // IsCellBlocked() is mainly a pathfinding cell test.
+    // It checks the cell centre, not the enemy's exact body.
+    // --------------------------------------------------
+
+    const float travelDistance =
+        Vector2Distance(
+            fromPosition,
+            worldPosition
         );
+
+    const float maximumSampleDistance =
+        std::max(
+            2.0f,
+            std::min(
+                4.0f,
+                collisionRadius *
+                0.35f
+            )
+        );
+
+    const int sampleCount =
+        std::max(
+            1,
+            static_cast<int>(
+                std::ceil(
+                    travelDistance /
+                    maximumSampleDistance
+                )
+                )
+        );
+
+    for (
+        int sampleIndex = 0;
+        sampleIndex <= sampleCount;
+        ++sampleIndex
+        )
+    {
+        const float t =
+            static_cast<float>(
+                sampleIndex
+                ) /
+            static_cast<float>(
+                sampleCount
+                );
+
+        const Vector2 samplePosition =
+            Vector2Lerp(
+                fromPosition,
+                worldPosition,
+                t
+            );
+
+        int sampleCellX = 0;
+        int sampleCellY = 0;
+
+        if (
+            !WorldToCell(
+                samplePosition,
+                sampleCellX,
+                sampleCellY
+            ) ||
+            !IsCellEnabled(
+                sampleCellX,
+                sampleCellY
+            )
+            )
+        {
+            return false;
+        }
+
+        const float sampleSurface =
+            GetTerrainSurfaceLevelAtWorld(
+                samplePosition
+            );
+
+        for (
+            const Obstacle& obstacle :
+            obstacles
+            )
+        {
+            if (
+                !obstacle.collisionEnabled ||
+                obstacle.heightLevel >
+                0
+                )
+            {
+                continue;
+            }
+
+            // An obstacle on another terrain level should
+            // not block an enemy above or below it.
+            const float obstacleSurface =
+                GetTerrainSurfaceLevelAtWorld(
+                    obstacle.position
+                );
+
+            if (
+                std::fabs(
+                    obstacleSurface -
+                    sampleSurface
+                ) >
+                0.55f
+                )
+            {
+                continue;
+            }
+
+            if (
+                obstacle.collisionShape ==
+                CollisionShape::Box
+                )
+            {
+                Rectangle collider =
+                    GetObstacleCollisionRect(
+                        obstacle
+                    );
+
+                collider.x -=
+                    collisionRadius;
+
+                collider.y -=
+                    collisionRadius;
+
+                collider.width +=
+                    collisionRadius *
+                    2.0f;
+
+                collider.height +=
+                    collisionRadius *
+                    2.0f;
+
+                if (
+                    CheckCollisionPointRec(
+                        samplePosition,
+                        collider
+                    )
+                    )
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                const float minimumDistance =
+                    obstacle.colliderRadius +
+                    collisionRadius;
+
+                if (
+                    Vector2Distance(
+                        samplePosition,
+                        obstacle.position
+                    ) <
+                    minimumDistance
+                    )
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    return true;
 }
 
 void Game::SpawnEnemyProjectile(
@@ -19834,6 +20022,11 @@ void Game::DealMeleeHit(Enemy& targetEnemy)
 
     Vector2 hitCenter = targetEnemy.pos;
 
+    const int playerTerrainElevation =
+        GetTerrainElevationAtWorld(
+            playerPosition
+        );
+
     SpawnSlashEffect(playerPosition, targetEnemy.pos);
 
     for (Enemy& enemy : enemies)
@@ -19843,6 +20036,17 @@ void Game::DealMeleeHit(Enemy& targetEnemy)
             IsEnemySpawnProtected(
                 enemy
             )
+            )
+        {
+            continue;
+        }
+
+        // Do not hit enemies standing on another floor.
+        if (
+            GetTerrainElevationAtWorld(
+                enemy.pos
+            ) !=
+            playerTerrainElevation
             )
         {
             continue;
@@ -19874,22 +20078,99 @@ void Game::DealMeleeHit(Enemy& targetEnemy)
             continue;
         }
 
-        Vector2 knockbackDirection = Vector2Subtract(enemy.pos, playerPosition);
+        Vector2 knockbackDirection =
+            Vector2Subtract(
+                enemy.pos,
+                playerPosition
+            );
 
-        if (Vector2Length(knockbackDirection) > 0.01f)
+        if (
+            Vector2Length(
+                knockbackDirection
+            ) >
+            0.01f
+            )
         {
-            knockbackDirection = Vector2Normalize(knockbackDirection);
-            Vector2 knockedPos = Vector2Add(enemy.pos, Vector2Scale(knockbackDirection, 18.0f));
+            knockbackDirection =
+                Vector2Normalize(
+                    knockbackDirection
+                );
 
-            int cellX = 0;
-            int cellY = 0;
+            constexpr float totalPushDistance =
+                18.0f;
 
-            if (WorldToCell(knockedPos, cellX, cellY) && !IsCellBlocked(cellX, cellY))
+            constexpr float maximumPushStep =
+                3.0f;
+
+            const int pushStepCount =
+                std::max(
+                    1,
+                    static_cast<int>(
+                        std::ceil(
+                            totalPushDistance /
+                            maximumPushStep
+                        )
+                        )
+                );
+
+            const Vector2 pushStep =
+                Vector2Scale(
+                    knockbackDirection,
+                    totalPushDistance /
+                    static_cast<float>(
+                        pushStepCount
+                        )
+                );
+
+            bool enemyMoved =
+                false;
+
+            for (
+                int pushStepIndex = 0;
+                pushStepIndex < pushStepCount;
+                ++pushStepIndex
+                )
             {
-                enemy.pos = knockedPos;
+                const Vector2 candidatePosition =
+                    Vector2Add(
+                        enemy.pos,
+                        pushStep
+                    );
+
+                if (
+                    !CanEnemyStandAt(
+                        enemy.pos,
+                        candidatePosition,
+                        std::max(
+                            6.0f,
+                            enemy.radius *
+                            0.55f
+                        )
+                    )
+                    )
+                {
+                    break;
+                }
+
+                enemy.pos =
+                    candidatePosition;
+
+                enemyMoved =
+                    true;
+            }
+
+            if (enemyMoved)
+            {
+                enemy.path.clear();
+                enemy.pathIndex = 0;
+
+                enemy.pathRefreshTimer =
+                    enemy.pathRefreshInterval;
             }
         }
     }
+
+
 }
 
 void Game::SpawnSlashEffect(Vector2 start, Vector2 end)
@@ -20125,9 +20406,29 @@ void Game::UpdateOrbitalBlades(float dt)
 
         blade.hitTimer = 0.0f;
 
+        const int playerTerrainElevation =
+            GetTerrainElevationAtWorld(
+                playerPosition
+            );
+
         for (Enemy& enemy : enemies)
         {
-            if (!enemy.active)
+            if (
+                !enemy.active ||
+                IsEnemySpawnProtected(
+                    enemy
+                )
+                )
+            {
+                continue;
+            }
+
+            if (
+                GetTerrainElevationAtWorld(
+                    enemy.pos
+                ) !=
+                playerTerrainElevation
+                )
             {
                 continue;
             }
@@ -20136,24 +20437,91 @@ void Game::UpdateOrbitalBlades(float dt)
             {
                 ApplyDamageToEnemy(enemy, blade.damage, enemy.pos);
 
-                Vector2 knockbackDirection = Vector2Subtract(enemy.pos, playerPosition);
-
-                if (Vector2Length(knockbackDirection) > 0.01f)
+                if (!enemy.active)
                 {
-                    knockbackDirection = Vector2Normalize(knockbackDirection);
+                    continue;
+                }
 
-                    Vector2 knockedPos = Vector2Add(
+                Vector2 knockbackDirection =
+                    Vector2Subtract(
                         enemy.pos,
-                        Vector2Scale(knockbackDirection, 10.0f)
+                        playerPosition
                     );
 
-                    int cellX = 0;
-                    int cellY = 0;
+                if (
+                    Vector2Length(
+                        knockbackDirection
+                    ) >
+                    0.01f
+                    )
+                {
+                    knockbackDirection =
+                        Vector2Normalize(
+                            knockbackDirection
+                        );
 
-                    if (WorldToCell(knockedPos, cellX, cellY) && !IsCellBlocked(cellX, cellY))
+                    constexpr float totalPushDistance =
+                        10.0f;
+
+                    constexpr float maximumPushStep =
+                        2.5f;
+
+                    const int pushStepCount =
+                        std::max(
+                            1,
+                            static_cast<int>(
+                                std::ceil(
+                                    totalPushDistance /
+                                    maximumPushStep
+                                )
+                                )
+                        );
+
+                    const Vector2 pushStep =
+                        Vector2Scale(
+                            knockbackDirection,
+                            totalPushDistance /
+                            static_cast<float>(
+                                pushStepCount
+                                )
+                        );
+
+                    for (
+                        int pushStepIndex = 0;
+                        pushStepIndex < pushStepCount;
+                        ++pushStepIndex
+                        )
                     {
-                        enemy.pos = knockedPos;
+                        const Vector2 candidatePosition =
+                            Vector2Add(
+                                enemy.pos,
+                                pushStep
+                            );
+
+                        if (
+                            !CanEnemyStandAt(
+                                enemy.pos,
+                                candidatePosition,
+                                std::max(
+                                    6.0f,
+                                    enemy.radius *
+                                    0.55f
+                                )
+                            )
+                            )
+                        {
+                            break;
+                        }
+
+                        enemy.pos =
+                            candidatePosition;
                     }
+
+                    enemy.path.clear();
+                    enemy.pathIndex = 0;
+
+                    enemy.pathRefreshTimer =
+                        enemy.pathRefreshInterval;
                 }
             }
         }
@@ -20362,36 +20730,281 @@ void Game::UpdateEnemyReactionTimers(Enemy& enemy, float dt)
     }
 }
 
-void Game::ApplyEnemyPhysics(Enemy& enemy, float dt)
+void Game::ApplyEnemyPhysics(
+    Enemy& enemy,
+    float dt
+)
 {
-    if (Vector2Length(enemy.knockbackVelocity) <= 1.0f)
-    {
-        enemy.knockbackVelocity = { 0.0f, 0.0f };
-        return;
-    }
-
-    Vector2 movement = Vector2Scale(enemy.knockbackVelocity, dt);
-    Vector2 nextPos = Vector2Add(enemy.pos, movement);
-
-    if (CanEnemyStandAt(
-        enemy.pos,
-        nextPos,
+    const float collisionRadius =
         std::max(
             6.0f,
             enemy.radius *
             0.55f
+        );
+
+    // --------------------------------------------------
+    // Recover an enemy that was already placed inside an
+    // invalid tile or obstacle by older movement code.
+    // --------------------------------------------------
+
+    if (
+        !CanEnemyStandAt(
+            enemy.pos,
+            enemy.pos,
+            collisionRadius
         )
-    ))
+        )
     {
-        enemy.pos = nextPos;
-    }
-    else
-    {
-        enemy.knockbackVelocity = { 0.0f, 0.0f };
+        int currentCellX = 0;
+        int currentCellY = 0;
+
+        bool recovered =
+            false;
+
+        if (
+            WorldToCell(
+                enemy.pos,
+                currentCellX,
+                currentCellY
+            )
+            )
+        {
+            const int originalElevation =
+                GetTerrainElevation(
+                    currentCellX,
+                    currentCellY
+                );
+
+            for (
+                int searchRadius = 0;
+                searchRadius <= 3 &&
+                !recovered;
+                ++searchRadius
+                )
+            {
+                for (
+                    int offsetY = -searchRadius;
+                    offsetY <= searchRadius &&
+                    !recovered;
+                    ++offsetY
+                    )
+                {
+                    for (
+                        int offsetX = -searchRadius;
+                        offsetX <= searchRadius;
+                        ++offsetX
+                        )
+                    {
+                        const int cellX =
+                            currentCellX +
+                            offsetX;
+
+                        const int cellY =
+                            currentCellY +
+                            offsetY;
+
+                        if (
+                            !IsCellInside(
+                                cellX,
+                                cellY
+                            ) ||
+                            !IsCellEnabled(
+                                cellX,
+                                cellY
+                            )
+                            )
+                        {
+                            continue;
+                        }
+
+                        const TerrainCell& cell =
+                            terrainCells[
+                                CellIndex(
+                                    cellX,
+                                    cellY
+                                )
+                            ];
+
+                        if (
+                            enemy.chamberId >=
+                            0 &&
+                            cell.chamberId !=
+                            enemy.chamberId
+                            )
+                        {
+                            continue;
+                        }
+
+                        if (
+                            GetTerrainElevation(
+                                cellX,
+                                cellY
+                            ) !=
+                            originalElevation
+                            )
+                        {
+                            continue;
+                        }
+
+                        const Vector2 candidate =
+                            CellToWorld(
+                                cellX,
+                                cellY
+                            );
+
+                        if (
+                            !CanEnemyStandAt(
+                                candidate,
+                                candidate,
+                                collisionRadius
+                            )
+                            )
+                        {
+                            continue;
+                        }
+
+                        enemy.pos =
+                            candidate;
+
+                        enemy.previousAnimationPosition =
+                            candidate;
+
+                        enemy.bossPreviousAnimationPosition =
+                            candidate;
+
+                        recovered =
+                            true;
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        enemy.knockbackVelocity = {
+            0.0f,
+            0.0f
+        };
+
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+
+        enemy.pathRefreshTimer =
+            enemy.pathRefreshInterval;
+
         return;
     }
 
-    enemy.knockbackVelocity = Vector2Scale(enemy.knockbackVelocity, 0.93f);
+    if (
+        Vector2Length(
+            enemy.knockbackVelocity
+        ) <=
+        1.0f
+        )
+    {
+        enemy.knockbackVelocity = {
+            0.0f,
+            0.0f
+        };
+
+        return;
+    }
+
+    const Vector2 totalMovement =
+        Vector2Scale(
+            enemy.knockbackVelocity,
+            dt
+        );
+
+    const float movementDistance =
+        Vector2Length(
+            totalMovement
+        );
+
+    if (
+        movementDistance <=
+        0.001f
+        )
+    {
+        return;
+    }
+
+    // Move in small pieces so a strong knockback cannot
+    // tunnel across a wall, cliff or disabled floor tile.
+    const int stepCount =
+        std::max(
+            1,
+            static_cast<int>(
+                std::ceil(
+                    movementDistance /
+                    4.0f
+                )
+                )
+        );
+
+    const Vector2 movementStep =
+        Vector2Scale(
+            totalMovement,
+            1.0f /
+            static_cast<float>(
+                stepCount
+                )
+        );
+
+    bool collisionOccurred =
+        false;
+
+    for (
+        int stepIndex = 0;
+        stepIndex < stepCount;
+        ++stepIndex
+        )
+    {
+        const Vector2 candidatePosition =
+            Vector2Add(
+                enemy.pos,
+                movementStep
+            );
+
+        if (
+            !CanEnemyStandAt(
+                enemy.pos,
+                candidatePosition,
+                collisionRadius
+            )
+            )
+        {
+            collisionOccurred =
+                true;
+
+            break;
+        }
+
+        enemy.pos =
+            candidatePosition;
+    }
+
+    if (collisionOccurred)
+    {
+        enemy.knockbackVelocity = {
+            0.0f,
+            0.0f
+        };
+
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+
+        enemy.pathRefreshTimer =
+            enemy.pathRefreshInterval;
+
+        return;
+    }
+
+    enemy.knockbackVelocity =
+        Vector2Scale(
+            enemy.knockbackVelocity,
+            0.93f
+        );
 }
 
 void Game::ApplyKnockbackToEnemy(
