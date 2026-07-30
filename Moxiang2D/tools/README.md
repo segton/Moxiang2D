@@ -53,3 +53,20 @@ Pillow is required by the asset builder, validator, and preview renderer:
 ```powershell
 python -m pip install Pillow
 ```
+
+## Rebuild the authored dungeon layout
+
+`rebuild_level01_dungeon.py` replaces the original chamber-mechanics test map
+with an eight-chamber, multi-elevation wuxia dungeon. It rebuilds terrain,
+ramps, chamber ownership, perimeter walls, floor motifs, animated flames and
+localized lighting deterministically.
+
+```bash
+python tools/rebuild_level01_dungeon.py
+python tools/validate_level.py levels/level01.mox
+python tools/render_level_plan.py levels/level01.mox
+```
+
+The script intentionally does not place `dragon_panel.png` or
+`hanging_scroll.png`. Those images are billboard ornaments and do not conform
+to a wall plane, so they appear like floating decals in the hybrid camera.
