@@ -85,6 +85,12 @@ struct BuiltWallPieceMaterials
 
 struct Light2D
 {
+    int id = -1;
+    std::string name = "Light";
+
+    // -1 means the chamber is resolved from the light's world position.
+    int chamberId = -1;
+
     Vector2 position{
         0.0f,
         0.0f
@@ -116,6 +122,13 @@ struct Light2D
     };
 
     float rotationDegrees = 0.0f;
+
+    // Smooth authored flicker. The base radius and intensity above remain
+    // unchanged; the final values are calculated at draw time.
+    float flickerAmount = 0.0f;
+    float flickerSpeed = 0.0f;
+    float flickerRadiusAmount = 0.0f;
+    float flickerPhase = 0.0f;
 };
 
 struct VfxParticle
@@ -324,13 +337,30 @@ enum class EditorTool
 
     PlaceObstacle,
     EraseObstacle,
-    MoveObstacle
+    MoveObstacle,
+
+    PlaceLight,
+    EraseLight,
+    MoveLight
 };
 
 enum class CollisionShape
 {
     Box = 0,
     Circle
+};
+
+enum class ObstacleRenderLayer
+{
+    Background = 0,
+    World,
+    Foreground
+};
+
+enum class ObstacleRenderMode
+{
+    Billboard = 0,
+    GroundDecal
 };
 
 struct TileBrush
@@ -470,6 +500,17 @@ struct DungeonChamber
     // chambers immediately because its ground is stored in one cache.
     float visibility = 0.0f;
     float targetVisibility = 0.0f;
+
+    // Authored atmosphere. These values are blended while moving between
+    // chambers, so the transition does not pop.
+    Color ambientLight{
+        76,
+        82,
+        98,
+        255
+    };
+
+    float vignetteStrength = 0.18f;
 };
 
 struct Obstacle
@@ -514,8 +555,23 @@ struct Obstacle
     // to block environmental lights.
     bool blocksLight = false;
 
-    // Draw after the normal world pass.
-    bool foreground = false;
+    ObstacleRenderLayer renderLayer =
+        ObstacleRenderLayer::World;
+
+    ObstacleRenderMode renderMode =
+        ObstacleRenderMode::Billboard;
+
+    Color tint = WHITE;
+    float opacity = 1.0f;
+
+    // Optional uniform sprite-sheet animation. This is primarily intended
+    // for torch flames, rune pulses, mist, water and other environmental art.
+    bool animated = false;
+    int animationColumns = 1;
+    int animationRows = 1;
+    int animationFrameCount = 1;
+    float animationFps = 8.0f;
+    float animationPhase = 0.0f;
 };
 
 
@@ -1035,6 +1091,14 @@ private:
     bool LoadCurrentObstacleTexture(const std::string& path);
     bool LoadObstacleTexture(Obstacle& obstacle, const std::string& path);
 
+    Rectangle GetObstacleSourceRect(
+        const Obstacle& obstacle
+    ) const;
+
+    Color GetObstacleDrawTint(
+        const Obstacle& obstacle
+    ) const;
+
     std::string ImportDroppedAssetToProject(
         const std::string& sourcePath,
         const std::string& assetCategory
@@ -1052,6 +1116,9 @@ private:
     void BuildGroundCache();
     void InvalidateGroundCache();
 
+    void DrawBackgroundObstacles2D();
+    void DrawGroundDecals2D();
+    void DrawForegroundObstacles2D();
     void DrawObstacles();
     void DrawNpcs();
     void DrawPlayer();
@@ -1090,6 +1157,10 @@ private:
     int GetObstacleAt(
         Vector2 worldPosition,
         int requiredHeightLevel = -1
+    ) const;
+
+    int GetLightAt(
+        Vector2 worldPosition
     ) const;
 
     void StartDialogue(int npcIndex);
@@ -1527,6 +1598,11 @@ private:
     );
 
     void CreateTestLights();
+    void EnsurePlayerLight();
+    int GetNextLightId() const;
+    Color GetBlendedAmbientLight() const;
+    float GetBlendedVignetteStrength() const;
+    void DrawAtmosphereOverlay() const;
 
 
     void LoadSmallEnemySpriteSheet();
@@ -1691,6 +1767,11 @@ private:
     void DrawHybridTerrain3D();
     void DrawHybridGroundEffects3D();
     void DrawHybridActors3D();
+    void DrawHybridObstacleLayer3D(
+        ObstacleRenderLayer layer,
+        bool ignoreDepth
+    );
+    void DrawHybridGroundDecals3D();
     void DrawHybridEditorOverlay3D();
     void DrawHybridScreenOverlays2D();
 
@@ -2102,7 +2183,25 @@ private:
     // Defaults for newly placed obstacles.
     bool newObstacleCastsShadow = true;
     bool newObstacleBlocksLight = false;
-    bool newObstacleForeground = false;
+    int newObstacleRenderLayer =
+        static_cast<int>(
+            ObstacleRenderLayer::World
+        );
+
+    int newObstacleRenderMode =
+        static_cast<int>(
+            ObstacleRenderMode::Billboard
+        );
+
+    Color newObstacleTint = WHITE;
+    float newObstacleOpacity = 1.0f;
+
+    bool newObstacleAnimated = false;
+    int newObstacleAnimationColumns = 1;
+    int newObstacleAnimationRows = 1;
+    int newObstacleAnimationFrameCount = 1;
+    float newObstacleAnimationFps = 8.0f;
+    float newObstacleAnimationPhase = 0.0f;
 
     // When enabled, editor operations only select
     // obstacles on the active level.
@@ -2139,8 +2238,27 @@ private:
     int selectedObstacleIndex = -1;
     bool draggingObstacle = false;
     Vector2 dragOffset{};
+
+    int selectedLightIndex = -1;
+    bool draggingLight = false;
+    Vector2 lightDragOffset{};
+
+    float newLightRadius = 260.0f;
+    float newLightIntensity = 0.72f;
+    Color newLightColor{
+        255,
+        170,
+        88,
+        255
+    };
+    float newLightFlickerAmount = 0.12f;
+    float newLightFlickerSpeed = 7.0f;
+    float newLightFlickerRadiusAmount = 0.05f;
+
     bool tileImageDropHovered = false;
     bool obstacleImageDropHovered = false;
+
+    float environmentAnimationTime = 0.0f;
 
 
     bool useBlobForMissingEnemySprites = true;
@@ -2504,6 +2622,7 @@ private:
     std::vector<Light2D> lights;
 
     Texture2D radialLightTexture{};
+    Texture2D vignetteTexture{};
 
     RenderTexture2D sceneTarget{};
     RenderTexture2D lightTarget{};
