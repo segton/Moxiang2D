@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Moxiang2D</title>
+
+<style>
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #000;
+}
+
+body {
+    position: fixed;
+    inset: 0;
+    border: 0;
+}
+
+#canvas {
+    position: absolute;
+    inset: 0;
+
+    display: block;
+
+    width: 100%;
+    height: 100%;
+
+    margin: 0;
+    padding: 0;
+    border: 0;
+    outline: 0;
+
+    background: #000;
+
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+
+    touch-action: none;
+}
+</style>
+</head>
+
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+
+<script>
+var Module = {
+    canvas: document.getElementById("canvas"),
+
+    print: function(text) {
+        console.log(text);
+    },
+
+    printErr: function(text) {
+        console.error(text);
+    },
+
+    setStatus: function() {
+        // Intentionally empty.
+        // Removes Emscripten's default loading/status display.
+    },
+
+    monitorRunDependencies: function() {
+        // Intentionally empty.
+        // Removes Emscripten's default dependency progress display.
+    }
+};
+</script>
+
+{{{ SCRIPT }}}
+</body>
+</html>

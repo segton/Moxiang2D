@@ -163,6 +163,7 @@ em++ main.cpp Game.cpp "%RAYLIB_WEB_LIB%" ^
     -sMAX_WEBGL_VERSION=1 ^
     --preload-file "Assets@Assets" ^
     --preload-file "levels@levels" ^
+    --shell-file "itch_shell.html" ^
     --emrun ^
     -o "%OUTPUT_DIR%\index.html"
 
