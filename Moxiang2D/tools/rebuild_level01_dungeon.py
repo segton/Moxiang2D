@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
-"""Author the production-style level01 dungeon and write it to level01.mox.
+"""Rebuild level01 as a linear south-to-north authored dungeon.
 
-This is an optional offline authoring utility. The game executable does not
-run Python and does not require Python to load or play the generated level.
+The script is an optional editor-side authoring utility. The C++ game does
+not execute Python at runtime. It writes a deterministic MOXIANG_LEVEL 13 map
+that uses raised terrain as the chamber walls, directional ramps for every
+height transition, terrain-aware floor decals, authored props and per-room
+camera framing.
 """
 from __future__ import annotations
 
-import re
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 LEVEL = ROOT / "levels" / "level01.mox"
-W = H = 60
+ASSET_ROOT = ROOT / "Assets"
+
+W = 64
+H = 144
 TILE = 64
-ORIGIN = -W * TILE / 2
+ORIGIN_X = -W * TILE / 2.0
+ORIGIN_Y = -H * TILE / 2.0
 PIECE_ROWS = 12
 
-# RampDirection values from Game.h.
 NONE, NORTH, EAST, SOUTH, WEST = range(5)
 DIR_OFFSET = {
     NORTH: (0, -1),
@@ -25,23 +32,37 @@ DIR_OFFSET = {
     SOUTH: (0, 1),
     WEST: (-1, 0),
 }
-STAIR_TILE = {
-    NORTH: 44,
-    EAST: 45,
-    SOUTH: 46,
-    WEST: 47,
-}
+STAIR_TILE = {NORTH: 44, EAST: 45, SOUTH: 46, WEST: 47}
 
-CHAMBERS = [
-    (0, "Gate of Returning Ash", (70, 57, 48, 255), 0.28),
-    (1, "Hall of the Broken Seal", (68, 65, 66, 255), 0.23),
-    (2, "Sunken Dragon Court", (62, 67, 75, 255), 0.18),
-    (3, "Flooded Reliquary", (35, 66, 76, 255), 0.31),
-    (4, "Ember Archive", (82, 57, 39, 255), 0.27),
-    (5, "Moonlit Prison Walk", (45, 55, 68, 255), 0.33),
-    (6, "Azure Ritual Sanctum", (32, 62, 75, 255), 0.35),
-    (7, "Throne of the Iron Warden", (67, 44, 40, 255), 0.38),
+
+@dataclass(frozen=True)
+class Room:
+    ident: int
+    name: str
+    cx: int
+    cy: int
+    rx: int
+    ry: int
+    cut: int
+    base: int
+    ambient: tuple[int, int, int, int]
+    vignette: float
+    camera_zoom: float
+    focus: tuple[float, float] = (0.0, 0.0)
+
+
+# Room IDs follow the player's progression. South is the level entrance and
+# every chamber's north opening leads directly toward the next room.
+ROOMS = [
+    Room(0, "Gate of Returning Ash", 32, 135, 7, 6, 2, 0, (74, 59, 49, 255), 0.30, 1.62, (0, -20)),
+    Room(1, "Ember Oath Hall", 32, 116, 10, 8, 3, 0, (79, 57, 43, 255), 0.25, 1.38, (0, -24)),
+    Room(2, "Sunken Dragon Court", 32, 91, 14, 10, 4, 1, (58, 62, 70, 255), 0.20, 1.02, (0, -34)),
+    Room(3, "Flooded Reliquary", 32, 66, 11, 9, 3, 1, (34, 65, 76, 255), 0.32, 1.22, (0, -28)),
+    Room(4, "Azure Ritual Sanctum", 32, 42, 13, 9, 4, 2, (35, 59, 74, 255), 0.35, 1.08, (0, -34)),
+    Room(5, "Throne of the Iron Warden", 32, 15, 18, 11, 5, 3, (64, 43, 39, 255), 0.40, 0.74, (0, -76)),
 ]
+
+ROOM_BY_ID = {room.ident: room for room in ROOMS}
 
 # Grid state.
 enabled = [[0 for _ in range(W)] for _ in range(H)]
@@ -51,40 +72,58 @@ ramp = [[NONE for _ in range(W)] for _ in range(H)]
 tiles = [[0 for _ in range(W)] for _ in range(H)]
 
 
+def inside(x: int, y: int) -> bool:
+    return 0 <= x < W and 0 <= y < H
+
+
+def octagon_contains(room: Room, x: int, y: int, inset: int = 0) -> bool:
+    rx = room.rx - inset
+    ry = room.ry - inset
+    cut = max(0, room.cut - inset)
+    if rx < 1 or ry < 1:
+        return False
+    dx = abs(x - room.cx)
+    dy = abs(y - room.cy)
+    return dx <= rx and dy <= ry and dx + dy <= rx + ry - cut
+
+
+def paint_cell(x: int, y: int, cid: int, elev: int) -> None:
+    if not inside(x, y):
+        raise ValueError(f"cell outside map: {(x, y)}")
+    enabled[y][x] = 1
+    chamber[y][x] = cid
+    elevation[y][x] = elev
+
+
 def paint_rect(x0: int, y0: int, x1: int, y1: int, cid: int, elev: int) -> None:
     for y in range(max(0, y0), min(H, y1 + 1)):
         for x in range(max(0, x0), min(W, x1 + 1)):
-            enabled[y][x] = 1
-            chamber[y][x] = cid
-            elevation[y][x] = elev
+            paint_cell(x, y, cid, elev)
 
 
-def paint_octagon(cx: int, cy: int, rx: int, ry: int, cut: int, cid: int, elev: int) -> None:
-    for y in range(cy - ry, cy + ry + 1):
-        for x in range(cx - rx, cx + rx + 1):
-            dx = abs(x - cx)
-            dy = abs(y - cy)
-            if dx <= rx and dy <= ry and dx + dy <= rx + ry - cut and 0 <= x < W and 0 <= y < H:
-                enabled[y][x] = 1
-                chamber[y][x] = cid
-                elevation[y][x] = elev
+def paint_room(room: Room, wall_thickness: int = 2) -> None:
+    # The outer octagonal shell is raised terrain. Its inner cliff faces are
+    # the room's walls, matching the user's existing terrain-wall workflow.
+    for y in range(room.cy - room.ry, room.cy + room.ry + 1):
+        for x in range(room.cx - room.rx, room.cx + room.rx + 1):
+            if octagon_contains(room, x, y, 0):
+                paint_cell(x, y, room.ident, room.base + 2)
+            if octagon_contains(room, x, y, wall_thickness):
+                paint_cell(x, y, room.ident, room.base)
+
+    # Cut a five-cell south and north doorway through the raised shell.
+    for x in range(room.cx - 2, room.cx + 3):
+        for y in range(room.cy - room.ry, room.cy - room.ry + wall_thickness + 1):
+            paint_cell(x, y, room.ident, room.base)
+        for y in range(room.cy + room.ry - wall_thickness, room.cy + room.ry + 1):
+            paint_cell(x, y, room.ident, room.base)
 
 
-def paint_circle(cx: int, cy: int, rx: int, ry: int, cid: int, elev: int) -> None:
-    for y in range(cy - ry, cy + ry + 1):
-        for x in range(cx - rx, cx + rx + 1):
-            if ((x - cx) / max(1, rx)) ** 2 + ((y - cy) / max(1, ry)) ** 2 <= 1.0:
-                if 0 <= x < W and 0 <= y < H:
-                    enabled[y][x] = 1
-                    chamber[y][x] = cid
-                    elevation[y][x] = elev
-
-
-def place_ramp(cells: list[tuple[int, int]], direction: int) -> None:
+def place_ramp(cells: Iterable[tuple[int, int]], direction: int) -> None:
     dx, dy = DIR_OFFSET[direction]
     for x, y in cells:
         tx, ty = x + dx, y + dy
-        if not (0 <= x < W and 0 <= y < H and 0 <= tx < W and 0 <= ty < H):
+        if not inside(x, y) or not inside(tx, ty):
             raise ValueError(f"ramp outside map at {(x, y)}")
         if not enabled[y][x] or not enabled[ty][tx]:
             raise ValueError(f"ramp touches disabled cell at {(x, y)} -> {(tx, ty)}")
@@ -97,80 +136,83 @@ def place_ramp(cells: list[tuple[int, int]], direction: int) -> None:
         tiles[y][x] = STAIR_TILE[direction]
 
 
-# ---------------------------------------------------------------------------
-# Chamber layout
-# ---------------------------------------------------------------------------
+def connect_rooms(south_room: Room, north_room: Room) -> None:
+    south_y = south_room.cy - south_room.ry
+    north_y = north_room.cy + north_room.ry
+    if north_y >= south_y:
+        raise ValueError(f"rooms overlap in progression: {south_room.name} -> {north_room.name}")
 
-# 1. Hall and main rooms are painted first. Later thresholds deliberately
-# establish exact chamber ownership at every doorway.
-paint_octagon(30, 41, 10, 6, 3, 1, 0)
-paint_rect(19, 39, 22, 43, 1, 0)
-paint_rect(38, 39, 41, 43, 1, 0)
-paint_rect(26, 34, 34, 37, 1, 0)
+    x0, x1 = south_room.cx - 2, south_room.cx + 2
+    transition_y = (south_y + north_y) // 2
 
-paint_octagon(30, 25, 13, 8, 4, 2, 1)
-paint_rect(26, 31, 34, 33, 2, 1)
-paint_rect(17, 23, 20, 28, 2, 1)
-paint_rect(40, 23, 43, 28, 2, 1)
-paint_rect(27, 16, 33, 19, 2, 1)
-paint_rect(18, 17, 22, 20, 2, 1)
+    if north_room.base < south_room.base or north_room.base > south_room.base + 1:
+        raise ValueError("linear connector supports a flat link or one-level ascent")
 
-paint_octagon(9, 25, 7, 8, 3, 3, 0)
-paint_rect(14, 23, 16, 28, 3, 0)
-paint_rect(4, 31, 13, 34, 3, 0)
+    if north_room.base == south_room.base:
+        for y in range(north_y, south_y + 1):
+            cid = north_room.ident if y <= transition_y else south_room.ident
+            paint_rect(x0, y, x1, y, cid, south_room.base)
+        return
 
-paint_octagon(51, 26, 7, 8, 3, 4, 2)
-paint_rect(44, 23, 47, 28, 4, 2)
-paint_rect(48, 15, 53, 20, 4, 2)
-paint_rect(51, 33, 57, 36, 4, 2)
+    # Ascending north: the stored ramp lives on the lower cell and points to
+    # the immediately adjacent level+1 cell.
+    ramp_y = transition_y + 1
+    for y in range(ramp_y, south_y + 1):
+        paint_rect(x0, y, x1, y, south_room.ident, south_room.base)
+    for y in range(north_y, ramp_y - 1 + 1):
+        paint_rect(x0, y, x1, y, north_room.ident, north_room.base)
 
-paint_rect(6, 8, 17, 19, 5, 2)
-paint_rect(4, 11, 19, 16, 5, 2)
-paint_rect(15, 17, 17, 20, 5, 2)
+    # Ensure the destination row is the higher level and the ramp row remains
+    # owned by the room the player is leaving.
+    paint_rect(x0, ramp_y - 1, x1, ramp_y - 1, north_room.ident, north_room.base)
+    paint_rect(x0, ramp_y, x1, ramp_y, south_room.ident, south_room.base)
+    place_ramp(((x, ramp_y) for x in range(x0, x1 + 1)), NORTH)
 
-paint_circle(30, 8, 8, 6, 6, 2)
-paint_rect(27, 13, 33, 15, 6, 2)
-
-paint_octagon(50, 8, 8, 6, 3, 7, 3)
-paint_rect(48, 13, 53, 14, 7, 3)
-
-# South entrance is last so it owns the transition into chamber 1.
-paint_rect(27, 52, 32, 58, 0, 0)
-paint_rect(24, 48, 35, 53, 0, 0)
-paint_rect(28, 46, 31, 48, 0, 0)
-
-# Raised room features, each with its own explicit ramp strip.
-paint_rect(28, 23, 32, 27, 2, 2)  # Dragon Court dais
-paint_rect(49, 22, 53, 25, 4, 3)  # Archive reading dais
-paint_rect(28, 6, 32, 10, 6, 3)   # Ritual core
-paint_rect(48, 5, 52, 8, 7, 4)    # Boss throne dais
-
-# Correct lower-cell -> adjacent level+1 ramp placement.
-place_ramp([(x, 34) for x in range(28, 33)], NORTH)       # Hall -> court
-place_ramp([(16, y) for y in range(24, 28)], EAST)        # Reliquary -> court
-place_ramp([(43, y) for y in range(24, 28)], EAST)        # Court -> archive
-place_ramp([(18, y) for y in range(17, 20)], WEST)        # Court -> prison
-place_ramp([(x, 16) for x in range(28, 33)], NORTH)       # Court -> sanctum
-place_ramp([(x, 15) for x in range(49, 53)], NORTH)       # Archive -> boss
-place_ramp([(x, 28) for x in range(29, 32)], NORTH)       # Court dais
-place_ramp([(x, 26) for x in range(50, 53)], NORTH)       # Archive dais
-place_ramp([(x, 11) for x in range(29, 32)], NORTH)       # Ritual core
-place_ramp([(x, 9) for x in range(49, 52)], NORTH)        # Boss dais
 
 # ---------------------------------------------------------------------------
-# Floor materials: 0..43 are floor variants; 44..47 are directional stairs;
-# 48..63 are dedicated wall materials in dungeon_master_atlas.png.
+# Linear layout
+# ---------------------------------------------------------------------------
+
+for authored_room in ROOMS:
+    paint_room(authored_room)
+
+# South entrance path reaches the map boundary.
+paint_rect(30, 141, 34, H - 1, 0, ROOMS[0].base)
+
+for south, north in zip(ROOMS, ROOMS[1:]):
+    connect_rooms(south, north)
+
+# A final north threshold behind the boss room suggests the next floor.
+paint_rect(30, 0, 34, ROOMS[-1].cy - ROOMS[-1].ry, ROOMS[-1].ident, ROOMS[-1].base)
+
+# Side plinths add vertical depth but stay outside large central decals.
+for x0, y0, x1, y1, cid in [
+    (20, 88, 23, 94, 2),
+    (41, 88, 44, 94, 2),
+    (23, 63, 25, 68, 3),
+    (39, 63, 41, 68, 3),
+    (21, 39, 24, 45, 4),
+    (40, 39, 43, 45, 4),
+]:
+    base = ROOM_BY_ID[cid].base
+    paint_rect(x0, y0, x1, y1, cid, base + 1)
+
+# Boss throne platform: explicit north-facing ascent from the flat arena.
+paint_rect(28, 7, 36, 10, 5, ROOMS[5].base + 1)
+paint_rect(30, 11, 34, 11, 5, ROOMS[5].base)
+place_ramp(((x, 11) for x in range(30, 35)), NORTH)
+
+# ---------------------------------------------------------------------------
+# Floor materials
 # ---------------------------------------------------------------------------
 
 PALETTES = {
     0: [0, 1, 4, 8, 16, 17, 20, 24, 32, 33, 36],
-    1: [0, 1, 2, 4, 5, 8, 9, 16, 18, 20, 24, 25, 32, 34],
-    2: [0, 1, 2, 4, 5, 8, 9, 10, 16, 18, 20, 24, 25, 26, 32, 34, 36],
+    1: [0, 1, 4, 5, 8, 9, 16, 18, 20, 24, 25, 32, 36, 40],
+    2: [0, 1, 2, 4, 5, 8, 9, 10, 16, 18, 20, 24, 25, 26, 32, 34, 36, 40],
     3: [2, 3, 5, 9, 10, 11, 18, 19, 21, 25, 26, 27, 34, 35, 37, 41],
-    4: [0, 4, 8, 9, 11, 16, 20, 24, 27, 32, 36, 40, 43],
-    5: [1, 2, 5, 8, 9, 10, 17, 18, 21, 24, 26, 33, 34, 37],
-    6: [1, 2, 5, 9, 10, 17, 18, 21, 25, 26, 33, 34, 37, 41],
-    7: [0, 2, 4, 8, 9, 11, 16, 18, 20, 24, 27, 32, 34, 40, 43],
+    4: [1, 2, 5, 9, 10, 17, 18, 21, 25, 26, 33, 34, 37, 41, 42],
+    5: [0, 2, 4, 8, 9, 11, 16, 18, 20, 24, 27, 32, 34, 40, 43],
 }
 
 for y in range(H):
@@ -181,23 +223,25 @@ for y in range(H):
         if ramp[y][x] != NONE:
             tiles[y][x] = STAIR_TILE[ramp[y][x]]
             continue
+
         cid = chamber[y][x]
-        palette = PALETTES[cid]
+        palette = PALETTES.get(cid, PALETTES[0])
+        seed = x * 37 + y * 73 + cid * 101 + elevation[y][x] * 17
+        choice = palette[seed % len(palette)]
+
+        # Near cliffs and void edges favor the worn banks of the atlas.
         edge = any(
-            not (0 <= x + dx < W and 0 <= y + dy < H) or not enabled[y + dy][x + dx]
+            not inside(x + dx, y + dy)
+            or not enabled[y + dy][x + dx]
+            or elevation[y + dy][x + dx] != elevation[y][x]
             for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1))
         )
-        seed = x * 37 + y * 73 + cid * 101
-        choice = palette[seed % len(palette)]
-        # Edge cells favor worn/damp variants from the second and third banks.
         if edge and choice < 16:
             choice += 16 if seed % 3 else 32
         tiles[y][x] = min(choice, 43)
 
 # ---------------------------------------------------------------------------
-# Wall materials. Dedicated wall tiles eliminate the stretched floor-on-wall
-# appearance from the previous version. South/front edges remain mostly open
-# so the camera is not hidden behind a continuous near wall.
+# Raised-terrain wall faces and exterior caps
 # ---------------------------------------------------------------------------
 
 wall_tiles = [[[-1, -1, -1, -1] for _ in range(W)] for _ in range(H)]
@@ -206,184 +250,495 @@ built_pieces = [[[[ -1 for _ in range(PIECE_ROWS)] for _ in range(4)] for _ in r
 cliff_pieces = [[[[ -1 for _ in range(PIECE_ROWS)] for _ in range(4)] for _ in range(W)] for _ in range(H)]
 
 WALL_PALETTE = {
-    0: (49, 55, 61),
-    1: (55, 61, 63),
-    2: (55, 62, 61),
-    3: (62, 63, 60),
-    4: (49, 57, 61),
-    5: (61, 62, 63),
-    6: (54, 58, 62),
-    7: (57, 58, 63),
+    0: (49, 55, 61, 63),
+    1: (49, 57, 61, 55),
+    2: (55, 62, 61, 60),
+    3: (54, 58, 62, 63),
+    4: (54, 58, 62, 60),
+    5: (57, 58, 63, 61),
 }
+FACE_DIRECTIONS = ((0, -1), (1, 0), (0, 1), (-1, 0))
 
 for y in range(H):
     for x in range(W):
         if not enabled[y][x]:
             continue
         cid = chamber[y][x]
-        primary, accent, base = WALL_PALETTE[cid]
-        for face, (dx, dy) in enumerate(((0, -1), (1, 0), (0, 1), (-1, 0))):
+        primary, accent, base_material, damaged = WALL_PALETTE.get(cid, WALL_PALETTE[0])
+
+        for face, (dx, dy) in enumerate(FACE_DIRECTIONS):
             seed = x * 19 + y * 31 + face * 7 + cid * 43
-            wall_tiles[y][x][face] = accent if seed % 9 == 0 else primary
-            # Cliff rows use rugged dedicated wall materials.
+            material = accent if seed % 8 == 0 else primary
+            if seed % 17 == 0:
+                material = damaged
+            wall_tiles[y][x][face] = material
+
+            # Each elevation row gets a dedicated vertical wall texture. The
+            # renderer only consumes the rows actually exposed by a cliff.
             for row in range(PIECE_ROWS):
                 cliff_pieces[y][x][face][row] = 60 + ((seed + row) % 4)
 
             nx, ny = x + dx, y + dy
-            exposed = not (0 <= nx < W and 0 <= ny < H) or not enabled[ny][nx]
-            if not exposed:
+            exposed_to_void = not inside(nx, ny) or not enabled[ny][nx]
+            if not exposed_to_void:
                 continue
 
-            if face == 0:  # back wall
+            # Raised terrain already provides the wall mass. These authored
+            # exterior caps add detail without building a second solid box in
+            # front of the player.
+            if face == 0:
                 height = 2
-            elif face in (1, 3):  # side walls
-                height = 1 + (1 if seed % 13 == 0 else 0)
-            else:  # near/front edge: isolated low segments only
-                height = 1 if seed % 11 == 0 else 0
+            elif face in (1, 3):
+                height = 1 + (1 if seed % 11 == 0 else 0)
+            else:
+                height = 1 if seed % 19 == 0 else 0
 
             wall_heights[y][x][face] = height
             if height > 0:
-                built_pieces[y][x][face][0] = base
+                built_pieces[y][x][face][0] = base_material
             if height > 1:
-                built_pieces[y][x][face][1] = wall_tiles[y][x][face]
+                built_pieces[y][x][face][1] = material
 
+
+# ---------------------------------------------------------------------------
+# Environment objects
+# ---------------------------------------------------------------------------
 
 def world(cell_x: float, cell_y: float) -> tuple[float, float]:
-    return ORIGIN + (cell_x + 0.5) * TILE, ORIGIN + (cell_y + 0.5) * TILE
+    return (
+        ORIGIN_X + (cell_x + 0.5) * TILE,
+        ORIGIN_Y + (cell_y + 0.5) * TILE,
+    )
 
 
-def obstacle(
+def terrain_at(cell_x: float, cell_y: float) -> int:
+    x = max(0, min(W - 1, int(cell_x)))
+    y = max(0, min(H - 1, int(cell_y)))
+    return elevation[y][x]
+
+
+def asset(name: str) -> str:
+    return f"Assets/environment/authored/{name}.png"
+
+
+def generated_asset(name: str) -> str:
+    return f"Assets/environment/generated/{name}.png"
+
+
+OBSTACLES: list[dict[str, object]] = []
+
+
+def add_object(
+    name: str,
     x: float,
     y: float,
-    w: int,
-    h: int,
-    path: str,
+    w: float | None = None,
+    h: float | None = None,
     *,
+    path: str | None = None,
     layer: int = 1,
     mode: int = 0,
     tint: tuple[int, int, int, int] = (255, 255, 255, 255),
     opacity: float = 1.0,
-    height_level: int = 0,
-    casts_shadow: int = 1,
-    blocks_light: int = 0,
-    animated: int = 0,
+    rotation: float = 0.0,
+    collision: bool = False,
+    shape: int = 1,
+    radius: float = 28.0,
+    collider: tuple[float, float] = (0.0, 0.0),
+    blocks_light: bool = False,
+    casts_shadow: bool = True,
+    clip: bool = True,
+    allow_ramps: bool = False,
+    animated: bool = False,
     columns: int = 1,
     rows: int = 1,
     frames: int = 1,
     fps: float = 8.0,
     phase: float = 0.0,
-    collision: int = 0,
-    auto: int = 0,
-    shape: int = 0,
-    collider_w: float = 0.0,
-    collider_h: float = 0.0,
-    radius: float = 0.0,
-) -> tuple[object, ...]:
+    visual_offset: tuple[float, float] = (0.0, 0.0),
+    collider_offset: tuple[float, float] = (0.0, 0.0),
+    anchor_y: float = 1.0,
+    depth_bias: float = 0.0,
+) -> None:
+    image_path = path if path is not None else asset(name)
+    disk_path = ROOT / image_path
+    if not disk_path.exists():
+        raise FileNotFoundError(f"missing environment asset: {image_path}")
+
+    # Preserve source aspect ratio when only one or neither dimension is set.
+    if w is None or h is None:
+        from PIL import Image
+        with Image.open(disk_path) as image:
+            source_w, source_h = image.size
+        if w is None and h is None:
+            w, h = float(source_w), float(source_h)
+        elif w is None:
+            w = float(h) * source_w / source_h
+        else:
+            h = float(w) * source_h / source_w
+
     wx, wy = world(x, y)
-    return (
-        wx, wy, w, h, 7, height_level, casts_shadow, blocks_light,
-        layer, mode, *tint, opacity, animated, columns, rows, frames, fps,
-        phase, path, collision, auto, shape, collider_w, collider_h, radius,
+    OBSTACLES.append({
+        "position": (wx, wy),
+        "size": (float(w), float(h)),
+        "type": 7,
+        "height_level": 0,
+        "casts_shadow": int(casts_shadow and mode == 0),
+        "blocks_light": int(blocks_light and mode == 0),
+        "layer": layer,
+        "mode": mode,
+        "tint": tint,
+        "opacity": opacity,
+        "animated": int(animated),
+        "columns": columns,
+        "rows": rows,
+        "frames": frames,
+        "fps": fps,
+        "phase": phase,
+        "source_frame": 0,
+        "source_rect": (0.0, 0.0, 0.0, 0.0),
+        "rotation": rotation,
+        "terrain_elevation": terrain_at(x, y) if mode == 1 else -1,
+        "clip": int(clip),
+        "allow_ramps": int(allow_ramps),
+        "path": image_path,
+        "collision": int(collision and mode == 0),
+        "auto": 0,
+        "shape": shape,
+        "collider": collider,
+        "radius": radius,
+        "visual_offset": visual_offset,
+        "collider_offset": collider_offset,
+        "anchor_y": max(0.0, min(1.0, anchor_y)),
+        "depth_bias": depth_bias,
+    })
+
+
+def add_decal(name: str, x: float, y: float, w: float, h: float, **kwargs: object) -> None:
+    add_object(name, x, y, w, h, mode=1, layer=0, casts_shadow=False, collision=False, **kwargs)
+
+
+def add_prop(name: str, x: float, y: float, scale: float = 1.0, **kwargs: object) -> None:
+    disk_path = ROOT / asset(name)
+    from PIL import Image
+    with Image.open(disk_path) as image:
+        w = image.width * scale
+        h = image.height * scale
+    add_object(name, x, y, w, h, **kwargs)
+
+
+def add_generated_prop(
+    name: str,
+    x: float,
+    y: float,
+    scale: float = 0.62,
+    **kwargs: object,
+) -> None:
+    image_path = generated_asset(name)
+    disk_path = ROOT / image_path
+    from PIL import Image
+    with Image.open(disk_path) as image:
+        w = image.width * scale
+        h = image.height * scale
+    add_object(name, x, y, w, h, path=image_path, **kwargs)
+
+
+# --- Ground decals and trims. Every large motif is fully contained on a flat
+#     chamber floor. Terrain-aware clipping remains enabled as a safety net.
+add_decal("decal_gold_seal_round", 32, 135, 260, 300, opacity=0.62)
+add_decal("decal_dragon_half", 32, 116, 320, 410, opacity=0.56)
+add_decal("decal_dragon_grand", 32, 91, 650, 680, opacity=0.68)
+add_decal("decal_cyan_ring_quadrants", 32, 66, 400, 560, tint=(165, 235, 245, 255), opacity=0.65)
+add_decal("decal_azure_seal_round", 32, 42, 480, 520, tint=(165, 231, 245, 255), opacity=0.72)
+add_decal("decal_labyrinth_round", 32, 17, 650, 700, tint=(225, 199, 177, 255), opacity=0.56)
+
+# Secondary motifs add irregularity without spanning terrain transitions.
+add_decal("decal_broken_dragon", 24, 115, 250, 260, rotation=-8, opacity=0.42)
+add_decal("decal_dragon_quadrants", 41, 92, 250, 250, rotation=12, opacity=0.42)
+add_decal("decal_azure_seal_round", 25, 67, 210, 230, tint=(115, 219, 237, 255), opacity=0.46)
+add_decal("decal_small_symbols", 32, 48, 760, 90, tint=(130, 215, 235, 255), opacity=0.52)
+add_decal("decal_ring_row", 32, 84, 760, 100, opacity=0.36)
+add_decal("decal_calligraphy_row", 32, 22, 780, 110, tint=(225, 182, 150, 255), opacity=0.43)
+
+# Door thresholds and long platform trims. These are separate decals so Build
+# Mode can move, resize, rotate or replace them independently.
+thresholds = [
+    ("threshold_steps_plain", 32, 142, 340, 80),
+    ("threshold_emblem_gold", 32, 129, 350, 82),
+    ("threshold_cracked_plain", 32, 124, 340, 76),
+    ("threshold_cloud_carving", 32, 108, 350, 76),
+    ("threshold_flame_carving", 32, 101, 360, 76),
+    ("threshold_cracked_carving", 32, 81, 350, 76),
+    ("threshold_dragon_gold", 32, 76, 390, 82),
+    ("threshold_blue_seal", 32, 57, 350, 90),
+    ("threshold_blue_runes", 32, 52, 350, 90),
+    ("threshold_green_runes", 32, 33, 390, 86),
+    ("threshold_cyan_runes", 32, 27, 350, 88),
+    ("threshold_purple_seal", 32, 4, 350, 92),
+]
+for trim_name, x, y, w, h in thresholds:
+    add_decal(trim_name, x, y, w, h, opacity=0.78)
+add_decal("threshold_purple_runes", 24, 43, 350, 86, rotation=90, opacity=0.48)
+add_decal("threshold_cracked_carving", 40, 43, 350, 76, rotation=90, opacity=0.48)
+add_decal("trim_long_cloud_dark", 32, 119, 720, 78, opacity=0.38)
+add_decal("trim_long_cloud_gold", 32, 95, 820, 80, opacity=0.44)
+add_decal("trim_long_emblem_gold", 32, 12, 920, 86, opacity=0.42)
+
+# --- Chamber gates. Flat front-facing art is used as wall-aligned billboards.
+gate_positions = [
+    ("gate_open_frame", 32, 142, 0.88),
+    ("gate_empty_frame", 32, 129, 0.90),
+    ("gate_quarter_open", 32, 108, 0.90),
+    ("gate_half_open", 32, 81, 0.92),
+    ("gate_three_quarter_open", 32, 57, 0.92),
+    ("gate_magic_seal", 32, 33, 0.96),
+    ("gate_boss_closed", 32, 27, 1.05),
+    ("gate_boss_chained", 32, 4, 1.05),
+]
+for gate_name, x, y, scale in gate_positions:
+    add_prop(gate_name, x, y, scale, layer=0, casts_shadow=False, blocks_light=False)
+# A sealed side alcove uses the remaining closed gate without obstructing the route.
+add_prop("gate_closed", 23, 116, 0.72, layer=0, casts_shadow=False)
+
+# --- New perspective-correct generated prop sheets.
+# These replace the earlier high-angle miniature-looking obstacle set. Every
+# generated asset is used once, while the central south-to-north route remains
+# clear for combat and chamber progression.
+
+GENERATED_PROP_PLACEMENTS: list[tuple[str, float, float, float, bool, int, tuple[float, float], float]] = [
+    # Structural obstacles.
+    ("structural_short_square_pillar", 27, 138, .66, True, 1, (0, 0), 24),
+    ("structural_damaged_square_pillar", 37, 138, .66, True, 1, (0, 0), 24),
+    ("structural_short_round_column", 24, 119, .68, True, 1, (0, 2), 23),
+    ("structural_broken_round_column", 40, 119, .68, True, 1, (0, 2), 23),
+    ("structural_low_rect_pedestal", 22, 96, .70, True, 0, (62, 34), 0),
+    ("structural_low_square_pedestal", 42, 96, .70, True, 0, (48, 38), 0),
+    ("structural_dragon_support_block", 22, 86, .70, True, 0, (52, 42), 0),
+    ("structural_boundary_post", 42, 86, .68, True, 1, (0, 4), 20),
+    ("structural_collapsed_pillar_base", 20, 91, .72, False, 1, (0, 0), 20),
+    ("structural_half_cracked_column", 44, 91, .70, True, 1, (0, 3), 24),
+    ("structural_carved_cover_block", 18, 18, .74, True, 0, (72, 40), 0),
+    ("structural_broken_support", 46, 18, .72, True, 1, (0, 3), 26),
+    ("structural_low_wall_fragment", 19, 10, .72, True, 0, (78, 30), 0),
+    ("structural_damaged_wall_fragment", 45, 10, .72, True, 0, (78, 30), 0),
+    ("structural_guardian_lion_pedestal", 23, 7, .70, True, 1, (0, 5), 30),
+    ("structural_brazier_pedestal", 41, 7, .70, True, 1, (0, 4), 27),
+
+    # Ritual props.
+    ("ritual_amber_brazier", 25, 121, .66, True, 1, (0, 3), 24),
+    ("ritual_cyan_brazier", 39, 121, .66, True, 1, (0, 3), 24),
+    ("ritual_extinguished_brazier", 24, 113, .64, True, 1, (0, 3), 23),
+    ("ritual_incense_altar", 40, 113, .66, True, 0, (66, 32), 0),
+    ("ritual_offering_table", 22, 116, .66, True, 0, (68, 34), 0),
+    ("ritual_seal_pedestal", 42, 116, .66, True, 0, (52, 38), 0),
+    ("ritual_rune_pedestal", 25, 70, .66, True, 0, (50, 38), 0),
+    ("ritual_gong_stand", 39, 70, .68, True, 0, (68, 28), 0),
+    ("ritual_chained_post", 23, 63, .66, True, 1, (0, 4), 22),
+    ("ritual_incense_burner", 41, 63, .68, False, 1, (0, 2), 18),
+    ("ritual_stone_basin", 24, 46, .68, True, 1, (0, 3), 26),
+    ("ritual_cracked_platform", 40, 46, .70, True, 0, (74, 46), 0),
+    ("ritual_candle_cluster", 22, 39, .68, False, 1, (0, 0), 14),
+    ("ritual_sealed_relic", 42, 39, .68, True, 0, (50, 36), 0),
+    ("ritual_damaged_shrine_base", 25, 35, .68, False, 0, (58, 36), 0),
+    ("ritual_spirit_lantern", 39, 35, .66, True, 1, (0, 4), 22),
+
+    # Storage props.
+    ("storage_chest_plain_closed", 25, 134, .62, True, 0, (54, 28), 0),
+    ("storage_chest_plain_open", 39, 134, .62, True, 0, (54, 30), 0),
+    ("storage_chest_bronze_closed", 24, 120, .62, True, 0, (58, 30), 0),
+    ("storage_chest_bronze_open", 40, 120, .62, True, 0, (58, 32), 0),
+    ("storage_chest_ceremonial", 21, 99, .62, True, 0, (58, 30), 0),
+    ("storage_chest_broken", 43, 99, .62, False, 0, (58, 30), 0),
+    ("storage_large_urn", 24, 88, .62, True, 1, (0, 5), 22),
+    ("storage_small_jar", 40, 88, .62, False, 1, (0, 4), 17),
+    ("storage_cracked_urn", 22, 68, .62, True, 1, (0, 4), 21),
+    ("storage_shattered_urn", 42, 68, .66, False, 1, (0, 0), 18),
+    ("storage_crate", 22, 44, .62, True, 0, (52, 36), 0),
+    ("storage_reinforced_crate", 42, 44, .62, True, 0, (54, 38), 0),
+    ("storage_damaged_crate", 17, 22, .62, True, 0, (52, 36), 0),
+    ("storage_collapsed_crate", 47, 22, .64, False, 0, (52, 34), 0),
+    ("storage_scroll_bundle", 20, 14, .64, False, 1, (0, 0), 16),
+    ("storage_supply_basket", 44, 14, .64, False, 1, (0, 0), 18),
+
+    # Chamber ornaments.
+    ("ornament_dragon_relief_monument", 24, 94, .68, True, 0, (70, 38), 0),
+    ("ornament_circular_ritual_altar", 40, 94, .70, True, 0, (66, 48), 0),
+    ("ornament_rectangular_ceremonial_altar", 25, 84, .68, True, 0, (72, 34), 0),
+    ("ornament_guardian_statue", 39, 84, .68, True, 1, (0, 6), 27),
+    ("ornament_sword_shrine", 26, 73, .66, True, 0, (64, 34), 0),
+    ("ornament_ancient_bell", 38, 73, .68, True, 0, (66, 30), 0),
+    ("ornament_rune_obelisk", 26, 60, .66, True, 1, (0, 5), 23),
+    ("ornament_damaged_rune_obelisk", 38, 60, .66, True, 1, (0, 4), 22),
+    ("ornament_chained_relic", 27, 49, .66, True, 0, (56, 38), 0),
+    ("ornament_spiritual_fountain", 37, 49, .70, False, 1, (0, 0), 25),
+    ("ornament_small_sarcophagus", 16, 16, .70, True, 0, (76, 36), 0),
+    ("ornament_broken_monument", 48, 16, .70, True, 0, (72, 38), 0),
+    ("ornament_incense_shrine", 22, 25, .66, True, 0, (62, 34), 0),
+    ("ornament_prison_memorial", 42, 25, .68, True, 0, (64, 36), 0),
+    ("ornament_boss_emblem_pedestal", 26, 12, .70, True, 0, (66, 42), 0),
+    ("ornament_damaged_dragon_altar", 38, 12, .70, True, 0, (68, 40), 0),
+
+    # Low debris and clutter.
+    ("debris_loose_stones", 28, 132, .72, False, 1, (0, 0), 14),
+    ("debris_rubble_pile", 36, 132, .72, False, 1, (0, 0), 18),
+    ("debris_broken_floor_slab", 27, 118, .72, False, 0, (50, 28), 0),
+    ("debris_wall_bricks", 37, 118, .72, False, 1, (0, 0), 18),
+    ("debris_pillar_fragments", 20, 89, .72, False, 1, (0, 0), 20),
+    ("debris_ceramic_fragments", 44, 89, .72, False, 1, (0, 0), 16),
+    ("debris_wooden_boards", 25, 101, .72, False, 0, (48, 24), 0),
+    ("debris_broken_crate", 39, 101, .72, False, 0, (48, 26), 0),
+    ("debris_fallen_plaque", 27, 64, .72, False, 0, (48, 24), 0),
+    ("debris_tablet_fragment", 37, 64, .72, False, 0, (48, 24), 0),
+    ("debris_chain_coil", 27, 40, .72, False, 1, (0, 0), 16),
+    ("debris_bones_rubble", 37, 40, .72, False, 1, (0, 0), 18),
+    ("debris_torn_cloth_stones", 20, 20, .72, False, 1, (0, 0), 18),
+    ("debris_weapon_fragments", 44, 20, .72, False, 1, (0, 0), 17),
+    ("debris_ash_pile", 28, 24, .72, False, 1, (0, 0), 16),
+    ("debris_moss_stones", 36, 24, .72, False, 1, (0, 0), 18),
+]
+
+for prop_name, x, y, scale, collide, shape, collider_size, radius in GENERATED_PROP_PLACEMENTS:
+    add_generated_prop(
+        prop_name,
+        x,
+        y,
+        scale,
+        collision=collide,
+        shape=shape,
+        collider=collider_size,
+        radius=radius,
+        blocks_light=prop_name.startswith("structural_") and "pillar" in prop_name,
+        visual_offset=(0.0, 6.0 if y < 30 else 3.0),
+        collider_offset=(0.0, 4.0 if collide else 0.0),
+        anchor_y=1.0,
+        depth_bias=1.0,
     )
 
-
-OBSTACLES: list[tuple[object, ...]] = []
-
-# Large floor motifs anchor the major arenas without consuming collision space.
-for data in [
-    (30, 25, 650, 650, "Assets/environment/stone_medallion.png", (220, 211, 190, 255), 0.64),
-    (30, 8, 500, 500, "Assets/environment/ritual_square.png", (145, 221, 238, 255), 0.72),
-    (50, 8, 560, 560, "Assets/environment/stone_medallion.png", (240, 174, 142, 255), 0.54),
+# Keep shallow wall-aligned details from the original flat asset set. They are
+# background decorations rather than freestanding obstacles.
+for name, x, y, scale in [
+    ("low_relief_wall", 27, 108, 0.82),
+    ("wall_relief_short", 37, 108, 0.82),
+    ("wall_block_short", 23, 81, 0.80),
+    ("broken_wall_block", 41, 81, 0.80),
+    ("war_banner", 25, 57, 0.78),
+    ("war_banner", 39, 57, 0.78),
 ]:
-    x, y, w, h, path, tint, opacity = data
-    OBSTACLES.append(obstacle(x, y, w, h, path, mode=1, casts_shadow=0, tint=tint, opacity=opacity))
+    add_prop(name, x, y, scale, layer=0, collision=False, casts_shadow=False)
 
-# Puddles and floor damage add non-repeating visual texture.
-for x, y, sx, sy in [
-    (7, 23, 390, 260), (11, 28, 460, 310), (7, 32, 350, 240),
-]:
-    OBSTACLES.append(obstacle(x, y, sx, sy, "Assets/environment/water_puddle.png", mode=1, casts_shadow=0, tint=(145, 230, 238, 255), opacity=0.66))
-for x, y, size, rot_tint in [
-    (25, 42, 330, (210, 205, 192, 255)), (36, 40, 280, (210, 205, 192, 255)),
-    (22, 27, 300, (190, 205, 211, 255)), (39, 21, 260, (190, 205, 211, 255)),
-    (11, 13, 260, (170, 194, 202, 255)), (54, 30, 250, (225, 189, 158, 255)),
-]:
-    OBSTACLES.append(obstacle(x, y, size, size, "Assets/environment/floor_cracks.png", mode=1, casts_shadow=0, tint=rot_tint, opacity=0.55))
-
-# Architectural pillars frame entrances and room boundaries.
-for x, y in [(24, 48), (35, 48), (21, 38), (39, 38), (18, 22), (42, 22), (23, 17), (37, 17), (45, 22), (57, 22), (6, 10), (17, 10), (43, 4), (57, 4)]:
-    OBSTACLES.append(obstacle(x, y, 128, 242, "Assets/environment/stone_pillar.png", blocks_light=1, collision=1, shape=1, radius=30))
-for x, y in [(22, 32), (39, 31), (5, 30), (15, 19), (56, 34)]:
-    OBSTACLES.append(obstacle(x, y, 120, 205, "Assets/environment/broken_pillar.png", collision=1, shape=1, radius=28))
-
-# Treasure, urns and rubble live mostly near walls, preserving combat centers.
-for x, y in [(20, 41), (40, 41), (5, 33), (55, 35), (16, 11), (54, 12)]:
-    OBSTACLES.append(obstacle(x, y, 112, 96, "Assets/environment/treasure_chest.png", tint=(235, 210, 170, 255), collision=1, collider_w=74, collider_h=44))
-for x, y in [(25, 49), (34, 49), (22, 40), (38, 40), (5, 14), (18, 14), (46, 25), (56, 25), (24, 9), (36, 9)]:
-    OBSTACLES.append(obstacle(x, y, 72, 108, "Assets/environment/stone_urn.png", collision=1, shape=1, radius=20))
-for x, y, collision in [(23, 45, 0), (37, 45, 0), (20, 29, 1), (40, 29, 1), (6, 19, 0), (14, 31, 0), (47, 32, 0), (56, 19, 0), (45, 11, 0)]:
-    OBSTACLES.append(obstacle(x, y, 118, 78, "Assets/environment/rubble_pile.png", collision=collision, shape=1, radius=28 if collision else 0))
-
-# Animated flames correspond to authored lights below.
+# Animated flames are kept separate from their stands so lights can flicker
+# without requiring a different prop atlas.
 FLAMES = [
-    (25, 49, (255, 195, 126, 255), 0.0), (34, 49, (255, 195, 126, 255), 0.7),
-    (22, 37, (255, 158, 84, 255), 1.1), (38, 37, (255, 158, 84, 255), 2.0),
-    (15, 22, (106, 221, 238, 255), 0.5), (5, 22, (106, 221, 238, 255), 1.6),
-    (45, 22, (255, 132, 72, 255), 2.4), (57, 22, (255, 132, 72, 255), 3.1),
-    (27, 13, (104, 219, 241, 255), 1.9), (33, 13, (104, 219, 241, 255), 2.8),
-    (44, 12, (255, 103, 68, 255), 0.9), (56, 12, (255, 103, 68, 255), 2.2),
+    (28, 132, (255, 181, 104, 255), 0.0), (36, 132, (255, 181, 104, 255), 0.7),
+    (24, 114, (255, 139, 72, 255), 1.1), (40, 114, (255, 139, 72, 255), 2.0),
+    (22, 87, (255, 153, 81, 255), 0.5), (42, 87, (255, 153, 81, 255), 1.6),
+    (25, 69, (89, 213, 236, 255), 2.4), (39, 69, (89, 213, 236, 255), 3.1),
+    (25, 39, (89, 216, 241, 255), 1.9), (39, 39, (89, 216, 241, 255), 2.8),
+    (20, 12, (255, 105, 66, 255), 0.9), (44, 12, (255, 105, 66, 255), 2.2),
 ]
 for x, y, tint, phase in FLAMES:
-    OBSTACLES.append(obstacle(x, y, 104, 150, "Assets/environment/azure_flame_4x4.png", layer=0, tint=tint, opacity=0.9, casts_shadow=0, animated=1, columns=4, rows=4, frames=16, fps=10.0, phase=phase))
+    add_object(
+        "", x, y, 96, 142,
+        path="Assets/environment/azure_flame_4x4.png",
+        layer=0,
+        tint=tint,
+        opacity=0.90,
+        casts_shadow=False,
+        animated=True,
+        columns=4,
+        rows=4,
+        frames=16,
+        fps=10.0,
+        phase=phase,
+    )
 
-# Foreground framing is sparse and chamber-specific rather than a full wall.
-OBSTACLES.append(obstacle(30, 56, 620, 300, "Assets/environment/foreground_gate.png", layer=2, tint=(210, 198, 178, 255), opacity=0.88, casts_shadow=0))
-OBSTACLES.append(obstacle(50, 14, 600, 300, "Assets/environment/foreground_gate.png", layer=2, tint=(180, 160, 150, 255), opacity=0.48, casts_shadow=0))
+# Foreground framing creates Hades-like depth while remaining sparse enough
+# not to obscure combat. These are explicitly foreground-layer billboards.
+for name, x, y, scale, opacity in [
+    ("foreground_pillar_left", 25, 124, 0.78, 0.86),
+    ("foreground_pillar_right", 39, 124, 0.78, 0.86),
+    ("foreground_arch_segment", 22, 101, 0.80, 0.62),
+    ("foreground_roof_right", 42, 101, 0.82, 0.62),
+    ("foreground_railing", 24, 75, 0.80, 0.58),
+    ("foreground_chain_banner", 40, 75, 0.72, 0.58),
+    ("foreground_corner_drape", 23, 51, 0.82, 0.54),
+    ("foreground_hanging_beam", 41, 51, 0.74, 0.54),
+    ("foreground_pillar_left", 19, 26, 0.92, 0.72),
+    ("foreground_pillar_right", 45, 26, 0.92, 0.72),
+    ("foreground_arch_center", 32, 27, 1.02, 0.66),
+    ("foreground_broken_roof", 20, 4, 0.84, 0.48),
+    ("foreground_draped_gate", 44, 4, 0.78, 0.48),
+]:
+    add_prop(name, x, y, scale, layer=2, opacity=opacity, casts_shadow=False, collision=False)
 
 
-def light(ident: int, name: str, cid: int, x: float, y: float, radius: int,
-          intensity: float, color: tuple[int, int, int, int], phase: float,
-          flicker: float = 0.10) -> tuple[object, ...]:
+# ---------------------------------------------------------------------------
+# Authored lights
+# ---------------------------------------------------------------------------
+
+LIGHTS: list[dict[str, object]] = []
+
+
+def add_light(
+    ident: int,
+    name: str,
+    cid: int,
+    x: float,
+    y: float,
+    radius: float,
+    intensity: float,
+    color: tuple[int, int, int, int],
+    phase: float,
+    flicker: float = 0.10,
+    speed: float = 6.0,
+) -> None:
     wx, wy = world(x, y)
-    return (ident, name, cid, wx, wy, radius, intensity, color, 1, 0,
-            (0, -22), (1, 1), 0, flicker, 6.0, 0.04, phase)
+    LIGHTS.append({
+        "id": ident,
+        "name": name,
+        "chamber": cid,
+        "position": (wx, wy),
+        "radius": radius,
+        "intensity": intensity,
+        "color": color,
+        "enabled": 1,
+        "follows": 0,
+        "offset": (0.0, -22.0),
+        "scale": (1.0, 1.0),
+        "rotation": 0.0,
+        "flicker": flicker,
+        "speed": speed,
+        "radius_flicker": 0.04,
+        "phase": phase,
+    })
 
 
-LIGHTS = [
-    light(100, "Gate Brazier West", 0, 25, 49, 310, .62, (255, 157, 78, 255), .1, .15),
-    light(101, "Gate Brazier East", 0, 34, 49, 310, .62, (255, 157, 78, 255), 1.0, .15),
-    light(110, "Broken Seal Hall", 1, 30, 41, 560, .42, (238, 189, 126, 255), 2.1, .05),
-    light(111, "Hall West Brazier", 1, 22, 37, 300, .52, (255, 143, 72, 255), 1.4, .14),
-    light(112, "Hall East Brazier", 1, 38, 37, 300, .52, (255, 143, 72, 255), 2.5, .14),
-    light(120, "Dragon Court Core", 2, 30, 25, 760, .32, (202, 202, 190, 255), .8, .02),
-    light(121, "Dragon Court Dais", 2, 30, 25, 350, .38, (125, 194, 218, 255), 1.6, .05),
-    light(130, "Reliquary Pool", 3, 9, 25, 650, .60, (68, 194, 220, 255), .5, .05),
-    light(131, "Reliquary West", 3, 5, 22, 270, .48, (80, 211, 229, 255), 1.7, .10),
-    light(132, "Reliquary East", 3, 15, 22, 270, .48, (80, 211, 229, 255), 2.8, .10),
-    light(140, "Ember Archive", 4, 51, 26, 610, .56, (255, 133, 64, 255), 2.0, .11),
-    light(141, "Archive West", 4, 45, 22, 290, .54, (255, 123, 59, 255), 2.7, .15),
-    light(142, "Archive East", 4, 57, 22, 290, .54, (255, 123, 59, 255), 3.4, .15),
-    light(150, "Prison Moonlight", 5, 11, 13, 610, .50, (90, 172, 207, 255), 1.4, .04),
-    light(160, "Ritual Sanctum Core", 6, 30, 8, 650, .66, (65, 207, 235, 255), .3, .06),
-    light(161, "Sanctum West", 6, 27, 13, 280, .48, (95, 218, 240, 255), 1.8, .10),
-    light(162, "Sanctum East", 6, 33, 13, 280, .48, (95, 218, 240, 255), 2.9, .10),
-    light(170, "Iron Warden Throne", 7, 50, 8, 720, .52, (255, 92, 62, 255), 1.0, .07),
-    light(171, "Warden West", 7, 44, 12, 290, .56, (255, 111, 57, 255), 2.2, .16),
-    light(172, "Warden East", 7, 56, 12, 290, .56, (255, 111, 57, 255), 3.6, .16),
-]
+for args in [
+    (100, "Entrance West Lantern", 0, 28, 132, 330, .62, (255, 158, 82, 255), .1, .14),
+    (101, "Entrance East Lantern", 0, 36, 132, 330, .62, (255, 158, 82, 255), 1.0, .14),
+    (110, "Ember Hall Ambient", 1, 32, 116, 620, .39, (237, 182, 122, 255), 2.1, .04),
+    (111, "Ember Hall West", 1, 24, 114, 310, .56, (255, 136, 68, 255), 1.4, .15),
+    (112, "Ember Hall East", 1, 40, 114, 310, .56, (255, 136, 68, 255), 2.5, .15),
+    (120, "Dragon Court Moonlight", 2, 32, 91, 900, .31, (188, 197, 207, 255), .8, .02),
+    (121, "Dragon Court West", 2, 22, 87, 340, .50, (255, 143, 73, 255), 1.6, .12),
+    (122, "Dragon Court East", 2, 42, 87, 340, .50, (255, 143, 73, 255), 2.4, .12),
+    (130, "Reliquary Core", 3, 32, 66, 700, .60, (61, 191, 221, 255), .5, .05),
+    (131, "Reliquary West", 3, 25, 69, 300, .48, (79, 214, 235, 255), 1.7, .10),
+    (132, "Reliquary East", 3, 39, 69, 300, .48, (79, 214, 235, 255), 2.8, .10),
+    (140, "Sanctum Core", 4, 32, 42, 760, .62, (67, 202, 233, 255), .3, .06),
+    (141, "Sanctum West", 4, 25, 39, 310, .48, (91, 220, 242, 255), 1.8, .10),
+    (142, "Sanctum East", 4, 39, 39, 310, .48, (91, 220, 242, 255), 2.9, .10),
+    (150, "Warden Arena Ambient", 5, 32, 17, 1050, .39, (190, 121, 94, 255), 1.0, .03),
+    (151, "Warden West Pyre", 5, 20, 12, 350, .58, (255, 94, 57, 255), 2.2, .16),
+    (152, "Warden East Pyre", 5, 44, 12, 350, .58, (255, 94, 57, 255), 3.6, .16),
+    (153, "Warden Throne", 5, 32, 8, 520, .48, (255, 145, 91, 255), .7, .08),
+]:
+    add_light(*args)
 
 
-def is_tag(line: str) -> bool:
-    return bool(re.match(r"^[A-Z][A-Z_]+(?:\s|$)", line))
-
-
-def replace(lines: list[str], tag: str, replacement: list[str]) -> list[str]:
-    start = next(i for i, line in enumerate(lines) if line.startswith(tag + " "))
-    end = start + 1
-    while end < len(lines) and not is_tag(lines[end]):
-        end += 1
-    return lines[:start] + replacement + lines[end:]
-
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
 
 def grid_section(tag: str, rows: list[list[int]], extra: str = "") -> list[str]:
     return [f"{tag} {W} {H}{extra}"] + [" ".join(map(str, row)) for row in rows]
@@ -410,22 +765,87 @@ def piece_section(tag: str, data: list[list[list[list[int]]]]) -> list[str]:
     return output
 
 
-def obstacle_line(values: tuple[object, ...]) -> str:
-    items = list(values)
-    items[21] = f'"{items[21]}"'
-    return " ".join(str(value) for value in items)
+def obstacle_line(item: dict[str, object]) -> str:
+    x, y = item["position"]
+    w, h = item["size"]
+    tint = item["tint"]
+    sx, sy, sw, sh = item["source_rect"]
+    cw, ch = item["collider"]
+    path = str(item["path"]).replace('"', '')
+    values = [
+        x, y, w, h, item["type"], item["height_level"],
+        item["casts_shadow"], item["blocks_light"], item["layer"], item["mode"],
+        *tint, item["opacity"], item["animated"], item["columns"], item["rows"],
+        item["frames"], item["fps"], item["phase"], item["source_frame"],
+        sx, sy, sw, sh, item["rotation"], item["terrain_elevation"],
+        item["clip"], item["allow_ramps"], f'"{path}"', item["collision"],
+        item["auto"], item["shape"], cw, ch, item["radius"],
+        *item["visual_offset"], *item["collider_offset"],
+        item["anchor_y"], item["depth_bias"],
+    ]
+    return " ".join(str(value) for value in values)
 
 
-def light_line(values: tuple[object, ...]) -> str:
-    ident, name, cid, x, y, radius, intensity, color, enabled_l, follows, offset, scale, rotation, flicker, speed, radius_flicker, phase = values
-    return (f'{ident} "{name}" {cid} {x} {y} {radius} {intensity} '
-            f'{color[0]} {color[1]} {color[2]} {color[3]} {enabled_l} {follows} '
-            f'{offset[0]} {offset[1]} {scale[0]} {scale[1]} {rotation} '
-            f'{flicker} {speed} {radius_flicker} {phase}')
+def light_line(item: dict[str, object]) -> str:
+    x, y = item["position"]
+    r, g, b, a = item["color"]
+    ox, oy = item["offset"]
+    sx, sy = item["scale"]
+    return (
+        f'{item["id"]} "{item["name"]}" {item["chamber"]} '
+        f'{x} {y} {item["radius"]} {item["intensity"]} '
+        f'{r} {g} {b} {a} {item["enabled"]} {item["follows"]} '
+        f'{ox} {oy} {sx} {sy} {item["rotation"]} {item["flicker"]} '
+        f'{item["speed"]} {item["radius_flicker"]} {item["phase"]}'
+    )
+
+
+def is_traversable(ax: int, ay: int, bx: int, by: int) -> bool:
+    if not inside(bx, by) or not enabled[by][bx]:
+        return False
+    if elevation[ay][ax] == elevation[by][bx]:
+        return True
+    direction = ramp[ay][ax]
+    if direction in DIR_OFFSET:
+        dx, dy = DIR_OFFSET[direction]
+        if (ax + dx, ay + dy) == (bx, by) and elevation[by][bx] == elevation[ay][ax] + 1:
+            return True
+    direction = ramp[by][bx]
+    if direction in DIR_OFFSET:
+        dx, dy = DIR_OFFSET[direction]
+        if (bx + dx, by + dy) == (ax, ay) and elevation[ay][ax] == elevation[by][bx] + 1:
+            return True
+    return False
+
+
+def blocked_by_authored_obstacle(cell_x: int, cell_y: int) -> bool:
+    """Approximate Game::IsCellBlocked for deterministic map validation."""
+    center_x, center_y = world(cell_x, cell_y)
+    player_radius = 20.0
+
+    for item in OBSTACLES:
+        if not item["collision"] or item["mode"] != 0 or item["height_level"] > 0:
+            continue
+
+        object_x, object_y = item["position"]
+        if item["shape"] == 0:
+            collider_w, collider_h = item["collider"]
+            if collider_w <= 0.0 or collider_h <= 0.0:
+                collider_w, collider_h = item["size"]
+            if (
+                abs(center_x - object_x) <= collider_w * 0.5 + player_radius and
+                abs(center_y - object_y) <= collider_h * 0.5 + player_radius
+            ):
+                return True
+        else:
+            radius = float(item["radius"]) + player_radius + 4.0
+            if (center_x - object_x) ** 2 + (center_y - object_y) ** 2 <= radius ** 2:
+                return True
+
+    return False
 
 
 def validate_authored_layout() -> None:
-    # Every stored ramp must be valid and use the dedicated directional tile.
     for y in range(H):
         for x in range(W):
             direction = ramp[y][x]
@@ -433,70 +853,132 @@ def validate_authored_layout() -> None:
                 continue
             dx, dy = DIR_OFFSET[direction]
             tx, ty = x + dx, y + dy
-            if elevation[ty][tx] != elevation[y][x] + 1:
+            if not inside(tx, ty) or elevation[ty][tx] != elevation[y][x] + 1:
                 raise ValueError(f"invalid ramp at {(x, y)}")
             if tiles[y][x] != STAIR_TILE[direction]:
                 raise ValueError(f"wrong stair tile at {(x, y)}")
 
-    # Reachability mirrors the game's terrain edge rule, ignoring encounter
-    # gates. This catches accidental disconnected rooms before shipping.
-    start = (29, 56)
+    # Reachability starts at the authored southern entrance and must visit all
+    # chamber floors, including the boss arena.
+    start = (32, H - 1)
     queue = deque([start])
     visited = {start}
     while queue:
         x, y = queue.popleft()
         for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
             nx, ny = x + dx, y + dy
-            if not (0 <= nx < W and 0 <= ny < H and enabled[ny][nx]):
-                continue
-            traversable = elevation[ny][nx] == elevation[y][x]
-            if not traversable:
-                if ramp[y][x] in DIR_OFFSET and (x + DIR_OFFSET[ramp[y][x]][0], y + DIR_OFFSET[ramp[y][x]][1]) == (nx, ny):
-                    traversable = elevation[ny][nx] == elevation[y][x] + 1
-                if ramp[ny][nx] in DIR_OFFSET and (nx + DIR_OFFSET[ramp[ny][nx]][0], ny + DIR_OFFSET[ramp[ny][nx]][1]) == (x, y):
-                    traversable = elevation[y][x] == elevation[ny][nx] + 1
-            if traversable and (nx, ny) not in visited:
+            if (nx, ny) not in visited and is_traversable(x, y, nx, ny):
                 visited.add((nx, ny))
                 queue.append((nx, ny))
 
-    missing_chambers = {
-        cid for cid, *_ in CHAMBERS
-        if not any((x, y) in visited and chamber[y][x] == cid for y in range(H) for x in range(W))
+    missing = {
+        room.ident
+        for room in ROOMS
+        if not any(chamber[y][x] == room.ident and (x, y) in visited for y in range(H) for x in range(W))
     }
-    if missing_chambers:
-        raise ValueError(f"unreachable chambers: {sorted(missing_chambers)}")
+    if missing:
+        raise ValueError(f"unreachable chambers: {sorted(missing)}")
+
+    # Repeat the traversal with authored collision obstacles enabled. This
+    # prevents a decorative prop cluster from accidentally sealing a gate,
+    # a narrow connector or the only route through a combat chamber.
+    if blocked_by_authored_obstacle(*start):
+        raise ValueError("southern entrance is blocked by an authored obstacle")
+
+    obstacle_queue = deque([start])
+    obstacle_visited = {start}
+    while obstacle_queue:
+        x, y = obstacle_queue.popleft()
+        for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+            nx, ny = x + dx, y + dy
+            if (nx, ny) in obstacle_visited or not is_traversable(x, y, nx, ny):
+                continue
+            if blocked_by_authored_obstacle(nx, ny):
+                continue
+            obstacle_visited.add((nx, ny))
+            obstacle_queue.append((nx, ny))
+
+    obstacle_missing = {
+        room.ident
+        for room in ROOMS
+        if not any(
+            chamber[y][x] == room.ident and (x, y) in obstacle_visited
+            for y in range(H)
+            for x in range(W)
+        )
+    }
+    if obstacle_missing:
+        raise ValueError(
+            "collision props block progression to chambers: "
+            f"{sorted(obstacle_missing)}"
+        )
+
+    # The final northern threshold must also be reachable, not merely one
+    # arbitrary cell somewhere inside the boss chamber.
+    final_targets = {
+        (x, 0)
+        for x in range(30, 35)
+        if enabled[0][x] and not blocked_by_authored_obstacle(x, 0)
+    }
+    if final_targets and not (final_targets & obstacle_visited):
+        raise ValueError("boss chamber north exit is unreachable after prop placement")
+
+    # Every clipped decal anchor must be on valid, non-ramp terrain.
+    for item in OBSTACLES:
+        if item["mode"] != 1:
+            continue
+        wx, wy = item["position"]
+        cx = int((wx - ORIGIN_X) // TILE)
+        cy = int((wy - ORIGIN_Y) // TILE)
+        if not inside(cx, cy) or not enabled[cy][cx]:
+            raise ValueError(f"decal anchor outside terrain: {item['path']}")
+        if ramp[cy][cx] != NONE and not item["allow_ramps"]:
+            raise ValueError(f"decal anchor is a ramp: {item['path']}")
 
 
-def main() -> int:
-    validate_authored_layout()
-    lines = LEVEL.read_text(encoding="utf-8").splitlines()
-    lines[0] = "MOXIANG_LEVEL 11"
-    lines = replace(lines, "TILES", grid_section("TILES", tiles))
-    lines = replace(lines, "TERRAIN_ELEVATIONS", grid_section("TERRAIN_ELEVATIONS", elevation, " 64"))
-    lines = replace(lines, "TERRAIN_RAMPS", grid_section("TERRAIN_RAMPS", ramp))
-    lines = replace(lines, "WALL_TILES", wall_section("WALL_TILES", wall_tiles))
-    lines = replace(lines, "WALL_HEIGHTS", wall_section("WALL_HEIGHTS", wall_heights))
-    lines = replace(lines, "BUILT_WALL_PIECES", piece_section("BUILT_WALL_PIECES", built_pieces))
-    lines = replace(lines, "CLIFF_WALL_PIECES", piece_section("CLIFF_WALL_PIECES", cliff_pieces))
-    lines = replace(lines, "CHAMBERS", [f"CHAMBERS {len(CHAMBERS)}"] + [f'{cid} "{name}"' for cid, name, _, _ in CHAMBERS])
-    lines = replace(lines, "CHAMBER_STYLES", [f"CHAMBER_STYLES {len(CHAMBERS)}"] + [f"{cid} {color[0]} {color[1]} {color[2]} {color[3]} {vignette}" for cid, _, color, vignette in CHAMBERS])
+def build_lines() -> list[str]:
+    lines = ["MOXIANG_LEVEL 13"]
+    lines += grid_section("TILES", tiles)
+    lines += grid_section("TERRAIN_ELEVATIONS", elevation, " 64")
+    lines += grid_section("TERRAIN_RAMPS", ramp)
+    lines += wall_section("WALL_TILES", wall_tiles)
+    lines += wall_section("WALL_HEIGHTS", wall_heights)
+    lines += piece_section("BUILT_WALL_PIECES", built_pieces)
+    lines += piece_section("CLIFF_WALL_PIECES", cliff_pieces)
+    lines += [f"CHAMBERS {len(ROOMS)}"]
+    lines += [f'{room.ident} "{room.name}"' for room in ROOMS]
+    lines += [f"CHAMBER_STYLES {len(ROOMS)}"]
+    lines += [
+        f"{room.ident} {room.ambient[0]} {room.ambient[1]} {room.ambient[2]} {room.ambient[3]} "
+        f"{room.vignette} {room.camera_zoom} {room.focus[0]} {room.focus[1]}"
+        for room in ROOMS
+    ]
+
     cell_rows: list[list[int]] = []
     for y in range(H):
         values: list[int] = []
         for x in range(W):
             values.extend((enabled[y][x], chamber[y][x]))
         cell_rows.append(values)
-    lines = replace(lines, "CELL_LAYOUT", grid_section("CELL_LAYOUT", cell_rows))
-    lines = replace(lines, "TERRAIN_ATLAS", ['TERRAIN_ATLAS "Assets/tiles/dungeon_master_atlas.png" 8 8'])
-    lines = replace(lines, "TILE_WALKABILITY", ["TILE_WALKABILITY 64"] + [f"{index} 1" for index in range(64)])
-    lines = replace(lines, "TILE_BRUSHES", ["TILE_BRUSHES 64"] + [f'{index} "" 1 90 90 94 255' for index in range(64)])
-    lines = replace(lines, "OBSTACLES", [f"OBSTACLES {len(OBSTACLES)}"] + [obstacle_line(item) for item in OBSTACLES])
-    lines = replace(lines, "LIGHTS", [f"LIGHTS {len(LIGHTS)}"] + [light_line(item) for item in LIGHTS])
-    LEVEL.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    lines += grid_section("CELL_LAYOUT", cell_rows)
+    lines += ['TERRAIN_ATLAS "Assets/tiles/dungeon_master_atlas.png" 8 8']
+    lines += ["TILE_WALKABILITY 64"] + [f"{index} 1" for index in range(64)]
+    lines += ["TILE_BRUSHES 64"] + [f'{index} "" 1 90 90 94 255' for index in range(64)]
+    lines += [f"OBSTACLES {len(OBSTACLES)}"] + [obstacle_line(item) for item in OBSTACLES]
+    lines += [f"LIGHTS {len(LIGHTS)}"] + [light_line(item) for item in LIGHTS]
+    lines += ["NPCS 0"]
+    return lines
+
+
+def main() -> int:
+    validate_authored_layout()
+    LEVEL.write_text("\n".join(build_lines()) + "\n", encoding="utf-8")
+    ramp_count = sum(1 for row in ramp for direction in row if direction != NONE)
+    decal_count = sum(1 for item in OBSTACLES if item["mode"] == 1)
     print(
-        f"Rebuilt {LEVEL} with {len(CHAMBERS)} chambers, "
-        f"{sum(1 for row in ramp for direction in row if direction != NONE)} ramps, "
-        f"{len(OBSTACLES)} environment objects and {len(LIGHTS)} lights"
+        f"Rebuilt {LEVEL} as {len(ROOMS)} linear chambers: "
+        f"{ramp_count} ramps, {len(OBSTACLES)} objects ({decal_count} decals), "
+        f"{len(LIGHTS)} lights"
     )
     return 0
 

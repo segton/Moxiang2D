@@ -1,0 +1,1112 @@
+[
+  {
+    "name": "pillar_square_tall",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_square_tall.png",
+    "size": [
+      121,
+      239
+    ]
+  },
+  {
+    "name": "pillar_square_broken",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_square_broken.png",
+    "size": [
+      140,
+      198
+    ]
+  },
+  {
+    "name": "pillar_square_short",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_square_short.png",
+    "size": [
+      143,
+      181
+    ]
+  },
+  {
+    "name": "pillar_dragon_tall",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_dragon_tall.png",
+    "size": [
+      124,
+      234
+    ]
+  },
+  {
+    "name": "pillar_round_tall",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_round_tall.png",
+    "size": [
+      107,
+      229
+    ]
+  },
+  {
+    "name": "pillar_round_broken",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_round_broken.png",
+    "size": [
+      143,
+      194
+    ]
+  },
+  {
+    "name": "pillar_wood_tall",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_wood_tall.png",
+    "size": [
+      98,
+      222
+    ]
+  },
+  {
+    "name": "pillar_wood_short",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pillar_wood_short.png",
+    "size": [
+      95,
+      150
+    ]
+  },
+  {
+    "name": "pedestal_square",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/pedestal_square.png",
+    "size": [
+      138,
+      169
+    ]
+  },
+  {
+    "name": "guardian_lion_pedestal",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/guardian_lion_pedestal.png",
+    "size": [
+      164,
+      218
+    ]
+  },
+  {
+    "name": "brazier_pedestal",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/brazier_pedestal.png",
+    "size": [
+      165,
+      212
+    ]
+  },
+  {
+    "name": "wall_block_short",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/wall_block_short.png",
+    "size": [
+      154,
+      151
+    ]
+  },
+  {
+    "name": "wall_relief_short",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/wall_relief_short.png",
+    "size": [
+      194,
+      192
+    ]
+  },
+  {
+    "name": "column_ruin",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/column_ruin.png",
+    "size": [
+      168,
+      202
+    ]
+  },
+  {
+    "name": "fallen_column",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/fallen_column.png",
+    "size": [
+      212,
+      187
+    ]
+  },
+  {
+    "name": "broken_wall_block",
+    "category": "structural",
+    "source": "PillarsandStructuralObstacles.png",
+    "path": "Assets/environment/authored/broken_wall_block.png",
+    "size": [
+      192,
+      150
+    ]
+  },
+  {
+    "name": "urn_lidded",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/urn_lidded.png",
+    "size": [
+      139,
+      197
+    ]
+  },
+  {
+    "name": "urn_sealed",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/urn_sealed.png",
+    "size": [
+      150,
+      176
+    ]
+  },
+  {
+    "name": "urn_broken",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/urn_broken.png",
+    "size": [
+      187,
+      181
+    ]
+  },
+  {
+    "name": "chest_closed",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/chest_closed.png",
+    "size": [
+      181,
+      188
+    ]
+  },
+  {
+    "name": "chest_open",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/chest_open.png",
+    "size": [
+      176,
+      216
+    ]
+  },
+  {
+    "name": "crate_closed",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/crate_closed.png",
+    "size": [
+      161,
+      220
+    ]
+  },
+  {
+    "name": "crate_broken",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/crate_broken.png",
+    "size": [
+      192,
+      182
+    ]
+  },
+  {
+    "name": "rubble_large",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/rubble_large.png",
+    "size": [
+      190,
+      166
+    ]
+  },
+  {
+    "name": "loose_stones",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/loose_stones.png",
+    "size": [
+      147,
+      116
+    ]
+  },
+  {
+    "name": "scroll_stand",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/scroll_stand.png",
+    "size": [
+      114,
+      196
+    ]
+  },
+  {
+    "name": "candle_stand",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/candle_stand.png",
+    "size": [
+      84,
+      191
+    ]
+  },
+  {
+    "name": "ritual_bowl",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/ritual_bowl.png",
+    "size": [
+      141,
+      124
+    ]
+  },
+  {
+    "name": "debris_pottery",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/debris_pottery.png",
+    "size": [
+      172,
+      149
+    ]
+  },
+  {
+    "name": "debris_tablet",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/debris_tablet.png",
+    "size": [
+      179,
+      163
+    ]
+  },
+  {
+    "name": "stone_mask",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/stone_mask.png",
+    "size": [
+      154,
+      148
+    ]
+  },
+  {
+    "name": "coin_relic",
+    "category": "clutter",
+    "source": "SmallClutterPropSheet.png",
+    "path": "Assets/environment/authored/coin_relic.png",
+    "size": [
+      147,
+      143
+    ]
+  },
+  {
+    "name": "shrine_altar",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/shrine_altar.png",
+    "size": [
+      228,
+      236
+    ]
+  },
+  {
+    "name": "ceremonial_table",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/ceremonial_table.png",
+    "size": [
+      238,
+      242
+    ]
+  },
+  {
+    "name": "azure_fountain",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/azure_fountain.png",
+    "size": [
+      237,
+      186
+    ]
+  },
+  {
+    "name": "dragon_monument",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/dragon_monument.png",
+    "size": [
+      219,
+      226
+    ]
+  },
+  {
+    "name": "azure_censer",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/azure_censer.png",
+    "size": [
+      211,
+      221
+    ]
+  },
+  {
+    "name": "bell_shrine",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/bell_shrine.png",
+    "size": [
+      156,
+      243
+    ]
+  },
+  {
+    "name": "gong_shrine",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/gong_shrine.png",
+    "size": [
+      219,
+      213
+    ]
+  },
+  {
+    "name": "stone_sarcophagus",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/stone_sarcophagus.png",
+    "size": [
+      254,
+      256
+    ]
+  },
+  {
+    "name": "chain_posts",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/chain_posts.png",
+    "size": [
+      237,
+      222
+    ]
+  },
+  {
+    "name": "prison_cage",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/prison_cage.png",
+    "size": [
+      197,
+      255
+    ]
+  },
+  {
+    "name": "azure_lantern_tower",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/azure_lantern_tower.png",
+    "size": [
+      172,
+      229
+    ]
+  },
+  {
+    "name": "azure_reliquary",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/azure_reliquary.png",
+    "size": [
+      166,
+      247
+    ]
+  },
+  {
+    "name": "azure_temple",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/azure_temple.png",
+    "size": [
+      247,
+      220
+    ]
+  },
+  {
+    "name": "warden_throne",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/warden_throne.png",
+    "size": [
+      256,
+      220
+    ]
+  },
+  {
+    "name": "ritual_portal",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/ritual_portal.png",
+    "size": [
+      222,
+      200
+    ]
+  },
+  {
+    "name": "spirit_gate",
+    "category": "large_ornament",
+    "source": "LargeChamberOrnaments.png",
+    "path": "Assets/environment/authored/spirit_gate.png",
+    "size": [
+      222,
+      225
+    ]
+  },
+  {
+    "name": "low_relief_wall",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/low_relief_wall.png",
+    "size": [
+      183,
+      173
+    ]
+  },
+  {
+    "name": "iron_portcullis",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/iron_portcullis.png",
+    "size": [
+      180,
+      210
+    ]
+  },
+  {
+    "name": "spike_fence",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/spike_fence.png",
+    "size": [
+      205,
+      188
+    ]
+  },
+  {
+    "name": "hanging_gong_gate",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/hanging_gong_gate.png",
+    "size": [
+      188,
+      228
+    ]
+  },
+  {
+    "name": "dragon_fountain",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/dragon_fountain.png",
+    "size": [
+      173,
+      248
+    ]
+  },
+  {
+    "name": "lantern_post",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/lantern_post.png",
+    "size": [
+      167,
+      256
+    ]
+  },
+  {
+    "name": "azure_brazier",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/azure_brazier.png",
+    "size": [
+      161,
+      248
+    ]
+  },
+  {
+    "name": "warrior_statue",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/warrior_statue.png",
+    "size": [
+      194,
+      256
+    ]
+  },
+  {
+    "name": "floor_spikes",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/floor_spikes.png",
+    "size": [
+      187,
+      232
+    ]
+  },
+  {
+    "name": "gate_winching_device",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/gate_winching_device.png",
+    "size": [
+      153,
+      234
+    ]
+  },
+  {
+    "name": "chain_barrier",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/chain_barrier.png",
+    "size": [
+      213,
+      228
+    ]
+  },
+  {
+    "name": "engraved_floor_plate",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/engraved_floor_plate.png",
+    "size": [
+      206,
+      256
+    ]
+  },
+  {
+    "name": "carved_obelisk",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/carved_obelisk.png",
+    "size": [
+      109,
+      197
+    ]
+  },
+  {
+    "name": "war_banner",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/war_banner.png",
+    "size": [
+      207,
+      208
+    ]
+  },
+  {
+    "name": "rolling_spike_gate",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/rolling_spike_gate.png",
+    "size": [
+      193,
+      213
+    ]
+  },
+  {
+    "name": "azure_obelisk",
+    "category": "mechanical",
+    "source": "AngledPropSheet.png",
+    "path": "Assets/environment/authored/azure_obelisk.png",
+    "size": [
+      158,
+      214
+    ]
+  },
+  {
+    "name": "gate_closed",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_closed.png",
+    "size": [
+      293,
+      277
+    ]
+  },
+  {
+    "name": "gate_quarter_open",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_quarter_open.png",
+    "size": [
+      295,
+      277
+    ]
+  },
+  {
+    "name": "gate_half_open",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_half_open.png",
+    "size": [
+      295,
+      277
+    ]
+  },
+  {
+    "name": "gate_three_quarter_open",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_three_quarter_open.png",
+    "size": [
+      296,
+      278
+    ]
+  },
+  {
+    "name": "gate_open_frame",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_open_frame.png",
+    "size": [
+      295,
+      277
+    ]
+  },
+  {
+    "name": "gate_empty_frame",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_empty_frame.png",
+    "size": [
+      295,
+      277
+    ]
+  },
+  {
+    "name": "gate_magic_seal",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_magic_seal.png",
+    "size": [
+      291,
+      275
+    ]
+  },
+  {
+    "name": "gate_boss_closed",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_boss_closed.png",
+    "size": [
+      294,
+      276
+    ]
+  },
+  {
+    "name": "gate_boss_chained",
+    "category": "gate",
+    "source": "FrontWallGateSheet.png",
+    "path": "Assets/environment/authored/gate_boss_chained.png",
+    "size": [
+      294,
+      276
+    ]
+  },
+  {
+    "name": "foreground_pillar_left",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_pillar_left.png",
+    "size": [
+      241,
+      554
+    ]
+  },
+  {
+    "name": "foreground_arch_center",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_arch_center.png",
+    "size": [
+      345,
+      227
+    ]
+  },
+  {
+    "name": "foreground_arch_segment",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_arch_segment.png",
+    "size": [
+      217,
+      261
+    ]
+  },
+  {
+    "name": "foreground_pillar_right",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_pillar_right.png",
+    "size": [
+      161,
+      494
+    ]
+  },
+  {
+    "name": "foreground_broken_roof",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_broken_roof.png",
+    "size": [
+      269,
+      256
+    ]
+  },
+  {
+    "name": "foreground_hanging_beam",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_hanging_beam.png",
+    "size": [
+      328,
+      250
+    ]
+  },
+  {
+    "name": "foreground_railing",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_railing.png",
+    "size": [
+      353,
+      225
+    ]
+  },
+  {
+    "name": "foreground_draped_gate",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_draped_gate.png",
+    "size": [
+      253,
+      278
+    ]
+  },
+  {
+    "name": "foreground_corner_drape",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_corner_drape.png",
+    "size": [
+      232,
+      240
+    ]
+  },
+  {
+    "name": "foreground_chain_banner",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_chain_banner.png",
+    "size": [
+      426,
+      234
+    ]
+  },
+  {
+    "name": "foreground_roof_right",
+    "category": "foreground",
+    "source": "ForegroundFramingSheet.png",
+    "path": "Assets/environment/authored/foreground_roof_right.png",
+    "size": [
+      272,
+      234
+    ]
+  },
+  {
+    "name": "decal_dragon_grand",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_dragon_grand.png",
+    "size": [
+      370,
+      389
+    ]
+  },
+  {
+    "name": "decal_dragon_quadrants",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_dragon_quadrants.png",
+    "size": [
+      266,
+      267
+    ]
+  },
+  {
+    "name": "decal_dragon_half",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_dragon_half.png",
+    "size": [
+      145,
+      206
+    ]
+  },
+  {
+    "name": "decal_cyan_ring_quadrants",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_cyan_ring_quadrants.png",
+    "size": [
+      201,
+      374
+    ]
+  },
+  {
+    "name": "decal_broken_dragon",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_broken_dragon.png",
+    "size": [
+      219,
+      225
+    ]
+  },
+  {
+    "name": "decal_labyrinth_round",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_labyrinth_round.png",
+    "size": [
+      224,
+      255
+    ]
+  },
+  {
+    "name": "decal_azure_seal_round",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_azure_seal_round.png",
+    "size": [
+      238,
+      255
+    ]
+  },
+  {
+    "name": "decal_gold_seal_round",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_gold_seal_round.png",
+    "size": [
+      203,
+      255
+    ]
+  },
+  {
+    "name": "decal_small_symbols",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_small_symbols.png",
+    "size": [
+      958,
+      105
+    ]
+  },
+  {
+    "name": "decal_ring_row",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_ring_row.png",
+    "size": [
+      985,
+      135
+    ]
+  },
+  {
+    "name": "decal_calligraphy_row",
+    "category": "floor_decal",
+    "source": "LargeFloorDecals.png",
+    "path": "Assets/environment/authored/decal_calligraphy_row.png",
+    "size": [
+      972,
+      133
+    ]
+  },
+  {
+    "name": "threshold_steps_plain",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_steps_plain.png",
+    "size": [
+      307,
+      64
+    ]
+  },
+  {
+    "name": "threshold_emblem_gold",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_emblem_gold.png",
+    "size": [
+      378,
+      65
+    ]
+  },
+  {
+    "name": "threshold_cracked_plain",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_cracked_plain.png",
+    "size": [
+      307,
+      65
+    ]
+  },
+  {
+    "name": "threshold_cloud_carving",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_cloud_carving.png",
+    "size": [
+      312,
+      68
+    ]
+  },
+  {
+    "name": "threshold_flame_carving",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_flame_carving.png",
+    "size": [
+      380,
+      68
+    ]
+  },
+  {
+    "name": "threshold_cracked_carving",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_cracked_carving.png",
+    "size": [
+      309,
+      69
+    ]
+  },
+  {
+    "name": "threshold_dragon_gold",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_dragon_gold.png",
+    "size": [
+      381,
+      79
+    ]
+  },
+  {
+    "name": "threshold_purple_seal",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_purple_seal.png",
+    "size": [
+      313,
+      90
+    ]
+  },
+  {
+    "name": "threshold_purple_runes",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_purple_runes.png",
+    "size": [
+      380,
+      90
+    ]
+  },
+  {
+    "name": "threshold_blue_seal",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_blue_seal.png",
+    "size": [
+      309,
+      90
+    ]
+  },
+  {
+    "name": "threshold_blue_runes",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_blue_runes.png",
+    "size": [
+      313,
+      78
+    ]
+  },
+  {
+    "name": "threshold_green_runes",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_green_runes.png",
+    "size": [
+      382,
+      76
+    ]
+  },
+  {
+    "name": "threshold_cyan_runes",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/threshold_cyan_runes.png",
+    "size": [
+      312,
+      78
+    ]
+  },
+  {
+    "name": "trim_long_cloud_dark",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/trim_long_cloud_dark.png",
+    "size": [
+      648,
+      65
+    ]
+  },
+  {
+    "name": "trim_long_cloud_gold",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/trim_long_cloud_gold.png",
+    "size": [
+      645,
+      65
+    ]
+  },
+  {
+    "name": "trim_long_emblem_gold",
+    "category": "floor_trim",
+    "source": "TresholdEntranceFloorTrimSheet.png",
+    "path": "Assets/environment/authored/trim_long_emblem_gold.png",
+    "size": [
+      646,
+      71
+    ]
+  }
+]

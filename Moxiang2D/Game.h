@@ -339,6 +339,12 @@ enum class EditorTool
     EraseObstacle,
     MoveObstacle,
 
+    // Dedicated terrain-aware floor decoration workflow. Decals are
+    // authored independently from collidable upright obstacles.
+    PlaceDecal,
+    EraseDecal,
+    MoveDecal,
+
     PlaceLight,
     EraseLight,
     MoveLight
@@ -361,6 +367,12 @@ enum class ObstacleRenderMode
 {
     Billboard = 0,
     GroundDecal
+};
+
+enum class EditorLightingMode
+{
+    Full = 0,
+    Unlit
 };
 
 struct TileBrush
@@ -511,6 +523,17 @@ struct DungeonChamber
     };
 
     float vignetteStrength = 0.18f;
+
+    // Shared gameplay-camera zoom. Larger rooms use a smaller value so the
+    // complete combat space remains readable. Build Mode keeps manual zoom.
+    float cameraZoom = 1.50f;
+
+    // Optional authored focus offset, useful when a throne, gate or boss
+    // occupies one side of a chamber.
+    Vector2 cameraFocusOffset{
+        0.0f,
+        0.0f
+    };
 };
 
 struct Obstacle
@@ -545,6 +568,22 @@ struct Obstacle
         64.0f
     };
 
+    Vector2 visualOffset{
+    0.0f,
+    0.0f
+    };
+
+    Vector2 colliderOffset{
+        0.0f,
+        0.0f
+    };
+
+    float visualAnchorY =
+        1.0f;
+
+    float depthBiasPixels =
+        0.0f;
+
     float colliderRadius =
         32.0f;
 
@@ -572,6 +611,22 @@ struct Obstacle
     int animationFrameCount = 1;
     float animationFps = 8.0f;
     float animationPhase = 0.0f;
+
+    // First cell used in a regular sprite-sheet grid. Static props can use
+    // this without enabling animation; animated props begin from this cell.
+    int sourceFrame = 0;
+
+    // Irregular atlas sheets can use an exact pixel rectangle instead of a
+    // regular grid cell. A non-positive width/height disables the override.
+    Rectangle sourceRectangle{};
+
+    // Flat floor-decal controls. rotationDegrees rotates around position.
+    // terrainElevation is captured when placed so a decal never floats over
+    // a neighbouring raised platform. -1 means derive it on first use.
+    float rotationDegrees = 0.0f;
+    int terrainElevation = -1;
+    bool clipToTerrainElevation = true;
+    bool allowOnRamps = false;
 };
 
 
@@ -585,8 +640,8 @@ struct Player
     float radius = 28.0f;
     float speed = 420.0f;
 
-    int hp = 120;
-    int maxHp = 120;
+    int hp = 1800;
+    int maxHp = 1800;
 
     // Melee combat
     float meleeRange = 78.0f;
@@ -1108,6 +1163,7 @@ private:
     void UpdateInput(float dt);
     void UpdatePlayer(float dt);
     void UpdateCamera(float dt);
+    void UpdateChamberCameraZoom(float dt);
 
     void UpdateEditorCameraControls();
     void HandleDroppedFiles();
@@ -1157,6 +1213,17 @@ private:
     int GetObstacleAt(
         Vector2 worldPosition,
         int requiredHeightLevel = -1
+    ) const;
+
+    int GetGroundDecalAt(
+        Vector2 worldPosition,
+        bool includeInvisible = false
+    ) const;
+
+    bool IsGroundDecalCellCompatible(
+        const Obstacle& obstacle,
+        int cellX,
+        int cellY
     ) const;
 
     int GetLightAt(
@@ -1246,6 +1313,7 @@ private:
     bool IsTileWalkable(int tileType) const;
     bool IsCellBlocked(int cellX, int cellY) const;
 
+    bool FindLevelEntranceCell(int& outX, int& outY) const;
     bool FindNearestWalkableCell(Vector2 worldPosition, int& outX, int& outY) const;
     bool FindPath(Vector2 startWorld, Vector2 targetWorld, std::vector<Vector2>& outPath) const;
 
@@ -1428,6 +1496,7 @@ private:
 
     Vector2 GetDashDirectionWorld() const;
     Vector2 GetViewDirectionFromPlayerDirection(PlayerDirection direction) const;
+    Vector2 GetPlayerFacingWorldDirection() const;
 
     bool IsPlayerInvulnerable() const;
 
@@ -1773,6 +1842,11 @@ private:
     );
     void DrawHybridGroundDecals3D();
     void DrawHybridEditorOverlay3D();
+    void DrawObstacleColliderDebug3D(
+        const Obstacle& obstacle,
+        Color color
+    ) const;
+
     void DrawHybridScreenOverlays2D();
 
     void DrawHybridBillboardFrame(
@@ -1954,6 +2028,14 @@ private:
     float hybridCameraOrthoSize = 22.0f;
     float hybridCameraDistance = 42.0f;
     float hybridCameraFollowSpeed = 8.0f;
+
+    // Camera elevation follows the player's actual terrain surface instead
+    // of the focus-shifted camera target. This prevents the camera from
+    // sampling a raised north-wall cell while the player is colliding with it.
+    float hybridCameraTerrainHeightUnits = 0.0f;
+    float hybridCameraHeightFollowSpeed = 14.0f;
+
+    float chamberCameraZoomSpeed = 2.4f;
 
     // One gameplay tile equals one 3D world unit.
     float hybridUnitsPerPixel = 1.0f / TileSize;
@@ -2142,6 +2224,12 @@ private:
 
     bool buildMode = false;
     bool showGrid = true;
+    bool showObstacleColliders = true;
+    bool showEditorMarkerLegend = true;
+
+    EditorLightingMode editorLightingMode =
+        EditorLightingMode::Unlit;
+
     bool showChamberOverlay = true;
 
     int editorTool = static_cast<int>(EditorTool::PaintTile);
@@ -2186,12 +2274,12 @@ private:
     int newObstacleRenderLayer =
         static_cast<int>(
             ObstacleRenderLayer::World
-        );
+            );
 
     int newObstacleRenderMode =
         static_cast<int>(
             ObstacleRenderMode::Billboard
-        );
+            );
 
     Color newObstacleTint = WHITE;
     float newObstacleOpacity = 1.0f;
@@ -2202,6 +2290,11 @@ private:
     int newObstacleAnimationFrameCount = 1;
     float newObstacleAnimationFps = 8.0f;
     float newObstacleAnimationPhase = 0.0f;
+    int newObstacleSourceFrame = 0;
+    Rectangle newObstacleSourceRectangle{};
+    float newObstacleRotationDegrees = 0.0f;
+    bool newDecalClipToTerrainElevation = true;
+    bool newDecalAllowOnRamps = false;
 
     // When enabled, editor operations only select
     // obstacles on the active level.
@@ -2211,6 +2304,7 @@ private:
 
     int selectedObstacleType = 0;
     bool obstacleSnapToGrid = true;
+    bool decalSnapToGrid = false;
     bool obstacleFitWidthToTiles = true;
     bool obstacleKeepAspectRatio = true;
 
@@ -3105,5 +3199,7 @@ private:
 
     float GetPlayerVisualHeight() const;
 
-
+    Vector2 GetObstacleCollisionCenter(
+        const Obstacle& obstacle
+    ) const;
 };

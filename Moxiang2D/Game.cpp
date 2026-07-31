@@ -23,6 +23,209 @@
 #include "imgui.h"
 #endif
 
+namespace
+{
+    struct DecalClipVertex
+    {
+        Vector2 world{};
+        Vector2 uv{};
+    };
+
+    Vector2 RotateAroundOrigin(
+        Vector2 point,
+        float radians
+    )
+    {
+        const float cosine = cosf(radians);
+        const float sine = sinf(radians);
+
+        return Vector2{
+            point.x * cosine - point.y * sine,
+            point.x * sine + point.y * cosine
+        };
+    }
+
+    DecalClipVertex LerpDecalVertex(
+        const DecalClipVertex& start,
+        const DecalClipVertex& end,
+        float amount
+    )
+    {
+        amount = Clamp(amount, 0.0f, 1.0f);
+
+        return DecalClipVertex{
+            Vector2Lerp(start.world, end.world, amount),
+            Vector2Lerp(start.uv, end.uv, amount)
+        };
+    }
+
+    template <typename InsideFunction, typename IntersectionFunction>
+    std::vector<DecalClipVertex> ClipDecalPolygonEdge(
+        const std::vector<DecalClipVertex>& input,
+        InsideFunction inside,
+        IntersectionFunction intersection
+    )
+    {
+        std::vector<DecalClipVertex> output;
+
+        if (input.empty())
+        {
+            return output;
+        }
+
+        DecalClipVertex previous = input.back();
+        bool previousInside = inside(previous);
+
+        for (const DecalClipVertex& current : input)
+        {
+            const bool currentInside = inside(current);
+
+            if (currentInside != previousInside)
+            {
+                output.push_back(
+                    intersection(previous, current)
+                );
+            }
+
+            if (currentInside)
+            {
+                output.push_back(current);
+            }
+
+            previous = current;
+            previousInside = currentInside;
+        }
+
+        return output;
+    }
+
+    std::vector<DecalClipVertex> ClipDecalPolygonToRectangle(
+        std::vector<DecalClipVertex> polygon,
+        float minimumX,
+        float minimumY,
+        float maximumX,
+        float maximumY
+    )
+    {
+        polygon = ClipDecalPolygonEdge(
+            polygon,
+            [minimumX](const DecalClipVertex& vertex)
+            {
+                return vertex.world.x >= minimumX;
+            },
+            [minimumX](const DecalClipVertex& start, const DecalClipVertex& end)
+            {
+                const float denominator = end.world.x - start.world.x;
+                const float amount =
+                    fabsf(denominator) <= 0.00001f
+                    ? 0.0f
+                    : (minimumX - start.world.x) / denominator;
+
+                return LerpDecalVertex(start, end, amount);
+            }
+        );
+
+        polygon = ClipDecalPolygonEdge(
+            polygon,
+            [maximumX](const DecalClipVertex& vertex)
+            {
+                return vertex.world.x <= maximumX;
+            },
+            [maximumX](const DecalClipVertex& start, const DecalClipVertex& end)
+            {
+                const float denominator = end.world.x - start.world.x;
+                const float amount =
+                    fabsf(denominator) <= 0.00001f
+                    ? 0.0f
+                    : (maximumX - start.world.x) / denominator;
+
+                return LerpDecalVertex(start, end, amount);
+            }
+        );
+
+        polygon = ClipDecalPolygonEdge(
+            polygon,
+            [minimumY](const DecalClipVertex& vertex)
+            {
+                return vertex.world.y >= minimumY;
+            },
+            [minimumY](const DecalClipVertex& start, const DecalClipVertex& end)
+            {
+                const float denominator = end.world.y - start.world.y;
+                const float amount =
+                    fabsf(denominator) <= 0.00001f
+                    ? 0.0f
+                    : (minimumY - start.world.y) / denominator;
+
+                return LerpDecalVertex(start, end, amount);
+            }
+        );
+
+        polygon = ClipDecalPolygonEdge(
+            polygon,
+            [maximumY](const DecalClipVertex& vertex)
+            {
+                return vertex.world.y <= maximumY;
+            },
+            [maximumY](const DecalClipVertex& start, const DecalClipVertex& end)
+            {
+                const float denominator = end.world.y - start.world.y;
+                const float amount =
+                    fabsf(denominator) <= 0.00001f
+                    ? 0.0f
+                    : (maximumY - start.world.y) / denominator;
+
+                return LerpDecalVertex(start, end, amount);
+            }
+        );
+
+        return polygon;
+    }
+
+    std::vector<DecalClipVertex> MakeDecalPolygon(
+        Vector2 center,
+        Vector2 size,
+        float rotationDegrees
+    )
+    {
+        const float halfWidth = std::max(1.0f, size.x) * 0.5f;
+        const float halfHeight = std::max(1.0f, size.y) * 0.5f;
+        const float radians = rotationDegrees * DEG2RAD;
+
+        const Vector2 localPoints[4] = {
+            { -halfWidth, -halfHeight },
+            { halfWidth, -halfHeight },
+            { halfWidth, halfHeight },
+            { -halfWidth, halfHeight }
+        };
+
+        const Vector2 textureCoordinates[4] = {
+            { 0.0f, 0.0f },
+            { 1.0f, 0.0f },
+            { 1.0f, 1.0f },
+            { 0.0f, 1.0f }
+        };
+
+        std::vector<DecalClipVertex> polygon;
+        polygon.reserve(4);
+
+        for (int index = 0; index < 4; ++index)
+        {
+            const Vector2 rotated =
+                RotateAroundOrigin(localPoints[index], radians);
+
+            polygon.push_back(
+                DecalClipVertex{
+                    Vector2Add(center, rotated),
+                    textureCoordinates[index]
+                }
+            );
+        }
+
+        return polygon;
+    }
+}
+
 
 /*
 static void DrawOrientedEllipse(
@@ -1247,16 +1450,23 @@ void Game::Init()
         RebuildChamberBounds();
     }
 
-    Vector2 requestedSpawn =
-        CellToWorld(
-            MapWidth / 2,
-            MapHeight / 2
-        );
-
     int spawnCellX = MapWidth / 2;
     int spawnCellY = MapHeight / 2;
 
+    const bool hasAuthoredEntrance =
+        FindLevelEntranceCell(
+            spawnCellX,
+            spawnCellY
+        );
+
+    Vector2 requestedSpawn =
+        CellToWorld(
+            spawnCellX,
+            spawnCellY
+        );
+
     if (
+        hasAuthoredEntrance ||
         FindNearestWalkableCell(
             requestedSpawn,
             spawnCellX,
@@ -2467,6 +2677,20 @@ void Game::UpdateActiveChamber(
         );
 
     if (
+        forceUpdate &&
+        newChamber != nullptr &&
+        !buildMode
+        )
+    {
+        camera.zoom =
+            Clamp(
+                newChamber->cameraZoom,
+                0.35f,
+                3.50f
+            );
+    }
+
+    if (
         newChamber != nullptr &&
         !newChamber->cleared &&
         !newChamber->encounterStarted &&
@@ -3222,7 +3446,7 @@ bool Game::SaveLevel(const char* path) const
         return false;
     }
 
-    out << "MOXIANG_LEVEL 11\n";
+    out << "MOXIANG_LEVEL 13\n";
 
     out << "TILES " << MapWidth << " " << MapHeight << "\n";
 
@@ -3476,6 +3700,12 @@ bool Game::SaveLevel(const char* path) const
             << static_cast<int>(chamber.ambientLight.a)
             << " "
             << chamber.vignetteStrength
+            << " "
+            << chamber.cameraZoom
+            << " "
+            << chamber.cameraFocusOffset.x
+            << " "
+            << chamber.cameraFocusOffset.y
             << "\n";
     }
 
@@ -3578,10 +3808,10 @@ bool Game::SaveLevel(const char* path) const
             << obstacle.blocksLight << " "
             << static_cast<int>(
                 obstacle.renderLayer
-            ) << " "
+                ) << " "
             << static_cast<int>(
                 obstacle.renderMode
-            ) << " "
+                ) << " "
             << static_cast<int>(obstacle.tint.r) << " "
             << static_cast<int>(obstacle.tint.g) << " "
             << static_cast<int>(obstacle.tint.b) << " "
@@ -3593,6 +3823,15 @@ bool Game::SaveLevel(const char* path) const
             << obstacle.animationFrameCount << " "
             << obstacle.animationFps << " "
             << obstacle.animationPhase << " "
+            << obstacle.sourceFrame << " "
+            << obstacle.sourceRectangle.x << " "
+            << obstacle.sourceRectangle.y << " "
+            << obstacle.sourceRectangle.width << " "
+            << obstacle.sourceRectangle.height << " "
+            << obstacle.rotationDegrees << " "
+            << obstacle.terrainElevation << " "
+            << obstacle.clipToTerrainElevation << " "
+            << obstacle.allowOnRamps << " "
             << std::quoted(
                 ToPortableAssetPath(
                     obstacle.imagePath
@@ -3603,7 +3842,14 @@ bool Game::SaveLevel(const char* path) const
             << static_cast<int>(obstacle.collisionShape) << " "
             << obstacle.colliderSize.x << " "
             << obstacle.colliderSize.y << " "
-            << obstacle.colliderRadius << "\n";
+            << obstacle.colliderRadius << " "
+            << obstacle.visualOffset.x << " "
+            << obstacle.visualOffset.y << " "
+            << obstacle.colliderOffset.x << " "
+            << obstacle.colliderOffset.y << " "
+            << obstacle.visualAnchorY << " "
+            << obstacle.depthBiasPixels
+            << "\n";
     }
 
     out << "LIGHTS " << lights.size() << "\n";
@@ -4220,14 +4466,32 @@ bool Game::LoadLevel(const char* path)
                 int b = 98;
                 int a = 255;
                 float vignetteStrength = 0.18f;
+                float cameraZoom = 1.50f;
+                Vector2 cameraFocusOffset{};
 
-                in
-                    >> chamberId
-                    >> r
-                    >> g
-                    >> b
-                    >> a
-                    >> vignetteStrength;
+                if (version >= 12)
+                {
+                    in
+                        >> chamberId
+                        >> r
+                        >> g
+                        >> b
+                        >> a
+                        >> vignetteStrength
+                        >> cameraZoom
+                        >> cameraFocusOffset.x
+                        >> cameraFocusOffset.y;
+                }
+                else
+                {
+                    in
+                        >> chamberId
+                        >> r
+                        >> g
+                        >> b
+                        >> a
+                        >> vignetteStrength;
+                }
 
                 EnsureChamberExists(
                     chamberId
@@ -4264,6 +4528,16 @@ bool Game::LoadLevel(const char* path)
                         0.0f,
                         1.0f
                     );
+
+                chamber->cameraZoom =
+                    Clamp(
+                        cameraZoom,
+                        0.35f,
+                        3.50f
+                    );
+
+                chamber->cameraFocusOffset =
+                    cameraFocusOffset;
             }
         }
         else if (tag == "CELL_LAYOUT")
@@ -4498,11 +4772,11 @@ bool Game::LoadLevel(const char* path)
                 int renderLayer =
                     static_cast<int>(
                         ObstacleRenderLayer::World
-                    );
+                        );
                 int renderMode =
                     static_cast<int>(
                         ObstacleRenderMode::Billboard
-                    );
+                        );
 
                 int tintR = 255;
                 int tintG = 255;
@@ -4514,7 +4788,59 @@ bool Game::LoadLevel(const char* path)
                 int colliderAuto = 1;
                 int collisionShape = 0;
 
-                if (version >= 11)
+                if (version >= 12)
+                {
+                    in
+                        >> obstacle.position.x
+                        >> obstacle.position.y
+                        >> obstacle.size.x
+                        >> obstacle.size.y
+                        >> obstacle.type
+                        >> obstacle.heightLevel
+                        >> castsShadow
+                        >> blocksLight
+                        >> renderLayer
+                        >> renderMode
+                        >> tintR
+                        >> tintG
+                        >> tintB
+                        >> tintA
+                        >> obstacle.opacity
+                        >> animated
+                        >> obstacle.animationColumns
+                        >> obstacle.animationRows
+                        >> obstacle.animationFrameCount
+                        >> obstacle.animationFps
+                        >> obstacle.animationPhase
+                        >> obstacle.sourceFrame
+                        >> obstacle.sourceRectangle.x
+                        >> obstacle.sourceRectangle.y
+                        >> obstacle.sourceRectangle.width
+                        >> obstacle.sourceRectangle.height
+                        >> obstacle.rotationDegrees
+                        >> obstacle.terrainElevation
+                        >> obstacle.clipToTerrainElevation
+                        >> obstacle.allowOnRamps
+                        >> std::quoted(imagePath)
+                        >> collisionEnabled
+                        >> colliderAuto
+                        >> collisionShape
+                        >> obstacle.colliderSize.x
+                        >> obstacle.colliderSize.y
+                        >> obstacle.colliderRadius;
+
+                    if (version >= 13)
+                    {
+                        in
+                            >> obstacle.visualOffset.x
+                            >> obstacle.visualOffset.y
+                            >> obstacle.colliderOffset.x
+                            >> obstacle.colliderOffset.y
+                            >> obstacle.visualAnchorY
+                            >> obstacle.depthBiasPixels;
+                    }
+                }
+                else if (version >= 11)
                 {
                     in
                         >> obstacle.position.x
@@ -4572,10 +4898,10 @@ bool Game::LoadLevel(const char* path)
                         foreground != 0
                         ? static_cast<int>(
                             ObstacleRenderLayer::Foreground
-                        )
+                            )
                         : static_cast<int>(
                             ObstacleRenderLayer::World
-                        );
+                            );
                 }
                 else
                 {
@@ -4597,15 +4923,22 @@ bool Game::LoadLevel(const char* path)
                     obstacle.heightLevel = 0;
                 }
 
+                obstacle.visualAnchorY =
+                    Clamp(
+                        obstacle.visualAnchorY,
+                        0.0f,
+                        1.0f
+                    );
+
                 renderLayer =
                     std::max(
                         static_cast<int>(
                             ObstacleRenderLayer::Background
-                        ),
+                            ),
                         std::min(
                             static_cast<int>(
                                 ObstacleRenderLayer::Foreground
-                            ),
+                                ),
                             renderLayer
                         )
                     );
@@ -4614,11 +4947,11 @@ bool Game::LoadLevel(const char* path)
                     std::max(
                         static_cast<int>(
                             ObstacleRenderMode::Billboard
-                        ),
+                            ),
                         std::min(
                             static_cast<int>(
                                 ObstacleRenderMode::GroundDecal
-                            ),
+                                ),
                             renderMode
                         )
                     );
@@ -4651,12 +4984,12 @@ bool Game::LoadLevel(const char* path)
                 obstacle.renderLayer =
                     static_cast<ObstacleRenderLayer>(
                         renderLayer
-                    );
+                        );
 
                 obstacle.renderMode =
                     static_cast<ObstacleRenderMode>(
                         renderMode
-                    );
+                        );
 
                 obstacle.tint = {
                     static_cast<unsigned char>(
@@ -4714,10 +5047,28 @@ bool Game::LoadLevel(const char* path)
                         obstacle.animationFps
                     );
 
+                obstacle.sourceFrame =
+                    std::max(
+                        0,
+                        obstacle.sourceFrame
+                    );
+
+                if (
+                    obstacle.renderMode ==
+                    ObstacleRenderMode::GroundDecal &&
+                    obstacle.terrainElevation < 0
+                    )
+                {
+                    obstacle.terrainElevation =
+                        GetTerrainElevationAtWorld(
+                            obstacle.position
+                        );
+                }
+
                 obstacle.collisionShape =
                     static_cast<CollisionShape>(
                         collisionShape
-                    );
+                        );
 
                 if (!loadPath.empty())
                 {
@@ -4734,6 +5085,46 @@ bool Game::LoadLevel(const char* path)
                 UpdateObstacleAutoCollider(
                     obstacle
                 );
+                if (
+                    obstacle.renderMode ==
+                    ObstacleRenderMode::GroundDecal
+                    )
+                {
+                    int decalCellX = 0;
+                    int decalCellY = 0;
+
+                    if (
+                        WorldToCell(
+                            obstacle.position,
+                            decalCellX,
+                            decalCellY
+                        ) &&
+                        IsCellEnabled(
+                            decalCellX,
+                            decalCellY
+                        )
+                        )
+                    {
+                        const int actualElevation =
+                            GetTerrainElevation(
+                                decalCellX,
+                                decalCellY
+                            );
+
+                        // A decal's anchor must match the terrain directly
+                        // beneath its saved position. Otherwise terrain clipping
+                        // can reject every fragment and make it invisible.
+                        if (
+                            obstacle.terrainElevation < 0 ||
+                            obstacle.terrainElevation !=
+                            actualElevation
+                            )
+                        {
+                            obstacle.terrainElevation =
+                                actualElevation;
+                        }
+                    }
+                }
 
                 obstacles.push_back(
                     obstacle
@@ -6551,6 +6942,47 @@ Rectangle Game::GetObstacleSourceRect(
         return {};
     }
 
+    if (
+        obstacle.sourceRectangle.width > 0.0f &&
+        obstacle.sourceRectangle.height > 0.0f
+        )
+    {
+        const float maximumX =
+            static_cast<float>(obstacle.texture.width);
+
+        const float maximumY =
+            static_cast<float>(obstacle.texture.height);
+
+        const float sourceX =
+            Clamp(
+                obstacle.sourceRectangle.x,
+                0.0f,
+                std::max(0.0f, maximumX - 1.0f)
+            );
+
+        const float sourceY =
+            Clamp(
+                obstacle.sourceRectangle.y,
+                0.0f,
+                std::max(0.0f, maximumY - 1.0f)
+            );
+
+        return Rectangle{
+            sourceX,
+            sourceY,
+            Clamp(
+                obstacle.sourceRectangle.width,
+                1.0f,
+                maximumX - sourceX
+            ),
+            Clamp(
+                obstacle.sourceRectangle.height,
+                1.0f,
+                maximumY - sourceY
+            )
+        };
+    }
+
     const int columns =
         std::max(
             1,
@@ -6576,7 +7008,16 @@ Rectangle Game::GetObstacleSourceRect(
             )
         );
 
-    int frame = 0;
+    const int firstFrame =
+        std::max(
+            0,
+            std::min(
+                maximumFrames - 1,
+                obstacle.sourceFrame
+            )
+        );
+
+    int frame = firstFrame;
 
     if (
         obstacle.animated &&
@@ -6590,7 +7031,17 @@ Rectangle Game::GetObstacleSourceRect(
                 obstacle.animationPhase
             );
 
+        const int availableFrames =
+            std::max(
+                1,
+                std::min(
+                    frameCount,
+                    maximumFrames - firstFrame
+                )
+            );
+
         frame =
+            firstFrame +
             static_cast<int>(
                 floorf(
                     animationTime *
@@ -6599,25 +7050,25 @@ Rectangle Game::GetObstacleSourceRect(
                         obstacle.animationFps
                     )
                 )
-            ) %
-            frameCount;
+                ) %
+            availableFrames;
     }
 
     const float frameWidth =
         static_cast<float>(
             obstacle.texture.width
-        ) /
+            ) /
         static_cast<float>(
             columns
-        );
+            );
 
     const float frameHeight =
         static_cast<float>(
             obstacle.texture.height
-        ) /
+            ) /
         static_cast<float>(
             rows
-        );
+            );
 
     return Rectangle{
         static_cast<float>(
@@ -6655,7 +7106,7 @@ Color Game::GetObstacleDrawTint(
             Clamp(
                 static_cast<float>(
                     tint.a
-                ) *
+                    ) *
                 Clamp(
                     obstacle.opacity,
                     0.0f,
@@ -6665,7 +7116,7 @@ Color Game::GetObstacleDrawTint(
                 0.0f,
                 255.0f
             )
-        );
+            );
 
     return tint;
 }
@@ -6961,6 +7412,17 @@ void Game::Update(float dt)
         );
     }
 #if MOXIANG_USE_IMGUI
+    if (
+        buildMode &&
+        IsKeyPressed(KEY_F8)
+        )
+    {
+        editorLightingMode =
+            editorLightingMode == EditorLightingMode::Full
+            ? EditorLightingMode::Unlit
+            : EditorLightingMode::Full;
+    }
+
     if (IsKeyPressed(KEY_R))
     {
 
@@ -7172,10 +7634,20 @@ void Game::Draw()
     perfDrawNpcsMs = 0.0f;
     perfDrawPlayerMs = 0.0f;
 
-    // Browser and desktop windows may be resized.
-    EnsureLightingTargets();
+    const bool editorUnlit =
+        buildMode &&
+        editorLightingMode ==
+        EditorLightingMode::Unlit;
+
+    // Browser and desktop windows may be resized. Unlit Build Mode skips
+    // lighting-target maintenance as well as the light-map/composite passes.
+    if (!editorUnlit)
+    {
+        EnsureLightingTargets();
+    }
 
     const bool useLighting =
+        !editorUnlit &&
         lightingReady &&
         sceneTarget.id != 0 &&
         lightTarget.id != 0 &&
@@ -7344,7 +7816,12 @@ void Game::Draw()
 
     // Chamber-authored vignette is applied after the lit world composite,
     // but before intentionally unlit combat flashes and the HUD.
-    DrawAtmosphereOverlay();
+    // Unlit Build Mode intentionally skips it so terrain, decals and props
+    // remain easy to inspect.
+    if (!editorUnlit)
+    {
+        DrawAtmosphereOverlay();
+    }
 
     // --------------------------------------------------
     // PASS 4:
@@ -7874,7 +8351,6 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
     if (released)
     {
         draggingObstacle = false;
-        selectedObstacleIndex = -1;
         draggingLight = false;
         return;
     }
@@ -8080,11 +8556,20 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
             )
             )
         {
-            worldPosition =
-                CellToWorld(
-                    pickedCellX,
-                    pickedCellY
-                );
+            const bool usesCellCenter =
+                editorTool <=
+                static_cast<int>(
+                    EditorTool::RemoveRamp
+                    );
+
+            if (usesCellCenter)
+            {
+                worldPosition =
+                    CellToWorld(
+                        pickedCellX,
+                        pickedCellY
+                    );
+            }
         }
     }
 
@@ -8752,7 +9237,7 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
                         newObstacleRenderLayer
                     )
                 )
-            );
+                );
 
         obstacle.renderMode =
             static_cast<ObstacleRenderMode>(
@@ -8763,7 +9248,7 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
                         newObstacleRenderMode
                     )
                 )
-            );
+                );
 
         obstacle.tint =
             newObstacleTint;
@@ -8795,6 +9280,21 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         obstacle.animationPhase =
             newObstacleAnimationPhase;
 
+        obstacle.sourceFrame =
+            std::max(0, newObstacleSourceFrame);
+
+        obstacle.sourceRectangle =
+            newObstacleSourceRectangle;
+
+        obstacle.rotationDegrees =
+            newObstacleRotationDegrees;
+
+        obstacle.clipToTerrainElevation =
+            newDecalClipToTerrainElevation;
+
+        obstacle.allowOnRamps =
+            newDecalAllowOnRamps;
+
         obstacle.collisionEnabled = newObstacleCollision;
         obstacle.colliderAuto = newObstacleColliderAuto;
         obstacle.collisionShape = static_cast<CollisionShape>(newObstacleCollisionShape);
@@ -8809,6 +9309,11 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
             obstacle.castsShadow = false;
             obstacle.blocksLight = false;
             obstacle.collisionEnabled = false;
+            obstacle.terrainElevation =
+                GetTerrainElevation(
+                    placementCellX,
+                    placementCellY
+                );
         }
 
         if (currentObstacleHasTexture)
@@ -8885,8 +9390,219 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
 
             obstacles[selectedObstacleIndex].position = newPosition;
 
+            if (
+                obstacles[selectedObstacleIndex].renderMode ==
+                ObstacleRenderMode::GroundDecal
+                )
+            {
+                obstacles[selectedObstacleIndex].terrainElevation =
+                    GetTerrainElevationAtWorld(newPosition);
+            }
+
             currentPath.clear();
             hasPath = false;
+        }
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::PlaceDecal)
+        )
+    {
+        if (!pressed)
+        {
+            return;
+        }
+
+        int placementCellX = 0;
+        int placementCellY = 0;
+
+        if (
+            !WorldToCell(
+                worldPosition,
+                placementCellX,
+                placementCellY
+            ) ||
+            !IsCellEnabled(
+                placementCellX,
+                placementCellY
+            )
+            )
+        {
+            return;
+        }
+
+        Vector2 placePosition =
+            decalSnapToGrid
+            ? CellToWorld(
+                placementCellX,
+                placementCellY
+            )
+            : worldPosition;
+
+        Obstacle decal;
+        decal.position = placePosition;
+        decal.size = newObstacleSize;
+        decal.type = selectedObstacleType;
+        decal.heightLevel = 0;
+        decal.castsShadow = false;
+        decal.blocksLight = false;
+        decal.renderLayer = ObstacleRenderLayer::Background;
+        decal.renderMode = ObstacleRenderMode::GroundDecal;
+        decal.tint = newObstacleTint;
+        decal.opacity = Clamp(newObstacleOpacity, 0.0f, 1.0f);
+        decal.animated = newObstacleAnimated;
+        decal.animationColumns =
+            std::max(1, newObstacleAnimationColumns);
+        decal.animationRows =
+            std::max(1, newObstacleAnimationRows);
+        decal.animationFrameCount =
+            std::max(
+                1,
+                std::min(
+                    decal.animationColumns *
+                    decal.animationRows,
+                    newObstacleAnimationFrameCount
+                )
+            );
+        decal.animationFps =
+            std::max(0.01f, newObstacleAnimationFps);
+        decal.animationPhase =
+            newObstacleAnimationPhase;
+        decal.sourceFrame =
+            std::max(0, newObstacleSourceFrame);
+        decal.sourceRectangle =
+            newObstacleSourceRectangle;
+        decal.rotationDegrees =
+            newObstacleRotationDegrees;
+        decal.terrainElevation =
+            GetTerrainElevation(
+                placementCellX,
+                placementCellY
+            );
+        decal.clipToTerrainElevation =
+            newDecalClipToTerrainElevation;
+        decal.allowOnRamps =
+            newDecalAllowOnRamps;
+        decal.collisionEnabled = false;
+        decal.colliderAuto = true;
+
+        if (currentObstacleHasTexture)
+        {
+            LoadObstacleTexture(
+                decal,
+                currentObstacleImagePath
+            );
+        }
+
+        obstacles.push_back(decal);
+        selectedObstacleIndex =
+            static_cast<int>(obstacles.size()) - 1;
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::EraseDecal)
+        )
+    {
+        if (!pressed)
+        {
+            return;
+        }
+
+        const int decalIndex =
+            GetGroundDecalAt(
+                worldPosition,
+                true
+            );
+
+        if (decalIndex >= 0)
+        {
+            if (obstacles[decalIndex].hasTexture)
+            {
+                UnloadTexture(
+                    obstacles[decalIndex].texture
+                );
+            }
+
+            obstacles.erase(
+                obstacles.begin() + decalIndex
+            );
+
+            selectedObstacleIndex = -1;
+            draggingObstacle = false;
+        }
+    }
+    else if (
+        editorTool ==
+        static_cast<int>(EditorTool::MoveDecal)
+        )
+    {
+        if (pressed)
+        {
+            selectedObstacleIndex =
+                GetGroundDecalAt(worldPosition);
+
+            draggingObstacle =
+                selectedObstacleIndex >= 0;
+
+            if (draggingObstacle)
+            {
+                dragOffset =
+                    Vector2Subtract(
+                        obstacles[selectedObstacleIndex].position,
+                        worldPosition
+                    );
+            }
+        }
+
+        if (
+            down &&
+            draggingObstacle &&
+            selectedObstacleIndex >= 0 &&
+            selectedObstacleIndex <
+            static_cast<int>(obstacles.size())
+            )
+        {
+            Vector2 newPosition =
+                Vector2Add(
+                    worldPosition,
+                    dragOffset
+                );
+
+            int cellX = 0;
+            int cellY = 0;
+
+            if (
+                WorldToCell(newPosition, cellX, cellY) &&
+                IsCellEnabled(cellX, cellY)
+                )
+            {
+                if (decalSnapToGrid)
+                {
+                    newPosition =
+                        CellToWorld(cellX, cellY);
+                }
+
+                Obstacle& decal =
+                    obstacles[selectedObstacleIndex];
+
+                const TerrainCell& targetCell =
+                    terrainCells[
+                        CellIndex(cellX, cellY)
+                    ];
+
+                if (
+                    targetCell.rampDirection !=
+                    RampDirection::None &&
+                    !decal.allowOnRamps
+                    )
+                {
+                    return;
+                }
+
+                decal.position = newPosition;
+                decal.terrainElevation =
+                    GetTerrainElevation(cellX, cellY);
+            }
         }
     }
     else if (
@@ -9081,6 +9797,8 @@ void Game::UpdateCamera(
     float dt
 )
 {
+    UpdateChamberCameraZoom(dt);
+
     if (
         rendererMode ==
         WorldRendererMode::Hybrid3D
@@ -9109,10 +9827,37 @@ void Game::UpdateCamera(
     }
 #endif
 
+    Vector2 desiredWorldTarget =
+        playerPosition;
+
+    if (
+        const DungeonChamber* activeChamber =
+        FindChamberById(activeChamberId)
+        )
+    {
+        desiredWorldTarget =
+            Vector2Add(
+                desiredWorldTarget,
+                activeChamber->cameraFocusOffset
+            );
+    }
+
+    // Convert the focus-shifted target to view space,
+    // but sample elevation only from the player's actual position.
+    // This prevents camera jitter when the focus offset drifts into
+    // raised wall cells near the north edge of a chamber.
     Vector2 desiredTarget =
-        WorldToViewElevated(
-            playerPosition
+        WorldToView(
+            desiredWorldTarget
         );
+
+    if (useIsometricView)
+    {
+        desiredTarget.y -=
+            GetTerrainHeightAtWorld(
+                playerPosition
+            );
+    }
 
     camera.target =
         Vector2Lerp(
@@ -9123,6 +9868,56 @@ void Game::UpdateCamera(
                 0.0f,
                 1.0f
             )
+        );
+}
+
+void Game::UpdateChamberCameraZoom(
+    float dt
+)
+{
+#if MOXIANG_USE_IMGUI
+    if (buildMode)
+    {
+        return;
+    }
+#endif
+
+    const DungeonChamber* activeChamber =
+        FindChamberById(activeChamberId);
+
+    if (activeChamber == nullptr)
+    {
+        return;
+    }
+
+    const float targetZoom =
+        Clamp(
+            activeChamber->cameraZoom,
+            0.35f,
+            3.50f
+        );
+
+    if (dt <= 0.0f)
+    {
+        camera.zoom = targetZoom;
+        return;
+    }
+
+    const float interpolation =
+        1.0f -
+        expf(
+            -std::max(
+                0.01f,
+                chamberCameraZoomSpeed
+            ) *
+            dt
+        );
+
+    camera.zoom =
+        Lerp(
+            camera.zoom,
+            targetZoom,
+            Clamp(interpolation, 0.0f, 1.0f)
         );
 }
 
@@ -9146,17 +9941,32 @@ int Game::GetObstacleAt(
     int requiredHeightLevel
 ) const
 {
+    constexpr float selectionPadding =
+        10.0f;
+
     for (
-        int i =
+        int obstacleIndex =
         static_cast<int>(
             obstacles.size()
             ) - 1;
-            i >= 0;
-            --i
+        obstacleIndex >= 0;
+        --obstacleIndex
         )
     {
         const Obstacle& obstacle =
-            obstacles[i];
+            obstacles[
+                obstacleIndex
+            ];
+
+        // Floor decals have their own selection tool.
+        // They must not steal clicks from upright obstacles.
+        if (
+            obstacle.renderMode !=
+            ObstacleRenderMode::Billboard
+            )
+        {
+            continue;
+        }
 
         if (
             requiredHeightLevel >= 0 &&
@@ -9167,36 +9977,97 @@ int Game::GetObstacleAt(
             continue;
         }
 
-        Vector2 selectionSize =
-            obstacle.colliderSize;
+        if (obstacle.collisionEnabled)
+        {
+            const Vector2 collisionCenter =
+                GetObstacleCollisionCenter(
+                    obstacle
+                );
 
-        if (
-            obstacle.renderMode ==
-            ObstacleRenderMode::GroundDecal
+            if (
+                obstacle.collisionShape ==
+                CollisionShape::Circle
+                )
+            {
+                const float selectionRadius =
+                    std::max(
+                        8.0f,
+                        obstacle.colliderRadius
+                    ) +
+                    selectionPadding;
+
+                if (
+                    Vector2Distance(
+                        worldPosition,
+                        collisionCenter
+                    ) <=
+                    selectionRadius
+                    )
+                {
+                    return obstacleIndex;
+                }
+            }
+            else
+            {
+                Rectangle collider =
+                    GetObstacleCollisionRect(
+                        obstacle
+                    );
+
+                collider.x -=
+                    selectionPadding;
+
+                collider.y -=
+                    selectionPadding;
+
+                collider.width +=
+                    selectionPadding *
+                    2.0f;
+
+                collider.height +=
+                    selectionPadding *
+                    2.0f;
+
+                if (
+                    CheckCollisionPointRec(
+                        worldPosition,
+                        collider
+                    )
+                    )
+                {
+                    return obstacleIndex;
+                }
+            }
+        }
+
+        // Also provide a small ground-footprint selection zone.
+        // This helps select decorative props with collision disabled.
+        const Vector2 footprintCenter =
+            obstacle.position;
+
+        const Vector2 footprintSize{
+            std::max(
+                TileSize * 0.45f,
+                obstacle.size.x * 0.36f
+            ),
+
+            std::max(
+                TileSize * 0.30f,
+                obstacle.size.x * 0.22f
             )
-        {
-            selectionSize = {
-                std::max(8.0f, obstacle.size.x),
-                std::max(8.0f, obstacle.size.y)
-            };
-        }
-        else if (!obstacle.collisionEnabled)
-        {
-            selectionSize = {
-                std::max(TileSize * 0.50f, obstacle.size.x * 0.35f),
-                std::max(TileSize * 0.35f, obstacle.size.y * 0.18f)
-            };
-        }
+        };
 
-        Rectangle footprint{
-            obstacle.position.x -
-                selectionSize.x * 0.5f,
+        const Rectangle footprint{
+            footprintCenter.x -
+                footprintSize.x *
+                0.5f,
 
-            obstacle.position.y -
-                selectionSize.y * 0.5f,
+            footprintCenter.y -
+                footprintSize.y *
+                0.5f,
 
-            selectionSize.x,
-            selectionSize.y
+            footprintSize.x,
+            footprintSize.y
         };
 
         if (
@@ -9206,11 +10077,175 @@ int Game::GetObstacleAt(
             )
             )
         {
-            return i;
+            return obstacleIndex;
         }
     }
 
     return -1;
+}
+
+int Game::GetGroundDecalAt(
+    Vector2 worldPosition,
+    bool includeInvisible
+) const
+{
+    for (
+        int index =
+        static_cast<int>(
+            obstacles.size()
+            ) - 1;
+            index >= 0;
+            --index
+        )
+    {
+        const Obstacle& decal =
+            obstacles[index];
+
+        if (
+            decal.renderMode !=
+            ObstacleRenderMode::GroundDecal
+            )
+        {
+            continue;
+        }
+
+        if (!includeInvisible)
+        {
+            const bool hasVisibleTexture =
+                decal.hasTexture &&
+                decal.texture.id != 0;
+
+            const bool hasVisibleOpacity =
+                decal.opacity > 0.01f &&
+                decal.tint.a > 0;
+
+            if (
+                !hasVisibleTexture ||
+                !hasVisibleOpacity
+                )
+            {
+                continue;
+            }
+
+            int anchorCellX = 0;
+            int anchorCellY = 0;
+
+            if (
+                !WorldToCell(
+                    decal.position,
+                    anchorCellX,
+                    anchorCellY
+                ) ||
+                !IsGroundDecalCellCompatible(
+                    decal,
+                    anchorCellX,
+                    anchorCellY
+                )
+                )
+            {
+                continue;
+            }
+        }
+
+        const Vector2 relative =
+            Vector2Subtract(
+                worldPosition,
+                decal.position
+            );
+
+        const Vector2 local =
+            RotateAroundOrigin(
+                relative,
+                -decal.rotationDegrees *
+                DEG2RAD
+            );
+
+        constexpr float pickPadding =
+            10.0f;
+
+        const float halfWidth =
+            std::max(
+                8.0f,
+                decal.size.x *
+                0.5f
+            ) +
+            pickPadding;
+
+        const float halfHeight =
+            std::max(
+                8.0f,
+                decal.size.y *
+                0.5f
+            ) +
+            pickPadding;
+
+        if (
+            fabsf(local.x) <= halfWidth &&
+            fabsf(local.y) <= halfHeight
+            )
+        {
+            return index;
+        }
+    }
+
+    return -1;
+}
+
+bool Game::IsGroundDecalCellCompatible(
+    const Obstacle& obstacle,
+    int cellX,
+    int cellY
+) const
+{
+    if (
+        !IsCellInside(cellX, cellY) ||
+        !IsCellEnabled(cellX, cellY)
+        )
+    {
+        return false;
+    }
+
+    const TerrainCell& cell =
+        terrainCells[
+            CellIndex(cellX, cellY)
+        ];
+
+    if (
+        !obstacle.allowOnRamps &&
+        cell.rampDirection != RampDirection::None
+        )
+    {
+        return false;
+    }
+
+    if (!obstacle.clipToTerrainElevation)
+    {
+        return true;
+    }
+
+    const int anchorElevation =
+        obstacle.terrainElevation >= 0
+        ? obstacle.terrainElevation
+        : GetTerrainElevationAtWorld(
+            obstacle.position
+        );
+
+    if (
+        GetTerrainElevation(cellX, cellY) !=
+        anchorElevation
+        )
+    {
+        return false;
+    }
+
+    const int anchorChamber =
+        FindChamberAtWorld(
+            obstacle.position
+        );
+
+    return
+        anchorChamber < 0 ||
+        cell.chamberId == anchorChamber;
 }
 
 
@@ -11845,13 +12880,20 @@ Vector2 Game::GetObstacleViewPosition(
     const Obstacle& obstacle
 ) const
 {
-    Vector2 viewPosition =
-        WorldToView(
-            obstacle.position
+    const Vector2 visualPosition =
+        Vector2Add(
+            obstacle.position,
+            obstacle.visualOffset
         );
 
-    // Terrain elevation raises the entire object.
-    // heightLevel remains a local offset for roofs and stacked props.
+    Vector2 viewPosition =
+        WorldToView(
+            visualPosition
+        );
+
+    // Sample terrain from the actual obstacle footprint.
+    // visualOffset moves only the artwork and must not move
+    // the obstacle onto another terrain elevation.
     viewPosition.y -=
         GetTerrainHeightAtWorld(
             obstacle.position
@@ -11859,7 +12901,8 @@ Vector2 Game::GetObstacleViewPosition(
         static_cast<float>(
             obstacle.heightLevel
             ) *
-        obstacleHeightStep;
+        obstacleHeightStep +
+        obstacle.depthBiasPixels;
 
     return viewPosition;
 }
@@ -12110,6 +13153,57 @@ bool Game::IsCellBlocked(int cellX, int cellY) const
     }
 
     return false;
+}
+
+bool Game::FindLevelEntranceCell(
+    int& outX,
+    int& outY
+) const
+{
+    // Chamber 0 is authored as the level entrance. Select its southernmost
+    // unblocked floor cell, preferring the horizontal centre of the map.
+    // This keeps linear south-to-north dungeons deterministic without adding
+    // a separate spawn section to older level files.
+    bool found = false;
+    int bestY = -1;
+    int bestCenterDistance = MapWidth + 1;
+
+    for (int y = 0; y < MapHeight; ++y)
+    {
+        for (int x = 0; x < MapWidth; ++x)
+        {
+            const TerrainCell& cell =
+                terrainCells[CellIndex(x, y)];
+
+            if (
+                !cell.enabled ||
+                cell.chamberId != 0 ||
+                IsCellBlocked(x, y)
+                )
+            {
+                continue;
+            }
+
+            const int centerDistance =
+                abs(x - MapWidth / 2);
+
+            if (
+                !found ||
+                y > bestY ||
+                (y == bestY &&
+                    centerDistance < bestCenterDistance)
+                )
+            {
+                found = true;
+                bestY = y;
+                bestCenterDistance = centerDistance;
+                outX = x;
+                outY = y;
+            }
+        }
+    }
+
+    return found;
 }
 
 bool Game::FindNearestWalkableCell(Vector2 worldPosition, int& outX, int& outY) const
@@ -12423,11 +13517,23 @@ void Game::SetMoveDestinationNearNpc(int npcIndex)
     }
 }
 
-Rectangle Game::GetObstacleVisualRect(const Obstacle& obstacle) const
+Rectangle Game::GetObstacleVisualRect(
+    const Obstacle& obstacle
+) const
 {
+    const Vector2 visualPosition =
+        Vector2Add(
+            obstacle.position,
+            obstacle.visualOffset
+        );
+
     return Rectangle{
-        obstacle.position.x - obstacle.size.x * 0.5f,
-        obstacle.position.y - obstacle.size.y * 0.5f,
+        visualPosition.x -
+            obstacle.size.x * 0.5f,
+
+        visualPosition.y -
+            obstacle.size.y * 0.5f,
+
         obstacle.size.x,
         obstacle.size.y
     };
@@ -12535,6 +13641,12 @@ void Game::DrawGroundDecals2D()
 {
     BeginBlendMode(BLEND_ALPHA);
 
+    const float originX =
+        -static_cast<float>(MapWidth) * TileSize * 0.5f;
+
+    const float originY =
+        -static_cast<float>(MapHeight) * TileSize * 0.5f;
+
     for (const Obstacle& obstacle : obstacles)
     {
         if (
@@ -12547,49 +13659,188 @@ void Game::DrawGroundDecals2D()
             continue;
         }
 
-        const Color tint = GetObstacleDrawTint(obstacle);
+        const Color tint =
+            GetObstacleDrawTint(obstacle);
 
         if (tint.a == 0)
         {
             continue;
         }
 
-        const float halfWidth = std::max(1.0f, obstacle.size.x) * 0.5f;
-        const float halfDepth = std::max(1.0f, obstacle.size.y) * 0.5f;
-        const float heightBias =
-            static_cast<float>(std::max(0, obstacle.heightLevel)) *
-            obstacleHeightStep +
-            0.75f;
+        const std::vector<DecalClipVertex> basePolygon =
+            MakeDecalPolygon(
+                obstacle.position,
+                obstacle.size,
+                obstacle.rotationDegrees
+            );
 
-        const Vector2 northWest{
-            obstacle.position.x - halfWidth,
-            obstacle.position.y - halfDepth
-        };
+        float minimumX = basePolygon.front().world.x;
+        float maximumX = minimumX;
+        float minimumY = basePolygon.front().world.y;
+        float maximumY = minimumY;
 
-        const Vector2 northEast{
-            obstacle.position.x + halfWidth,
-            obstacle.position.y - halfDepth
-        };
+        for (const DecalClipVertex& vertex : basePolygon)
+        {
+            minimumX = std::min(minimumX, vertex.world.x);
+            maximumX = std::max(maximumX, vertex.world.x);
+            minimumY = std::min(minimumY, vertex.world.y);
+            maximumY = std::max(maximumY, vertex.world.y);
+        }
 
-        const Vector2 southEast{
-            obstacle.position.x + halfWidth,
-            obstacle.position.y + halfDepth
-        };
+        const int minimumCellX =
+            std::max(
+                0,
+                static_cast<int>(
+                    floorf((minimumX - originX) / TileSize)
+                    )
+            );
 
-        const Vector2 southWest{
-            obstacle.position.x - halfWidth,
-            obstacle.position.y + halfDepth
-        };
+        const int maximumCellX =
+            std::min(
+                MapWidth - 1,
+                static_cast<int>(
+                    floorf((maximumX - originX) / TileSize)
+                    )
+            );
 
-        DrawTextureFrameOnQuad2D(
-            obstacle.texture,
-            GetObstacleSourceRect(obstacle),
-            WorldToViewElevated(northWest, heightBias),
-            WorldToViewElevated(northEast, heightBias),
-            WorldToViewElevated(southEast, heightBias),
-            WorldToViewElevated(southWest, heightBias),
-            tint
-        );
+        const int minimumCellY =
+            std::max(
+                0,
+                static_cast<int>(
+                    floorf((minimumY - originY) / TileSize)
+                    )
+            );
+
+        const int maximumCellY =
+            std::min(
+                MapHeight - 1,
+                static_cast<int>(
+                    floorf((maximumY - originY) / TileSize)
+                    )
+            );
+
+        const Rectangle source =
+            GetObstacleSourceRect(obstacle);
+
+        const float inverseTextureWidth =
+            1.0f /
+            static_cast<float>(obstacle.texture.width);
+
+        const float inverseTextureHeight =
+            1.0f /
+            static_cast<float>(obstacle.texture.height);
+
+        for (int cellY = minimumCellY; cellY <= maximumCellY; ++cellY)
+        {
+            for (int cellX = minimumCellX; cellX <= maximumCellX; ++cellX)
+            {
+                if (
+                    !IsGroundDecalCellCompatible(
+                        obstacle,
+                        cellX,
+                        cellY
+                    )
+                    )
+                {
+                    continue;
+                }
+
+                const float cellMinimumX =
+                    originX +
+                    static_cast<float>(cellX) * TileSize;
+
+                const float cellMinimumY =
+                    originY +
+                    static_cast<float>(cellY) * TileSize;
+
+                std::vector<DecalClipVertex> polygon =
+                    ClipDecalPolygonToRectangle(
+                        basePolygon,
+                        cellMinimumX,
+                        cellMinimumY,
+                        cellMinimumX + TileSize,
+                        cellMinimumY + TileSize
+                    );
+
+                if (polygon.size() < 3)
+                {
+                    continue;
+                }
+
+                const int cellElevation =
+                    GetTerrainElevation(cellX, cellY);
+
+                const float localHeight =
+                    static_cast<float>(
+                        std::max(0, obstacle.heightLevel)
+                        ) *
+                    obstacleHeightStep +
+                    0.75f;
+
+                auto ToView =
+                    [&](const DecalClipVertex& vertex)
+                    {
+                        Vector2 view =
+                            WorldToView(vertex.world);
+
+                        if (useIsometricView)
+                        {
+                            view.y -=
+                                static_cast<float>(cellElevation) *
+                                terrainElevationStep +
+                                localHeight;
+                        }
+
+                        return view;
+                    };
+
+                rlSetTexture(obstacle.texture.id);
+                rlBegin(RL_TRIANGLES);
+                rlColor4ub(tint.r, tint.g, tint.b, tint.a);
+
+                for (
+                    size_t triangleIndex = 1;
+                    triangleIndex + 1 < polygon.size();
+                    ++triangleIndex
+                    )
+                {
+                    // Reverse the final two vertices so the decal faces upward.
+                    // The previous winding produced a downward-facing normal and
+                    // was removed by Hybrid 3D backface culling.
+                    const DecalClipVertex triangle[3] = {
+                        polygon[0],
+                        polygon[triangleIndex + 1],
+                        polygon[triangleIndex]
+                    };
+
+                    for (const DecalClipVertex& vertex : triangle)
+                    {
+                        const float textureU =
+                            (
+                                source.x +
+                                vertex.uv.x * source.width
+                                ) *
+                            inverseTextureWidth;
+
+                        const float textureV =
+                            (
+                                source.y +
+                                vertex.uv.y * source.height
+                                ) *
+                            inverseTextureHeight;
+
+                        const Vector2 view =
+                            ToView(vertex);
+
+                        rlTexCoord2f(textureU, textureV);
+                        rlVertex2f(view.x, view.y);
+                    }
+                }
+
+                rlEnd();
+                rlSetTexture(0);
+            }
+        }
     }
 
     EndBlendMode();
@@ -12612,13 +13863,32 @@ void Game::DrawForegroundObstacles2D()
     }
 }
 
-Rectangle Game::GetObstacleCollisionRect(const Obstacle& obstacle) const
+Rectangle Game::GetObstacleCollisionRect(
+    const Obstacle& obstacle
+) const
 {
+    const Vector2 center =
+        GetObstacleCollisionCenter(
+            obstacle
+        );
+
+    const float width =
+        std::max(
+            1.0f,
+            obstacle.colliderSize.x
+        );
+
+    const float height =
+        std::max(
+            1.0f,
+            obstacle.colliderSize.y
+        );
+
     return Rectangle{
-        obstacle.position.x - obstacle.colliderSize.x * 0.5f,
-        obstacle.position.y - obstacle.colliderSize.y * 0.5f,
-        obstacle.colliderSize.x,
-        obstacle.colliderSize.y
+        center.x - width * 0.5f,
+        center.y - height * 0.5f,
+        width,
+        height
     };
 }
 
@@ -12631,70 +13901,104 @@ void Game::UpdateObstacleAutoCollider(
         return;
     }
 
+    // For upright sprites, visual height includes portions
+    // extending upward. The physical footprint should mainly
+    // be derived from visual width.
+    const float visualWidth =
+        std::max(
+            8.0f,
+            obstacle.size.x
+        );
+
+    Vector2 footprintRatio{
+        0.65f,
+        0.42f
+    };
+
     switch (obstacle.type)
     {
     case 0: // Tree
-        obstacle.colliderSize = {
-            TileSize * 0.70f,
-            TileSize * 0.50f
+        footprintRatio = {
+            0.34f,
+            0.24f
         };
         break;
 
-    case 1: // Rock
-        obstacle.colliderSize = {
-            TileSize * 0.85f,
-            TileSize * 0.70f
+    case 1: // Rock / rubble
+        footprintRatio = {
+            0.78f,
+            0.55f
         };
         break;
 
-    case 2: // Wall
-        obstacle.colliderSize = {
-            TileSize,
-            TileSize
+    case 2: // Wall-like prop
+        footprintRatio = {
+            0.94f,
+            0.30f
         };
         break;
 
     case 3: // Fence
-        obstacle.colliderSize = {
-            TileSize,
-            TileSize * 0.30f
+        footprintRatio = {
+            0.94f,
+            0.20f
         };
         break;
 
-    case 4: // Building
-        obstacle.colliderSize = {
-            TileSize * 2.0f,
-            TileSize * 1.5f
+    case 4: // Building / large altar
+        footprintRatio = {
+            0.82f,
+            0.54f
         };
         break;
 
-    case 5: // Bush
-        obstacle.colliderSize = {
-            TileSize * 0.75f,
-            TileSize * 0.55f
+    case 5: // Bush / low clutter
+        footprintRatio = {
+            0.72f,
+            0.46f
         };
         break;
 
-    case 6: // Statue
-        obstacle.colliderSize = {
-            TileSize * 0.60f,
-            TileSize * 0.60f
+    case 6: // Statue / pillar
+        footprintRatio = {
+            0.58f,
+            0.42f
         };
         break;
 
-    default: // Custom
-        obstacle.colliderSize = {
-            TileSize,
-            TileSize
+    default: // Custom image
+        footprintRatio = {
+            0.66f,
+            0.44f
         };
         break;
     }
 
+    obstacle.colliderSize = {
+        std::max(
+            8.0f,
+            visualWidth *
+            footprintRatio.x
+        ),
+
+        std::max(
+            8.0f,
+            visualWidth *
+            footprintRatio.y
+        )
+    };
+
+    // Using the smaller dimension avoids a circular collider
+    // becoming much wider than the object's visible base.
     obstacle.colliderRadius =
         std::max(
-            obstacle.colliderSize.x,
-            obstacle.colliderSize.y
-        ) * 0.5f;
+            4.0f,
+            std::min(
+                obstacle.colliderSize.x,
+                obstacle.colliderSize.y
+            ) *
+            0.5f
+        );
 }
 
 void Game::DrawGround()
@@ -13386,6 +14690,74 @@ void Game::DrawEditorWorldOverlay()
         }
     }
 
+    if (
+        selectedObstacleIndex >= 0 &&
+        selectedObstacleIndex <
+        static_cast<int>(obstacles.size()) &&
+        obstacles[selectedObstacleIndex].renderMode ==
+        ObstacleRenderMode::GroundDecal
+        )
+    {
+        const Obstacle& selectedDecal =
+            obstacles[selectedObstacleIndex];
+
+        const std::vector<DecalClipVertex> outline =
+            MakeDecalPolygon(
+                selectedDecal.position,
+                selectedDecal.size,
+                selectedDecal.rotationDegrees
+            );
+
+        const Color decalColor{
+            50,
+            225,
+            255,
+            255
+        };
+
+        for (
+            size_t index = 0;
+            index < outline.size();
+            ++index
+            )
+        {
+            const size_t nextIndex =
+                (index + 1) % outline.size();
+
+            DrawLineEx(
+                WorldToViewElevated(
+                    outline[index].world,
+                    5.0f
+                ),
+                WorldToViewElevated(
+                    outline[nextIndex].world,
+                    5.0f
+                ),
+                3.0f,
+                decalColor
+            );
+        }
+
+        const Vector2 anchor =
+            WorldToViewElevated(
+                selectedDecal.position,
+                7.0f
+            );
+
+        DrawCircleV(
+            anchor,
+            6.0f,
+            decalColor
+        );
+
+        DrawCircleLines(
+            static_cast<int>(anchor.x),
+            static_cast<int>(anchor.y),
+            10.0f,
+            WHITE
+        );
+    }
+
     Vector2 mouseView =
         GetScreenToWorld2D(
             GetMousePosition(),
@@ -13541,6 +14913,66 @@ void Game::DrawEditorUi()
     {
         ImGui::Separator();
 
+        ImGui::Text("Editor Visibility");
+
+        int editorLightingIndex =
+            static_cast<int>(
+                editorLightingMode
+                );
+
+        const char* editorLightingNames[] = {
+            "Full Lighting",
+            "Unlit / Editing"
+        };
+
+        if (
+            ImGui::Combo(
+                "Build Lighting",
+                &editorLightingIndex,
+                editorLightingNames,
+                2
+            )
+            )
+        {
+            editorLightingMode =
+                static_cast<EditorLightingMode>(
+                    editorLightingIndex
+                    );
+        }
+
+        ImGui::TextDisabled(
+            "F8 toggles Full and Unlit Build Mode lighting."
+        );
+
+        ImGui::Checkbox(
+            "Show Marker Legend",
+            &showEditorMarkerLegend
+        );
+
+        if (showEditorMarkerLegend)
+        {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.28f, 0.28f, 1.0f),
+                "Red: obstacle collision footprint"
+            );
+
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.90f, 0.24f, 1.0f),
+                "Yellow: selected object or hovered cell"
+            );
+
+            ImGui::TextColored(
+                ImVec4(0.18f, 0.90f, 1.0f, 1.0f),
+                "Cyan: selected floor decal and anchor"
+            );
+
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.20f, 1.0f, 1.0f),
+                "Magenta: ramp connection"
+            );
+        }
+
+        ImGui::Separator();
         ImGui::Text("Enemy Preview");
 
         ImGui::Checkbox(
@@ -13557,6 +14989,10 @@ void Game::DrawEditorUi()
     }
 
     ImGui::Checkbox("Show Grid", &showGrid);
+    ImGui::Checkbox(
+        "Show Obstacle Colliders",
+        &showObstacleColliders
+    );
 
     ImGui::Separator();
 
@@ -13575,16 +15011,23 @@ void Game::DrawEditorUi()
             InitializeTestChambers();
         }
 
-        Vector2 requestedSpawn =
-            CellToWorld(
-                MapWidth / 2,
-                MapHeight / 2
-            );
-
         int spawnCellX = MapWidth / 2;
         int spawnCellY = MapHeight / 2;
 
+        const bool hasAuthoredEntrance =
+            FindLevelEntranceCell(
+                spawnCellX,
+                spawnCellY
+            );
+
+        Vector2 requestedSpawn =
+            CellToWorld(
+                spawnCellX,
+                spawnCellY
+            );
+
         if (
+            hasAuthoredEntrance ||
             FindNearestWalkableCell(
                 requestedSpawn,
                 spawnCellX,
@@ -13741,7 +15184,7 @@ void Game::DrawEditorUi()
 
     if (
         DungeonChamber* selectedChamber =
-            FindChamberById(editorSelectedChamberId)
+        FindChamberById(editorSelectedChamberId)
         )
     {
         float ambientColor[4] = {
@@ -13773,6 +15216,27 @@ void Game::DrawEditorUi()
             0.0f,
             0.85f,
             "%.2f"
+        );
+
+        ImGui::SliderFloat(
+            "Chamber Camera Zoom",
+            &selectedChamber->cameraZoom,
+            0.45f,
+            2.40f,
+            "%.2f"
+        );
+
+        ImGui::DragFloat2(
+            "Camera Focus Offset",
+            &selectedChamber->cameraFocusOffset.x,
+            2.0f,
+            -768.0f,
+            768.0f,
+            "%.0f px"
+        );
+
+        ImGui::TextDisabled(
+            "Smaller zoom values reveal more of large arenas."
         );
     }
 
@@ -13817,6 +15281,10 @@ void Game::DrawEditorUi()
         "Erase Obstacle",
         "Move Obstacle",
 
+        "Place Floor Decal",
+        "Erase Floor Decal",
+        "Move / Select Floor Decal",
+
         "Place Light",
         "Erase Light",
         "Move Light"
@@ -13826,7 +15294,7 @@ void Game::DrawEditorUi()
         "Tool",
         &editorTool,
         tools,
-        18
+        21
     );
 
     const bool usingBuiltWallTool =
@@ -14319,6 +15787,130 @@ void Game::DrawEditorUi()
         }
     }
 
+    if (
+        newObstacleRenderMode ==
+        static_cast<int>(ObstacleRenderMode::GroundDecal) ||
+        editorTool ==
+        static_cast<int>(EditorTool::PlaceDecal) ||
+        editorTool ==
+        static_cast<int>(EditorTool::MoveDecal)
+        )
+    {
+        static int authoredDecalPresetIndex = 0;
+
+        static const char* authoredDecalPresetNames[] = {
+            "Dragon Grand",
+            "Dragon Quadrants",
+            "Dragon Half",
+            "Cyan Ring Quadrants",
+            "Broken Dragon",
+            "Labyrinth Round",
+            "Azure Seal Round",
+            "Gold Seal Round",
+            "Small Symbols Row",
+            "Ring Row",
+            "Calligraphy Row",
+            "Plain Steps Threshold",
+            "Gold Emblem Threshold",
+            "Cracked Plain Threshold",
+            "Cloud Threshold",
+            "Flame Threshold",
+            "Cracked Carving Threshold",
+            "Gold Dragon Threshold",
+            "Purple Seal Threshold",
+            "Purple Rune Threshold",
+            "Blue Seal Threshold",
+            "Blue Rune Threshold",
+            "Green Rune Threshold",
+            "Cyan Rune Threshold",
+            "Long Dark Cloud Trim",
+            "Long Gold Cloud Trim",
+            "Long Gold Emblem Trim"
+        };
+
+        static const char* authoredDecalPresetPaths[] = {
+            "Assets/environment/authored/decal_dragon_grand.png",
+            "Assets/environment/authored/decal_dragon_quadrants.png",
+            "Assets/environment/authored/decal_dragon_half.png",
+            "Assets/environment/authored/decal_cyan_ring_quadrants.png",
+            "Assets/environment/authored/decal_broken_dragon.png",
+            "Assets/environment/authored/decal_labyrinth_round.png",
+            "Assets/environment/authored/decal_azure_seal_round.png",
+            "Assets/environment/authored/decal_gold_seal_round.png",
+            "Assets/environment/authored/decal_small_symbols.png",
+            "Assets/environment/authored/decal_ring_row.png",
+            "Assets/environment/authored/decal_calligraphy_row.png",
+            "Assets/environment/authored/threshold_steps_plain.png",
+            "Assets/environment/authored/threshold_emblem_gold.png",
+            "Assets/environment/authored/threshold_cracked_plain.png",
+            "Assets/environment/authored/threshold_cloud_carving.png",
+            "Assets/environment/authored/threshold_flame_carving.png",
+            "Assets/environment/authored/threshold_cracked_carving.png",
+            "Assets/environment/authored/threshold_dragon_gold.png",
+            "Assets/environment/authored/threshold_purple_seal.png",
+            "Assets/environment/authored/threshold_purple_runes.png",
+            "Assets/environment/authored/threshold_blue_seal.png",
+            "Assets/environment/authored/threshold_blue_runes.png",
+            "Assets/environment/authored/threshold_green_runes.png",
+            "Assets/environment/authored/threshold_cyan_runes.png",
+            "Assets/environment/authored/trim_long_cloud_dark.png",
+            "Assets/environment/authored/trim_long_cloud_gold.png",
+            "Assets/environment/authored/trim_long_emblem_gold.png"
+        };
+
+        ImGui::Separator();
+        ImGui::Text("Authored Decal Library");
+
+        ImGui::Combo(
+            "Decal Preset",
+            &authoredDecalPresetIndex,
+            authoredDecalPresetNames,
+            static_cast<int>(
+                sizeof(authoredDecalPresetNames) /
+                sizeof(authoredDecalPresetNames[0])
+                )
+        );
+
+        if (ImGui::Button("Load Selected Decal Preset"))
+        {
+            const char* presetPath =
+                authoredDecalPresetPaths[
+                    authoredDecalPresetIndex
+                ];
+
+            std::snprintf(
+                obstacleImagePathInput,
+                sizeof(obstacleImagePathInput),
+                "%s",
+                presetPath
+            );
+
+            if (LoadCurrentObstacleTexture(presetPath))
+            {
+                newObstacleRenderMode =
+                    static_cast<int>(
+                        ObstacleRenderMode::GroundDecal
+                        );
+                newObstacleRenderLayer =
+                    static_cast<int>(
+                        ObstacleRenderLayer::Background
+                        );
+                newObstacleCollision = false;
+                newObstacleCastsShadow = false;
+                newObstacleBlocksLight = false;
+                newObstacleAnimationColumns = 1;
+                newObstacleAnimationRows = 1;
+                newObstacleAnimationFrameCount = 1;
+                newObstacleSourceFrame = 0;
+                newObstacleSourceRectangle = {};
+            }
+        }
+
+        ImGui::TextDisabled(
+            "Presets are individual transparent assets. Large decals are clipped to the placement elevation by default."
+        );
+    }
+
     obstacleImageDropHovered = DrawImageDropZone("Obstacle Image Slot", obstacleImagePathInput);
 
     ImGui::InputText("Obstacle Image Path", obstacleImagePathInput, sizeof(obstacleImagePathInput));
@@ -14326,6 +15918,54 @@ void Game::DrawEditorUi()
     if (ImGui::Button("Load Obstacle Image"))
     {
         LoadCurrentObstacleTexture(obstacleImagePathInput);
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Sprite Sheet Source");
+
+    ImGui::InputInt(
+        "Sheet Columns",
+        &newObstacleAnimationColumns
+    );
+
+    ImGui::InputInt(
+        "Sheet Rows",
+        &newObstacleAnimationRows
+    );
+
+    newObstacleAnimationColumns =
+        std::max(1, newObstacleAnimationColumns);
+
+    newObstacleAnimationRows =
+        std::max(1, newObstacleAnimationRows);
+
+    const int sourceCellCount =
+        newObstacleAnimationColumns *
+        newObstacleAnimationRows;
+
+    ImGui::SliderInt(
+        "Source Cell",
+        &newObstacleSourceFrame,
+        0,
+        std::max(0, sourceCellCount - 1)
+    );
+
+    ImGui::TextDisabled(
+        "Use an exact pixel rectangle for irregular sheets such as LargeFloorDecals.png."
+    );
+
+    ImGui::DragFloat4(
+        "Custom Source Rect X/Y/W/H",
+        &newObstacleSourceRectangle.x,
+        1.0f,
+        0.0f,
+        4096.0f,
+        "%.0f"
+    );
+
+    if (ImGui::Button("Use Grid Cell / Clear Custom Rect"))
+    {
+        newObstacleSourceRectangle = {};
     }
 
     ImGui::Checkbox("Obstacle Collision", &newObstacleCollision);
@@ -14422,11 +16062,48 @@ void Game::DrawEditorUi()
 
     if (
         newObstacleRenderMode ==
-        static_cast<int>(ObstacleRenderMode::GroundDecal)
+        static_cast<int>(ObstacleRenderMode::GroundDecal) ||
+        editorTool ==
+        static_cast<int>(EditorTool::PlaceDecal) ||
+        editorTool ==
+        static_cast<int>(EditorTool::MoveDecal)
         )
     {
+        ImGui::Separator();
+        ImGui::Text("Floor Decal Placement");
+
+        ImGui::Checkbox(
+            "Snap Decals To Grid",
+            &decalSnapToGrid
+        );
+
         ImGui::TextDisabled(
-            "Ground decals are automatically non-colliding and do not cast shadows."
+            decalSnapToGrid
+            ? "Dragging moves decals one cell at a time."
+            : "Dragging moves decals freely across the floor."
+        );
+
+        ImGui::DragFloat(
+            "Decal Rotation",
+            &newObstacleRotationDegrees,
+            1.0f,
+            -180.0f,
+            180.0f,
+            "%.0f deg"
+        );
+
+        ImGui::Checkbox(
+            "Clip To Placement Elevation",
+            &newDecalClipToTerrainElevation
+        );
+
+        ImGui::Checkbox(
+            "Allow Decal On Ramps",
+            &newDecalAllowOnRamps
+        );
+
+        ImGui::TextDisabled(
+            "Clipping divides the decal by terrain cells and rejects raised, lowered or ramp cells."
         );
     }
 
@@ -14437,22 +16114,6 @@ void Game::DrawEditorUi()
 
     if (newObstacleAnimated)
     {
-        ImGui::InputInt(
-            "Animation Columns",
-            &newObstacleAnimationColumns
-        );
-
-        ImGui::InputInt(
-            "Animation Rows",
-            &newObstacleAnimationRows
-        );
-
-        newObstacleAnimationColumns =
-            std::max(1, newObstacleAnimationColumns);
-
-        newObstacleAnimationRows =
-            std::max(1, newObstacleAnimationRows);
-
         const int maximumFrames =
             newObstacleAnimationColumns *
             newObstacleAnimationRows;
@@ -14481,6 +16142,593 @@ void Game::DrawEditorUi()
             60.0f,
             "%.2f s"
         );
+    }
+
+    if (
+        selectedObstacleIndex >= 0 &&
+        selectedObstacleIndex <
+        static_cast<int>(
+            obstacles.size()
+            ) &&
+        obstacles[
+            selectedObstacleIndex
+        ].renderMode ==
+        ObstacleRenderMode::Billboard
+                )
+    {
+        Obstacle& selectedObstacle =
+            obstacles[
+                selectedObstacleIndex
+            ];
+
+        ImGui::Separator();
+        ImGui::Text("Selected Obstacle");
+
+        ImGui::Text(
+            "Index: %d",
+            selectedObstacleIndex
+        );
+
+        ImGui::TextWrapped(
+            "%s",
+            selectedObstacle.imagePath.empty()
+            ? "No image"
+            : selectedObstacle.imagePath.c_str()
+        );
+
+        const bool sizeChanged =
+            ImGui::DragFloat2(
+                "Selected Visual Size",
+                &selectedObstacle.size.x,
+                1.0f,
+                8.0f,
+                2048.0f,
+                "%.0f px"
+            );
+
+        selectedObstacle.size.x =
+            std::max(
+                8.0f,
+                selectedObstacle.size.x
+            );
+
+        selectedObstacle.size.y =
+            std::max(
+                8.0f,
+                selectedObstacle.size.y
+            );
+
+        if (
+            sizeChanged &&
+            selectedObstacle.colliderAuto
+            )
+        {
+            UpdateObstacleAutoCollider(
+                selectedObstacle
+            );
+        }
+
+        ImGui::DragFloat2(
+            "Selected Visual Offset",
+            &selectedObstacle.visualOffset.x,
+            1.0f,
+            -512.0f,
+            512.0f,
+            "%.0f px"
+        );
+
+        ImGui::SliderFloat(
+            "Selected Anchor Y",
+            &selectedObstacle.visualAnchorY,
+            0.0f,
+            1.0f,
+            "%.2f"
+        );
+
+        ImGui::TextDisabled(
+            "1.00 anchors the bottom of the image to the ground."
+        );
+
+        ImGui::DragFloat(
+            "Selected Visual Height Bias",
+            &selectedObstacle.depthBiasPixels,
+            0.25f,
+            -32.0f,
+            64.0f,
+            "%.2f px"
+        );
+
+        ImGui::Separator();
+        ImGui::Text("Selected Rendering");
+
+        ImGui::Checkbox(
+            "Selected Casts Shadow",
+            &selectedObstacle.castsShadow
+        );
+
+        ImGui::Checkbox(
+            "Selected Blocks Light",
+            &selectedObstacle.blocksLight
+        );
+
+        int selectedLayer =
+            static_cast<int>(
+                selectedObstacle.renderLayer
+                );
+
+        const char* selectedLayers[] = {
+            "Background",
+            "World / Depth Tested",
+            "Foreground / Ignore Depth"
+        };
+
+        if (
+            ImGui::Combo(
+                "Selected Render Layer",
+                &selectedLayer,
+                selectedLayers,
+                3
+            )
+            )
+        {
+            selectedObstacle.renderLayer =
+                static_cast<ObstacleRenderLayer>(
+                    selectedLayer
+                    );
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Selected Collision");
+
+        ImGui::Checkbox(
+            "Selected Collision Enabled",
+            &selectedObstacle.collisionEnabled
+        );
+
+        ImGui::Checkbox(
+            "Selected Auto Collider",
+            &selectedObstacle.colliderAuto
+        );
+
+        int selectedCollisionShape =
+            static_cast<int>(
+                selectedObstacle.collisionShape
+                );
+
+        const char* selectedColliderTypes[] = {
+            "Box",
+            "Circle"
+        };
+
+        if (
+            ImGui::Combo(
+                "Selected Collider Shape",
+                &selectedCollisionShape,
+                selectedColliderTypes,
+                2
+            )
+            )
+        {
+            selectedObstacle.collisionShape =
+                static_cast<CollisionShape>(
+                    selectedCollisionShape
+                    );
+        }
+
+        ImGui::DragFloat2(
+            "Selected Collider Offset",
+            &selectedObstacle.colliderOffset.x,
+            1.0f,
+            -512.0f,
+            512.0f,
+            "%.0f px"
+        );
+
+        if (!selectedObstacle.colliderAuto)
+        {
+            if (
+                selectedObstacle.collisionShape ==
+                CollisionShape::Box
+                )
+            {
+                ImGui::DragFloat2(
+                    "Selected Collider Size",
+                    &selectedObstacle.colliderSize.x,
+                    1.0f,
+                    2.0f,
+                    1024.0f,
+                    "%.0f px"
+                );
+
+                selectedObstacle.colliderSize.x =
+                    std::max(
+                        2.0f,
+                        selectedObstacle.colliderSize.x
+                    );
+
+                selectedObstacle.colliderSize.y =
+                    std::max(
+                        2.0f,
+                        selectedObstacle.colliderSize.y
+                    );
+            }
+            else
+            {
+                ImGui::DragFloat(
+                    "Selected Collider Radius",
+                    &selectedObstacle.colliderRadius,
+                    1.0f,
+                    2.0f,
+                    512.0f,
+                    "%.0f px"
+                );
+
+                selectedObstacle.colliderRadius =
+                    std::max(
+                        2.0f,
+                        selectedObstacle.colliderRadius
+                    );
+            }
+        }
+        else
+        {
+            ImGui::Text(
+                "Auto size: %.0f x %.0f",
+                selectedObstacle.colliderSize.x,
+                selectedObstacle.colliderSize.y
+            );
+
+            ImGui::Text(
+                "Auto radius: %.0f",
+                selectedObstacle.colliderRadius
+            );
+        }
+
+        if (
+            ImGui::Button(
+                "Rebuild Selected Auto Collider"
+            )
+            )
+        {
+            selectedObstacle.colliderAuto =
+                true;
+
+            UpdateObstacleAutoCollider(
+                selectedObstacle
+            );
+        }
+
+        ImGui::SameLine();
+
+        if (
+            ImGui::Button(
+                "Clear Obstacle Selection"
+            )
+            )
+        {
+            selectedObstacleIndex = -1;
+            draggingObstacle = false;
+        }
+    }
+
+    if (
+        selectedObstacleIndex >= 0 &&
+        selectedObstacleIndex <
+        static_cast<int>(obstacles.size()) &&
+        obstacles[selectedObstacleIndex].renderMode ==
+        ObstacleRenderMode::GroundDecal
+        )
+    {
+        Obstacle& selectedDecal =
+            obstacles[selectedObstacleIndex];
+
+        ImGui::Separator();
+        ImGui::Text("Selected Floor Decal");
+        ImGui::Text(
+            "Anchor elevation: %d",
+            selectedDecal.terrainElevation
+        );
+
+        ImGui::TextWrapped(
+            "Asset: %s",
+            selectedDecal.imagePath.empty()
+            ? "(empty path)"
+            : selectedDecal.imagePath.c_str()
+        );
+
+        const bool decalTextureReady =
+            selectedDecal.hasTexture &&
+            selectedDecal.texture.id != 0;
+
+        ImGui::Text(
+            "Texture: %s | ID: %u",
+            decalTextureReady
+            ? "Loaded"
+            : "MISSING",
+            selectedDecal.texture.id
+        );
+
+        ImGui::Text(
+            "Opacity: %.2f | Tint Alpha: %d",
+            selectedDecal.opacity,
+            static_cast<int>(
+                selectedDecal.tint.a
+                )
+        );
+
+        int selectedDecalCellX = 0;
+        int selectedDecalCellY = 0;
+
+        const bool decalHasValidCell =
+            WorldToCell(
+                selectedDecal.position,
+                selectedDecalCellX,
+                selectedDecalCellY
+            ) &&
+            IsCellEnabled(
+                selectedDecalCellX,
+                selectedDecalCellY
+            );
+
+        bool decalAnchorCompatible = false;
+
+        if (decalHasValidCell)
+        {
+            decalAnchorCompatible =
+                IsGroundDecalCellCompatible(
+                    selectedDecal,
+                    selectedDecalCellX,
+                    selectedDecalCellY
+                );
+        }
+
+        if (!decalTextureReady)
+        {
+            ImGui::TextColored(
+                ImVec4(
+                    1.0f,
+                    0.25f,
+                    0.25f,
+                    1.0f
+                ),
+                "This decal is invisible because its texture was not loaded."
+            );
+        }
+        else if (
+            selectedDecal.opacity <= 0.01f ||
+            selectedDecal.tint.a == 0
+            )
+        {
+            ImGui::TextColored(
+                ImVec4(
+                    1.0f,
+                    0.55f,
+                    0.15f,
+                    1.0f
+                ),
+                "This decal is invisible because its opacity is zero."
+            );
+        }
+        else if (!decalAnchorCompatible)
+        {
+            ImGui::TextColored(
+                ImVec4(
+                    1.0f,
+                    0.55f,
+                    0.15f,
+                    1.0f
+                ),
+                "Terrain clipping rejects this decal at its anchor."
+            );
+        }
+
+        Vector2 editedDecalPosition =
+            selectedDecal.position;
+
+        if (
+            ImGui::DragFloat2(
+                "Selected Decal Position",
+                &editedDecalPosition.x,
+                1.0f,
+                -32768.0f,
+                32768.0f,
+                "%.0f px"
+            )
+            )
+        {
+            int decalCellX = 0;
+            int decalCellY = 0;
+
+            if (
+                WorldToCell(
+                    editedDecalPosition,
+                    decalCellX,
+                    decalCellY
+                ) &&
+                IsCellEnabled(
+                    decalCellX,
+                    decalCellY
+                )
+                )
+            {
+                const TerrainCell& targetCell =
+                    terrainCells[
+                        CellIndex(
+                            decalCellX,
+                            decalCellY
+                        )
+                    ];
+
+                if (
+                    selectedDecal.allowOnRamps ||
+                    targetCell.rampDirection ==
+                    RampDirection::None
+                    )
+                {
+                    selectedDecal.position =
+                        decalSnapToGrid
+                        ? CellToWorld(
+                            decalCellX,
+                            decalCellY
+                        )
+                        : editedDecalPosition;
+
+                    selectedDecal.terrainElevation =
+                        GetTerrainElevation(
+                            decalCellX,
+                            decalCellY
+                        );
+                }
+            }
+        }
+
+        ImGui::DragFloat2(
+            "Selected Decal Size",
+            &selectedDecal.size.x,
+            2.0f,
+            8.0f,
+            2048.0f,
+            "%.0f px"
+        );
+
+        selectedDecal.size.x =
+            std::max(8.0f, selectedDecal.size.x);
+
+        selectedDecal.size.y =
+            std::max(8.0f, selectedDecal.size.y);
+
+        ImGui::DragFloat(
+            "Selected Decal Rotation",
+            &selectedDecal.rotationDegrees,
+            1.0f,
+            -180.0f,
+            180.0f,
+            "%.0f deg"
+        );
+
+        ImGui::InputInt(
+            "Selected Sheet Columns",
+            &selectedDecal.animationColumns
+        );
+
+        ImGui::InputInt(
+            "Selected Sheet Rows",
+            &selectedDecal.animationRows
+        );
+
+        selectedDecal.animationColumns =
+            std::max(1, selectedDecal.animationColumns);
+
+        selectedDecal.animationRows =
+            std::max(1, selectedDecal.animationRows);
+
+        const int selectedSourceCount =
+            selectedDecal.animationColumns *
+            selectedDecal.animationRows;
+
+        ImGui::SliderInt(
+            "Selected Source Cell",
+            &selectedDecal.sourceFrame,
+            0,
+            std::max(0, selectedSourceCount - 1)
+        );
+
+        ImGui::DragFloat4(
+            "Selected Source Rect X/Y/W/H",
+            &selectedDecal.sourceRectangle.x,
+            1.0f,
+            0.0f,
+            4096.0f,
+            "%.0f"
+        );
+
+        if (ImGui::Button("Selected Decal Use Grid Cell"))
+        {
+            selectedDecal.sourceRectangle = {};
+        }
+
+        ImGui::SliderFloat(
+            "Selected Decal Opacity",
+            &selectedDecal.opacity,
+            0.0f,
+            1.0f,
+            "%.2f"
+        );
+
+        float selectedDecalTint[4] = {
+            static_cast<float>(selectedDecal.tint.r) / 255.0f,
+            static_cast<float>(selectedDecal.tint.g) / 255.0f,
+            static_cast<float>(selectedDecal.tint.b) / 255.0f,
+            1.0f
+        };
+
+        if (
+            ImGui::ColorEdit4(
+                "Selected Decal Tint",
+                selectedDecalTint,
+                ImGuiColorEditFlags_NoAlpha
+            )
+            )
+        {
+            selectedDecal.tint = Color{
+                static_cast<unsigned char>(Clamp(selectedDecalTint[0] * 255.0f, 0.0f, 255.0f)),
+                static_cast<unsigned char>(Clamp(selectedDecalTint[1] * 255.0f, 0.0f, 255.0f)),
+                static_cast<unsigned char>(Clamp(selectedDecalTint[2] * 255.0f, 0.0f, 255.0f)),
+                255
+            };
+        }
+
+        ImGui::Checkbox(
+            "Selected Clip To Elevation",
+            &selectedDecal.clipToTerrainElevation
+        );
+
+        ImGui::Checkbox(
+            "Selected Allow On Ramps",
+            &selectedDecal.allowOnRamps
+        );
+
+        if (ImGui::Button("Recapture Decal Elevation"))
+        {
+            selectedDecal.terrainElevation =
+                GetTerrainElevationAtWorld(
+                    selectedDecal.position
+                );
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Clear Decal Selection"))
+        {
+            selectedObstacleIndex = -1;
+            draggingObstacle = false;
+        }
+
+        if (
+            ImGui::Button(
+                "Delete Selected Decal"
+            )
+            )
+        {
+            if (
+                selectedDecal.hasTexture &&
+                selectedDecal.texture.id != 0
+                )
+            {
+                UnloadTexture(
+                    selectedDecal.texture
+                );
+            }
+
+            obstacles.erase(
+                obstacles.begin() +
+                selectedObstacleIndex
+            );
+
+            selectedObstacleIndex = -1;
+            draggingObstacle = false;
+        }
+
     }
 
     ImGui::Separator();
@@ -14690,6 +16938,9 @@ void Game::DrawEditorUi()
     ImGui::BulletText("Place Obstacle: left click");
     ImGui::BulletText("Move Obstacle: drag obstacle");
     ImGui::BulletText("Erase Obstacle: click obstacle");
+    ImGui::BulletText("Place Floor Decal: click a flat terrain surface");
+    ImGui::BulletText("Move / Select Floor Decal: drag, then adjust it above");
+    ImGui::BulletText("Elevation clipping prevents decals crossing platforms and ramps");
     ImGui::BulletText("Place Light: set defaults above, then click the floor");
     ImGui::BulletText("Move Light: drag a marker, then edit the selected light");
 
@@ -14709,8 +16960,8 @@ void Game::InitCombat()
     player.moveTarget = playerPosition;
     player.hasMoveTarget = false;
 
-    player.hp = 120;
-    player.maxHp = 120;
+    player.hp = 12000;
+    player.maxHp = 12000;
 
     player.attackDamage = 12;
     player.attackInterval = 0.42f;
@@ -14864,22 +17115,26 @@ void Game::RestartGameplay()
     wasTouching = false;
 
     // --------------------------------------------------
-    // Find a safe restart cell near the map centre
+    // Find a safe restart cell at the authored south entrance
     // --------------------------------------------------
+
+    int spawnCellX = MapWidth / 2;
+    int spawnCellY = MapHeight / 2;
+
+    const bool hasAuthoredEntrance =
+        FindLevelEntranceCell(
+            spawnCellX,
+            spawnCellY
+        );
 
     Vector2 requestedSpawn =
         CellToWorld(
-            MapWidth / 2,
-            MapHeight / 2
+            spawnCellX,
+            spawnCellY
         );
 
-    int spawnCellX =
-        MapWidth / 2;
-
-    int spawnCellY =
-        MapHeight / 2;
-
     if (
+        hasAuthoredEntrance ||
         FindNearestWalkableCell(
             requestedSpawn,
             spawnCellX,
@@ -17037,7 +19292,9 @@ bool Game::CanEnemyStandAt(
                 if (
                     Vector2Distance(
                         samplePosition,
-                        obstacle.position
+                        GetObstacleCollisionCenter(
+                            obstacle
+                        )
                     ) <
                     minimumDistance
                     )
@@ -17689,23 +19946,117 @@ void Game::ActivateHuashan()
     int slotIndex = FindSkillSlotIndex(SkillType::Huashan);
     int level = (slotIndex >= 0) ? skills[slotIndex].level : 1;
 
-    Enemy* target = FindNearestEnemy(playerPosition, 620.0f);
+    Enemy* target =
+        FindNearestEnemy(
+            playerPosition,
+            620.0f
+        );
 
-    if (target == nullptr)
+    Vector2 landingPosition =
+        playerPosition;
+
+    Vector2 impactPosition =
+        playerPosition;
+
+    if (target != nullptr)
     {
-        return;
+        if (
+            !FindHuashanLandingPosition(
+                *target,
+                landingPosition
+            )
+            )
+        {
+            // No valid landing spot around the target.
+            // The impact still occurs at the target while the player
+            // returns to the current position.
+            landingPosition =
+                playerPosition;
+        }
+
+        impactPosition =
+            target->pos;
+    }
+    else
+    {
+        // No target is required. Cast toward the player's facing direction
+        // and select the furthest safe landing point along that line.
+        const Vector2 facingDirection =
+            GetPlayerFacingWorldDirection();
+
+        const float maximumDistance =
+            TileSize * 3.25f;
+
+        const float minimumDistance =
+            TileSize * 0.75f;
+
+        const float searchStep =
+            TileSize * 0.25f;
+
+        bool foundLanding = false;
+
+        for (
+            float distance = maximumDistance;
+            distance >= minimumDistance;
+            distance -= searchStep
+            )
+        {
+            const Vector2 candidate =
+                Vector2Add(
+                    playerPosition,
+                    Vector2Scale(
+                        facingDirection,
+                        distance
+                    )
+                );
+
+            if (!CanPlayerStandAt(candidate))
+            {
+                continue;
+            }
+
+            landingPosition = candidate;
+            impactPosition = candidate;
+            foundLanding = true;
+            break;
+        }
+
+        if (!foundLanding)
+        {
+            // A wall may prevent the leap, but the ability should still
+            // visibly strike forward instead of silently doing nothing.
+            const Vector2 fallbackImpact =
+                Vector2Add(
+                    playerPosition,
+                    Vector2Scale(
+                        facingDirection,
+                        TileSize * 1.25f
+                    )
+                );
+
+            int impactCellX = 0;
+            int impactCellY = 0;
+
+            if (
+                WorldToCell(
+                    fallbackImpact,
+                    impactCellX,
+                    impactCellY
+                ) &&
+                IsCellEnabled(
+                    impactCellX,
+                    impactCellY
+                )
+                )
+            {
+                impactPosition =
+                    fallbackImpact;
+            }
+        }
     }
 
-    Vector2 landingPosition = playerPosition;
-
-    if (!FindHuashanLandingPosition(*target, landingPosition))
-    {
-        // No valid landing spot around the target.
-        // Still cast at the target, but land back at current position.
-        landingPosition = playerPosition;
-    }
-
-    huashanImpactCenter = target->pos;
+    huashanImpactCenter =
+        impactPosition;
 
     float fullOldDamageRadius = 165.0f + static_cast<float>(level - 1) * 6.0f;
 
@@ -17751,7 +20102,7 @@ void Game::ActivateHuashan()
     VfxParticle leapLine;
     leapLine.type = VfxType::SlashLine;
     leapLine.pos = playerPosition;
-    leapLine.endPos = landingPosition;
+    leapLine.endPos = impactPosition;
     leapLine.radius = 22.0f;
     leapLine.life = 0.30f;
     leapLine.maxLife = 0.30f;
@@ -17974,18 +20325,32 @@ void Game::ActivateDongfeng()
     int slotIndex = FindSkillSlotIndex(SkillType::Dongfeng);
     int level = (slotIndex >= 0) ? skills[slotIndex].level : 1;
 
-    Enemy* target = FindNearestEnemy(playerPosition, 950.0f);
+    Enemy* target =
+        FindNearestEnemy(
+            playerPosition,
+            950.0f
+        );
 
-    if (target == nullptr)
+    Vector2 direction{};
+
+    if (target != nullptr)
     {
-        return;
+        direction =
+            Vector2Subtract(
+                target->pos,
+                playerPosition
+            );
     }
-
-    Vector2 direction = Vector2Subtract(target->pos, playerPosition);
+    else
+    {
+        direction =
+            GetPlayerFacingWorldDirection();
+    }
 
     if (Vector2Length(direction) <= 0.01f)
     {
-        direction = { 1.0f, 0.0f };
+        direction =
+            GetPlayerFacingWorldDirection();
     }
 
     direction = Vector2Normalize(direction);
@@ -18004,7 +20369,10 @@ void Game::ActivateDongfeng()
         dongfengCastDuration = 0.18f;
     }
 
-    dongfengLockedTargetId = target->id;
+    dongfengLockedTargetId =
+        target != nullptr
+        ? target->id
+        : 0;
 
     dongfengCastStart = playerPosition;
     dongfengCastDirection = direction;
@@ -18554,6 +20922,30 @@ void Game::ActivateLightning()
                 globallyHitEnemies
             );
         }
+    }
+
+    if (globallyHitEnemies.empty())
+    {
+        const Vector2 direction =
+            GetPlayerFacingWorldDirection();
+
+        const Vector2 endPosition =
+            Vector2Add(
+                playerPosition,
+                Vector2Scale(
+                    direction,
+                    firstTargetRange
+                )
+            );
+
+        SpawnLightningLine(
+            playerPosition,
+            endPosition
+        );
+
+        SpawnHitSpark(
+            endPosition
+        );
     }
 }
 
@@ -20343,6 +22735,19 @@ void Game::MovePlayerWithJoystick(
             continue;
         }
 
+        // Do not invent sideways movement when the player is pushing a pure
+        // cardinal direction directly into a wall. In the isometric mapping,
+        // that artificial glide can alternate between world axes and make the
+        // camera appear to bounce even though the player never changes floor.
+        const bool pureCardinalInput =
+            std::fabs(joystickDirection.x) < 0.12f ||
+            std::fabs(joystickDirection.y) < 0.12f;
+
+        if (pureCardinalInput)
+        {
+            break;
+        }
+
         const Vector2 xMovement{
             stepMovement.x *
                 slideScale,
@@ -20612,6 +23017,35 @@ Vector2 Game::GetViewDirectionFromPlayerDirection(
     case PlayerDirection::DownLeft:  return { -diagonal, diagonal };
     default:                         return { 0.0f, 1.0f };
     }
+}
+
+Vector2 Game::GetPlayerFacingWorldDirection() const
+{
+    Vector2 viewDirection =
+        GetViewDirectionFromPlayerDirection(
+            lastPlayerDirection
+        );
+
+    Vector2 worldDirection =
+        ViewDirectionToWorldDirection(
+            viewDirection
+        );
+
+    if (
+        Vector2Length(worldDirection) <=
+        0.001f
+        )
+    {
+        worldDirection = {
+            0.0f,
+            1.0f
+        };
+    }
+
+    return
+        Vector2Normalize(
+            worldDirection
+        );
 }
 
 Vector2 Game::GetDashDirectionWorld() const
@@ -23044,7 +25478,9 @@ bool Game::FindHuashanLandingPosition(
                     if (
                         Vector2Distance(
                             candidate,
-                            obstacle.position
+                            GetObstacleCollisionCenter(
+                                obstacle
+                            )
                         ) <
                         combinedRadius
                         )
@@ -23207,7 +25643,9 @@ bool Game::IsProjectileBlockedByWorld(
             else if (
                 Vector2Distance(
                     samplePosition,
-                    obstacle.position
+                    GetObstacleCollisionCenter(
+                        obstacle
+                    )
                 ) <=
                 obstacle.colliderRadius
                 )
@@ -30665,6 +33103,39 @@ void Game::RebuildHybridTerrain()
                     tileIndex
                 );
 
+            float floorShade =
+                0.965f +
+                static_cast<float>(
+                    (x * 17 + y * 29 + chamberId * 11) % 5
+                    ) *
+                0.007f;
+
+            // Slightly darken tiles that border voids or lower terrain. The
+            // authored wall textures still provide the main cliff face, but
+            // this contact band makes raised platforms read as having mass.
+            for (const auto& offset : std::array<Vector2, 4>{
+                Vector2{ -1.0f, 0.0f },
+                Vector2{ 1.0f, 0.0f },
+                Vector2{ 0.0f, -1.0f },
+                Vector2{ 0.0f, 1.0f }
+                })
+            {
+                const int neighbourX =
+                    x + static_cast<int>(offset.x);
+                const int neighbourY =
+                    y + static_cast<int>(offset.y);
+
+                if (
+                    !IsCellInside(neighbourX, neighbourY) ||
+                    !IsCellEnabled(neighbourX, neighbourY) ||
+                    GetTerrainElevation(neighbourX, neighbourY) <
+                    GetTerrainElevation(x, y)
+                    )
+                {
+                    floorShade -= 0.018f;
+                }
+            }
+
             topBuilder.AddQuad(
                 nw,
                 sw,
@@ -30675,7 +33146,10 @@ void Game::RebuildHybridTerrain()
                     1.0f,
                     0.0f
                 },
-                WHITE
+                ScaleHybridColor(
+                    WHITE,
+                    Clamp(floorShade, 0.86f, 1.0f)
+                )
             );
 
             // ------------------------------------------
@@ -31303,6 +33777,21 @@ void Game::UpdateHybridCamera(float dt)
 
     if (!editorOwnsCamera)
     {
+        Vector2 desiredCameraTarget =
+            playerPosition;
+
+        if (
+            const DungeonChamber* activeChamber =
+            FindChamberById(activeChamberId)
+            )
+        {
+            desiredCameraTarget =
+                Vector2Add(
+                    desiredCameraTarget,
+                    activeChamber->cameraFocusOffset
+                );
+        }
+
         float amount =
             dt <= 0.0f
             ? 1.0f
@@ -31315,18 +33804,47 @@ void Game::UpdateHybridCamera(float dt)
         hybridCameraTargetWorld =
             Vector2Lerp(
                 hybridCameraTargetWorld,
-                playerPosition,
+                desiredCameraTarget,
                 amount
             );
     }
+
+    // Horizontal framing follows the focus-shifted camera target, but the
+    // vertical camera level follows the player's actual terrain surface.
+    // Sampling hybridCameraTargetWorld here is unsafe near raised walls,
+    // because the chamber focus offset or follow interpolation may briefly
+    // enter the wall cell even when the player remains on the lower floor.
+    const Vector2 terrainSamplePosition =
+        editorOwnsCamera
+        ? hybridCameraTargetWorld
+        : playerPosition;
+
+    const float desiredTerrainHeightUnits =
+        GetHybridTerrainHeightUnits(
+            terrainSamplePosition
+        );
+
+    const float heightAmount =
+        dt <= 0.0f
+        ? 1.0f
+        : Clamp(
+            hybridCameraHeightFollowSpeed * dt,
+            0.0f,
+            1.0f
+        );
+
+    hybridCameraTerrainHeightUnits +=
+        (
+            desiredTerrainHeightUnits -
+            hybridCameraTerrainHeightUnits
+            ) * heightAmount;
 
     Vector3 target{
         hybridCameraTargetWorld.x *
             hybridUnitsPerPixel,
 
-        GetHybridTerrainHeightUnits(
-            hybridCameraTargetWorld
-        ) * 0.45f,
+        hybridCameraTerrainHeightUnits *
+            0.45f,
 
         hybridCameraTargetWorld.y *
             hybridUnitsPerPixel
@@ -32263,9 +34781,16 @@ void Game::DrawHybridGroundEffects3D()
         BLEND_ALPHA
     );
 
-    // Authored decals sit directly on the terrain and can use the same
-    // animation system as environmental props.
+    // Authored decals are clipped into multiple terrain-cell polygons.
+    // Draw this small pass two-sided so clipping order can never cause
+    // a valid decal fragment to be rejected by backface culling.
+    rlDrawRenderBatchActive();
+    rlDisableBackfaceCulling();
+
     DrawHybridGroundDecals3D();
+
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
 
     // --------------------------------------------------
  // Player contact shadow
@@ -34294,6 +36819,11 @@ void Game::DrawHybridObstacle3D(
         return;
     }
 
+    const Vector2 visualPosition =
+        Vector2Add(
+            obstacle.position,
+            obstacle.visualOffset
+        );
     const Color drawTint =
         GetObstacleDrawTint(
             obstacle
@@ -34311,7 +36841,8 @@ void Game::DrawHybridObstacle3D(
                 obstacle.heightLevel
             )
             ) *
-        obstacleHeightStep;
+        obstacleHeightStep +
+        obstacle.depthBiasPixels;
 
     // --------------------------------------------------
     // Textured obstacle
@@ -34327,10 +36858,14 @@ void Game::DrawHybridObstacle3D(
             GetObstacleSourceRect(
                 obstacle
             ),
-            obstacle.position,
+            visualPosition,
             obstacle.size.x,
             obstacle.size.y,
-            1.0f,
+            Clamp(
+                obstacle.visualAnchorY,
+                0.0f,
+                1.0f
+            ),
             localHeight,
             drawTint
         );
@@ -34375,15 +36910,15 @@ void Game::DrawHybridObstacle3D(
     fallbackColor.r = static_cast<unsigned char>(
         static_cast<int>(fallbackColor.r) *
         static_cast<int>(drawTint.r) / 255
-    );
+        );
     fallbackColor.g = static_cast<unsigned char>(
         static_cast<int>(fallbackColor.g) *
         static_cast<int>(drawTint.g) / 255
-    );
+        );
     fallbackColor.b = static_cast<unsigned char>(
         static_cast<int>(fallbackColor.b) *
         static_cast<int>(drawTint.b) / 255
-    );
+        );
     fallbackColor.a = drawTint.a;
 
     DrawHybridBillboardFrame(
@@ -34400,10 +36935,14 @@ void Game::DrawHybridObstacle3D(
                 hybridCircleTexture.height
             )
         },
-        obstacle.position,
+        visualPosition,
         size,
         size,
-        1.0f,
+        Clamp(
+            obstacle.visualAnchorY,
+            0.0f,
+            1.0f
+        ),
         localHeight,
         fallbackColor
     );
@@ -34617,6 +37156,12 @@ void Game::DrawHybridDongfeng3D()
 
 void Game::DrawHybridGroundDecals3D()
 {
+    const float originX =
+        -static_cast<float>(MapWidth) * TileSize * 0.5f;
+
+    const float originY =
+        -static_cast<float>(MapHeight) * TileSize * 0.5f;
+
     for (const Obstacle& obstacle : obstacles)
     {
         if (
@@ -34629,74 +37174,173 @@ void Game::DrawHybridGroundDecals3D()
             continue;
         }
 
-        const Color tint = GetObstacleDrawTint(obstacle);
+        const Color tint =
+            GetObstacleDrawTint(obstacle);
 
         if (tint.a == 0)
         {
             continue;
         }
 
-        const Vector3 center =
-            WorldToHybrid3D(
+        const std::vector<DecalClipVertex> basePolygon =
+            MakeDecalPolygon(
                 obstacle.position,
-                static_cast<float>(std::max(0, obstacle.heightLevel)) *
-                    obstacleHeightStep +
-                    1.5f
+                obstacle.size,
+                obstacle.rotationDegrees
             );
 
-        const float halfWidth =
-            PixelsToHybridUnits(std::max(1.0f, obstacle.size.x) * 0.5f);
+        float minimumX = basePolygon.front().world.x;
+        float maximumX = minimumX;
+        float minimumY = basePolygon.front().world.y;
+        float maximumY = minimumY;
 
-        const float halfDepth =
-            PixelsToHybridUnits(std::max(1.0f, obstacle.size.y) * 0.5f);
+        for (const DecalClipVertex& vertex : basePolygon)
+        {
+            minimumX = std::min(minimumX, vertex.world.x);
+            maximumX = std::max(maximumX, vertex.world.x);
+            minimumY = std::min(minimumY, vertex.world.y);
+            maximumY = std::max(maximumY, vertex.world.y);
+        }
 
-        const Vector3 northWest{
-            center.x - halfWidth,
-            center.y,
-            center.z - halfDepth
-        };
+        const int minimumCellX =
+            std::max(
+                0,
+                static_cast<int>(
+                    floorf((minimumX - originX) / TileSize)
+                    )
+            );
 
-        const Vector3 northEast{
-            center.x + halfWidth,
-            center.y,
-            center.z - halfDepth
-        };
+        const int maximumCellX =
+            std::min(
+                MapWidth - 1,
+                static_cast<int>(
+                    floorf((maximumX - originX) / TileSize)
+                    )
+            );
 
-        const Vector3 southEast{
-            center.x + halfWidth,
-            center.y,
-            center.z + halfDepth
-        };
+        const int minimumCellY =
+            std::max(
+                0,
+                static_cast<int>(
+                    floorf((minimumY - originY) / TileSize)
+                    )
+            );
 
-        const Vector3 southWest{
-            center.x - halfWidth,
-            center.y,
-            center.z + halfDepth
-        };
+        const int maximumCellY =
+            std::min(
+                MapHeight - 1,
+                static_cast<int>(
+                    floorf((maximumY - originY) / TileSize)
+                    )
+            );
 
-        const Rectangle source = GetObstacleSourceRect(obstacle);
-        const float inverseWidth = 1.0f / static_cast<float>(obstacle.texture.width);
-        const float inverseHeight = 1.0f / static_cast<float>(obstacle.texture.height);
-        const float u0 = source.x * inverseWidth;
-        const float v0 = source.y * inverseHeight;
-        const float u1 = (source.x + source.width) * inverseWidth;
-        const float v1 = (source.y + source.height) * inverseHeight;
+        const Rectangle source =
+            GetObstacleSourceRect(obstacle);
+
+        const float inverseTextureWidth =
+            1.0f /
+            static_cast<float>(obstacle.texture.width);
+
+        const float inverseTextureHeight =
+            1.0f /
+            static_cast<float>(obstacle.texture.height);
 
         rlSetTexture(obstacle.texture.id);
-        rlBegin(RL_QUADS);
+        rlBegin(RL_TRIANGLES);
         rlColor4ub(tint.r, tint.g, tint.b, tint.a);
 
-        rlTexCoord2f(u0, v0);
-        rlVertex3f(northWest.x, northWest.y, northWest.z);
+        for (int cellY = minimumCellY; cellY <= maximumCellY; ++cellY)
+        {
+            for (int cellX = minimumCellX; cellX <= maximumCellX; ++cellX)
+            {
+                if (
+                    !IsGroundDecalCellCompatible(
+                        obstacle,
+                        cellX,
+                        cellY
+                    )
+                    )
+                {
+                    continue;
+                }
 
-        rlTexCoord2f(u0, v1);
-        rlVertex3f(southWest.x, southWest.y, southWest.z);
+                const float cellMinimumX =
+                    originX +
+                    static_cast<float>(cellX) * TileSize;
 
-        rlTexCoord2f(u1, v1);
-        rlVertex3f(southEast.x, southEast.y, southEast.z);
+                const float cellMinimumY =
+                    originY +
+                    static_cast<float>(cellY) * TileSize;
 
-        rlTexCoord2f(u1, v0);
-        rlVertex3f(northEast.x, northEast.y, northEast.z);
+                const std::vector<DecalClipVertex> polygon =
+                    ClipDecalPolygonToRectangle(
+                        basePolygon,
+                        cellMinimumX,
+                        cellMinimumY,
+                        cellMinimumX + TileSize,
+                        cellMinimumY + TileSize
+                    );
+
+                if (polygon.size() < 3)
+                {
+                    continue;
+                }
+
+                const float cellHeightPixels =
+                    static_cast<float>(
+                        GetTerrainElevation(
+                            cellX,
+                            cellY
+                        )
+                        ) *
+                    terrainElevationStep +
+                    static_cast<float>(
+                        std::max(
+                            0,
+                            obstacle.heightLevel
+                        )
+                        ) *
+                    obstacleHeightStep +
+                    2.5f;
+
+                for (
+                    size_t triangleIndex = 1;
+                    triangleIndex + 1 < polygon.size();
+                    ++triangleIndex
+                    )
+                {
+                    const DecalClipVertex triangle[3] = {
+                        polygon[0],
+                        polygon[triangleIndex],
+                        polygon[triangleIndex + 1]
+                    };
+
+                    for (const DecalClipVertex& vertex : triangle)
+                    {
+                        const float textureU =
+                            (
+                                source.x +
+                                vertex.uv.x * source.width
+                                ) *
+                            inverseTextureWidth;
+
+                        const float textureV =
+                            (
+                                source.y +
+                                vertex.uv.y * source.height
+                                ) *
+                            inverseTextureHeight;
+
+                        rlTexCoord2f(textureU, textureV);
+                        rlVertex3f(
+                            vertex.world.x * hybridUnitsPerPixel,
+                            PixelsToHybridUnits(cellHeightPixels),
+                            vertex.world.y * hybridUnitsPerPixel
+                        );
+                    }
+                }
+            }
+        }
 
         rlEnd();
         rlSetTexture(0);
@@ -34982,6 +37626,146 @@ void Game::DrawHybridActors3D()
     DrawHybridObstacleLayer3D(
         ObstacleRenderLayer::Foreground,
         true
+    );
+}
+void Game::DrawObstacleColliderDebug3D(
+    const Obstacle& obstacle,
+    Color color
+) const
+{
+    if (
+        !obstacle.collisionEnabled ||
+        obstacle.renderMode ==
+        ObstacleRenderMode::GroundDecal
+        )
+    {
+        return;
+    }
+
+    constexpr float debugHeightPixels =
+        6.0f;
+
+    const Vector2 center =
+        GetObstacleCollisionCenter(
+            obstacle
+        );
+
+    if (
+        obstacle.collisionShape ==
+        CollisionShape::Circle
+        )
+    {
+        DrawCircle3D(
+            WorldToHybrid3D(
+                center,
+                debugHeightPixels
+            ),
+            PixelsToHybridUnits(
+                std::max(
+                    2.0f,
+                    obstacle.colliderRadius
+                )
+            ),
+            Vector3{
+                1.0f,
+                0.0f,
+                0.0f
+            },
+            90.0f,
+            color
+        );
+
+        DrawSphereWires(
+            WorldToHybrid3D(
+                center,
+                debugHeightPixels +
+                2.0f
+            ),
+            PixelsToHybridUnits(
+                4.0f
+            ),
+            6,
+            6,
+            color
+        );
+
+        return;
+    }
+
+    const Rectangle collider =
+        GetObstacleCollisionRect(
+            obstacle
+        );
+
+    const Vector2 worldCorners[4] = {
+        {
+            collider.x,
+            collider.y
+        },
+        {
+            collider.x +
+                collider.width,
+            collider.y
+        },
+        {
+            collider.x +
+                collider.width,
+            collider.y +
+                collider.height
+        },
+        {
+            collider.x,
+            collider.y +
+                collider.height
+        }
+    };
+
+    Vector3 corners[4]{};
+
+    for (int index = 0; index < 4; ++index)
+    {
+        corners[index] =
+            WorldToHybrid3D(
+                worldCorners[index],
+                debugHeightPixels
+            );
+    }
+
+    DrawLine3D(
+        corners[0],
+        corners[1],
+        color
+    );
+
+    DrawLine3D(
+        corners[1],
+        corners[2],
+        color
+    );
+
+    DrawLine3D(
+        corners[2],
+        corners[3],
+        color
+    );
+
+    DrawLine3D(
+        corners[3],
+        corners[0],
+        color
+    );
+
+    DrawLine3D(
+        WorldToHybrid3D(
+            center,
+            debugHeightPixels
+        ),
+        WorldToHybrid3D(
+            center,
+            debugHeightPixels +
+            14.0f
+        ),
+        color
     );
 }
 
@@ -35408,6 +38192,126 @@ void Game::DrawHybridEditorOverlay3D()
         }
     }
 
+    // --------------------------------------------------
+    // Selected floor-decal outline and anchor.
+    // Cyan is reserved for decal editing so it cannot be confused with
+    // the red obstacle collision guides.
+    // --------------------------------------------------
+
+    if (
+        selectedObstacleIndex >= 0 &&
+        selectedObstacleIndex <
+        static_cast<int>(obstacles.size()) &&
+        obstacles[selectedObstacleIndex].renderMode ==
+        ObstacleRenderMode::GroundDecal
+        )
+    {
+        const Obstacle& selectedDecal =
+            obstacles[selectedObstacleIndex];
+
+        const std::vector<DecalClipVertex> outline =
+            MakeDecalPolygon(
+                selectedDecal.position,
+                selectedDecal.size,
+                selectedDecal.rotationDegrees
+            );
+
+        const Color decalColor{
+            50,
+            225,
+            255,
+            255
+        };
+
+        rlDisableDepthTest();
+
+        for (
+            size_t index = 0;
+            index < outline.size();
+            ++index
+            )
+        {
+            const size_t nextIndex =
+                (index + 1) % outline.size();
+
+            DrawLine3D(
+                WorldToHybrid3D(
+                    outline[index].world,
+                    7.0f
+                ),
+                WorldToHybrid3D(
+                    outline[nextIndex].world,
+                    7.0f
+                ),
+                decalColor
+            );
+        }
+
+        DrawSphereWires(
+            WorldToHybrid3D(
+                selectedDecal.position,
+                10.0f
+            ),
+            PixelsToHybridUnits(7.0f),
+            8,
+            8,
+            decalColor
+        );
+
+        rlEnableDepthTest();
+    }
+
+    // --------------------------------------------------
+// Obstacle collider guides
+// --------------------------------------------------
+
+    if (showObstacleColliders)
+    {
+        // Collider guides are editor helpers, so show them
+        // through nearby props and walls.
+        rlDisableDepthTest();
+
+        for (
+            int obstacleIndex = 0;
+            obstacleIndex <
+            static_cast<int>(
+                obstacles.size()
+                );
+            ++obstacleIndex
+            )
+        {
+            const Obstacle& obstacle =
+                obstacles[
+                    obstacleIndex
+                ];
+
+            const bool isSelected =
+                obstacleIndex ==
+                selectedObstacleIndex;
+
+            const Color colliderColor =
+                isSelected
+                ? Color{
+                    255,
+                    230,
+                    60,
+                    255
+            }
+                : Color{
+                    255,
+                    70,
+                    70,
+                    210
+            };
+
+            DrawObstacleColliderDebug3D(
+                obstacle,
+                colliderColor
+            );
+        }
+
+        rlEnableDepthTest();
+    }
     // Authored light guides. The radius ring is intentionally visible
     // through nearby props so placement remains practical in dense rooms.
     rlDisableDepthTest();
@@ -42573,4 +45477,14 @@ void Game::ProcessPendingEnemySpawns()
         spawnedEnemy.animationState =
             EnemyAnimationState::Idle;
     }
+}
+
+Vector2 Game::GetObstacleCollisionCenter(
+    const Obstacle& obstacle
+) const
+{
+    return Vector2Add(
+        obstacle.position,
+        obstacle.colliderOffset
+    );
 }

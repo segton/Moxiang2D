@@ -360,4 +360,7 @@ MigrationBackup/
 .ionide/
 
 # Fody - auto-generated XML schema
-FodyWeavers.xsd
+FodyWeavers.xsd/Moxiang2D-current.bundle
+/external.zip
+/Moxiang2D-current.bundle
+/external.zip

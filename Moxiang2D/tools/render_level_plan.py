@@ -8,6 +8,7 @@ without launching the editor.
 from __future__ import annotations
 
 import argparse
+import math
 import shlex
 from pathlib import Path
 from typing import Iterable
@@ -82,6 +83,13 @@ def render(level: Path, output: Path, cell_pixels: int = 18) -> None:
         for record in chamber_body
         if len(fields := shlex.split(record)) == 2
     }
+
+    _, style_body = section(lines, "CHAMBER_STYLES")
+    chamber_zoom = {}
+    for record in style_body:
+        fields = shlex.split(record)
+        if len(fields) >= 7:
+            chamber_zoom[int(fields[0])] = float(fields[6])
 
     margin = 48
     canvas = Image.new(
@@ -179,7 +187,7 @@ def render(level: Path, output: Path, cell_pixels: int = 18) -> None:
                 margin + center_x * cell_pixels - 54,
                 margin + center_y * cell_pixels - 8,
             ),
-            f"{chamber_id}: {name}",
+            f"{chamber_id}: {name}  zoom {chamber_zoom.get(chamber_id, 1.5):.2f}",
             fill=(245, 245, 245),
         )
 
@@ -197,18 +205,34 @@ def render(level: Path, output: Path, cell_pixels: int = 18) -> None:
         fields = shlex.split(record)
         world_x = float(fields[0])
         world_y = float(fields[1])
+        world_w = max(8.0, float(fields[2]))
+        world_h = max(8.0, float(fields[3]))
         layer = int(fields[8])
         mode = int(fields[9])
+        rotation = float(fields[26]) if len(fields) >= 37 else 0.0
         x, y = plan_position(world_x, world_y)
+        half_w = world_w / 64.0 * cell_pixels * 0.5
+        half_h = world_h / 64.0 * cell_pixels * 0.5
         if mode == 1:
             color = (235, 235, 235)
-        elif layer == 0:
-            color = (255, 174, 76)
-        elif layer == 2:
-            color = (225, 104, 220)
+            radians = math.radians(rotation)
+            cosine = math.cos(radians)
+            sine = math.sin(radians)
+            corners = []
+            for local_x, local_y in ((-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)):
+                corners.append((
+                    x + local_x * cosine - local_y * sine,
+                    y + local_x * sine + local_y * cosine,
+                ))
+            draw.polygon(corners, outline=color)
         else:
-            color = (116, 220, 130)
-        draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=color)
+            if layer == 0:
+                color = (255, 174, 76)
+            elif layer == 2:
+                color = (225, 104, 220)
+            else:
+                color = (116, 220, 130)
+            draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=color)
 
     _, light_body = section(lines, "LIGHTS")
     for record in light_body:

@@ -1,0 +1,1042 @@
+[
+  {
+    "name": "structural_short_square_pillar",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      0,
+      0
+    ],
+    "path": "Assets/environment/generated/structural_short_square_pillar.png",
+    "size": [
+      184,
+      213
+    ]
+  },
+  {
+    "name": "structural_damaged_square_pillar",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      1,
+      0
+    ],
+    "path": "Assets/environment/generated/structural_damaged_square_pillar.png",
+    "size": [
+      224,
+      212
+    ]
+  },
+  {
+    "name": "structural_short_round_column",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      2,
+      0
+    ],
+    "path": "Assets/environment/generated/structural_short_round_column.png",
+    "size": [
+      206,
+      215
+    ]
+  },
+  {
+    "name": "structural_broken_round_column",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      3,
+      0
+    ],
+    "path": "Assets/environment/generated/structural_broken_round_column.png",
+    "size": [
+      216,
+      199
+    ]
+  },
+  {
+    "name": "structural_low_rect_pedestal",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      0,
+      1
+    ],
+    "path": "Assets/environment/generated/structural_low_rect_pedestal.png",
+    "size": [
+      246,
+      243
+    ]
+  },
+  {
+    "name": "structural_low_square_pedestal",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      1,
+      1
+    ],
+    "path": "Assets/environment/generated/structural_low_square_pedestal.png",
+    "size": [
+      256,
+      233
+    ]
+  },
+  {
+    "name": "structural_dragon_support_block",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      2,
+      1
+    ],
+    "path": "Assets/environment/generated/structural_dragon_support_block.png",
+    "size": [
+      246,
+      234
+    ]
+  },
+  {
+    "name": "structural_boundary_post",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      3,
+      1
+    ],
+    "path": "Assets/environment/generated/structural_boundary_post.png",
+    "size": [
+      241,
+      246
+    ]
+  },
+  {
+    "name": "structural_collapsed_pillar_base",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      0,
+      2
+    ],
+    "path": "Assets/environment/generated/structural_collapsed_pillar_base.png",
+    "size": [
+      243,
+      256
+    ]
+  },
+  {
+    "name": "structural_half_cracked_column",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      1,
+      2
+    ],
+    "path": "Assets/environment/generated/structural_half_cracked_column.png",
+    "size": [
+      256,
+      256
+    ]
+  },
+  {
+    "name": "structural_carved_cover_block",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      2,
+      2
+    ],
+    "path": "Assets/environment/generated/structural_carved_cover_block.png",
+    "size": [
+      246,
+      256
+    ]
+  },
+  {
+    "name": "structural_broken_support",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      3,
+      2
+    ],
+    "path": "Assets/environment/generated/structural_broken_support.png",
+    "size": [
+      243,
+      256
+    ]
+  },
+  {
+    "name": "structural_low_wall_fragment",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      0,
+      3
+    ],
+    "path": "Assets/environment/generated/structural_low_wall_fragment.png",
+    "size": [
+      256,
+      126
+    ]
+  },
+  {
+    "name": "structural_damaged_wall_fragment",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      1,
+      3
+    ],
+    "path": "Assets/environment/generated/structural_damaged_wall_fragment.png",
+    "size": [
+      256,
+      110
+    ]
+  },
+  {
+    "name": "structural_guardian_lion_pedestal",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      2,
+      3
+    ],
+    "path": "Assets/environment/generated/structural_guardian_lion_pedestal.png",
+    "size": [
+      256,
+      125
+    ]
+  },
+  {
+    "name": "structural_brazier_pedestal",
+    "source": "structural_obstacles_4x4.png",
+    "cell": [
+      3,
+      3
+    ],
+    "path": "Assets/environment/generated/structural_brazier_pedestal.png",
+    "size": [
+      221,
+      142
+    ]
+  },
+  {
+    "name": "ritual_amber_brazier",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      0,
+      0
+    ],
+    "path": "Assets/environment/generated/ritual_amber_brazier.png",
+    "size": [
+      246,
+      249
+    ]
+  },
+  {
+    "name": "ritual_cyan_brazier",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      1,
+      0
+    ],
+    "path": "Assets/environment/generated/ritual_cyan_brazier.png",
+    "size": [
+      256,
+      256
+    ]
+  },
+  {
+    "name": "ritual_extinguished_brazier",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      2,
+      0
+    ],
+    "path": "Assets/environment/generated/ritual_extinguished_brazier.png",
+    "size": [
+      256,
+      231
+    ]
+  },
+  {
+    "name": "ritual_incense_altar",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      3,
+      0
+    ],
+    "path": "Assets/environment/generated/ritual_incense_altar.png",
+    "size": [
+      239,
+      240
+    ]
+  },
+  {
+    "name": "ritual_offering_table",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      0,
+      1
+    ],
+    "path": "Assets/environment/generated/ritual_offering_table.png",
+    "size": [
+      256,
+      228
+    ]
+  },
+  {
+    "name": "ritual_seal_pedestal",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      1,
+      1
+    ],
+    "path": "Assets/environment/generated/ritual_seal_pedestal.png",
+    "size": [
+      256,
+      209
+    ]
+  },
+  {
+    "name": "ritual_rune_pedestal",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      2,
+      1
+    ],
+    "path": "Assets/environment/generated/ritual_rune_pedestal.png",
+    "size": [
+      256,
+      220
+    ]
+  },
+  {
+    "name": "ritual_gong_stand",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      3,
+      1
+    ],
+    "path": "Assets/environment/generated/ritual_gong_stand.png",
+    "size": [
+      254,
+      213
+    ]
+  },
+  {
+    "name": "ritual_chained_post",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      0,
+      2
+    ],
+    "path": "Assets/environment/generated/ritual_chained_post.png",
+    "size": [
+      233,
+      223
+    ]
+  },
+  {
+    "name": "ritual_incense_burner",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      1,
+      2
+    ],
+    "path": "Assets/environment/generated/ritual_incense_burner.png",
+    "size": [
+      242,
+      222
+    ]
+  },
+  {
+    "name": "ritual_stone_basin",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      2,
+      2
+    ],
+    "path": "Assets/environment/generated/ritual_stone_basin.png",
+    "size": [
+      256,
+      174
+    ]
+  },
+  {
+    "name": "ritual_cracked_platform",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      3,
+      2
+    ],
+    "path": "Assets/environment/generated/ritual_cracked_platform.png",
+    "size": [
+      256,
+      196
+    ]
+  },
+  {
+    "name": "ritual_candle_cluster",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      0,
+      3
+    ],
+    "path": "Assets/environment/generated/ritual_candle_cluster.png",
+    "size": [
+      232,
+      195
+    ]
+  },
+  {
+    "name": "ritual_sealed_relic",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      1,
+      3
+    ],
+    "path": "Assets/environment/generated/ritual_sealed_relic.png",
+    "size": [
+      256,
+      196
+    ]
+  },
+  {
+    "name": "ritual_damaged_shrine_base",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      2,
+      3
+    ],
+    "path": "Assets/environment/generated/ritual_damaged_shrine_base.png",
+    "size": [
+      256,
+      186
+    ]
+  },
+  {
+    "name": "ritual_spirit_lantern",
+    "source": "ritual_props_4x4.png",
+    "cell": [
+      3,
+      3
+    ],
+    "path": "Assets/environment/generated/ritual_spirit_lantern.png",
+    "size": [
+      217,
+      188
+    ]
+  },
+  {
+    "name": "storage_chest_plain_closed",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      0,
+      0
+    ],
+    "path": "Assets/environment/generated/storage_chest_plain_closed.png",
+    "size": [
+      239,
+      175
+    ]
+  },
+  {
+    "name": "storage_chest_plain_open",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      1,
+      0
+    ],
+    "path": "Assets/environment/generated/storage_chest_plain_open.png",
+    "size": [
+      247,
+      198
+    ]
+  },
+  {
+    "name": "storage_chest_bronze_closed",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      2,
+      0
+    ],
+    "path": "Assets/environment/generated/storage_chest_bronze_closed.png",
+    "size": [
+      255,
+      195
+    ]
+  },
+  {
+    "name": "storage_chest_bronze_open",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      3,
+      0
+    ],
+    "path": "Assets/environment/generated/storage_chest_bronze_open.png",
+    "size": [
+      244,
+      226
+    ]
+  },
+  {
+    "name": "storage_chest_ceremonial",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      0,
+      1
+    ],
+    "path": "Assets/environment/generated/storage_chest_ceremonial.png",
+    "size": [
+      243,
+      222
+    ]
+  },
+  {
+    "name": "storage_chest_broken",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      1,
+      1
+    ],
+    "path": "Assets/environment/generated/storage_chest_broken.png",
+    "size": [
+      254,
+      180
+    ]
+  },
+  {
+    "name": "storage_large_urn",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      2,
+      1
+    ],
+    "path": "Assets/environment/generated/storage_large_urn.png",
+    "size": [
+      219,
+      207
+    ]
+  },
+  {
+    "name": "storage_small_jar",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      3,
+      1
+    ],
+    "path": "Assets/environment/generated/storage_small_jar.png",
+    "size": [
+      209,
+      182
+    ]
+  },
+  {
+    "name": "storage_cracked_urn",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      0,
+      2
+    ],
+    "path": "Assets/environment/generated/storage_cracked_urn.png",
+    "size": [
+      223,
+      206
+    ]
+  },
+  {
+    "name": "storage_shattered_urn",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      1,
+      2
+    ],
+    "path": "Assets/environment/generated/storage_shattered_urn.png",
+    "size": [
+      256,
+      190
+    ]
+  },
+  {
+    "name": "storage_crate",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      2,
+      2
+    ],
+    "path": "Assets/environment/generated/storage_crate.png",
+    "size": [
+      251,
+      249
+    ]
+  },
+  {
+    "name": "storage_reinforced_crate",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      3,
+      2
+    ],
+    "path": "Assets/environment/generated/storage_reinforced_crate.png",
+    "size": [
+      247,
+      196
+    ]
+  },
+  {
+    "name": "storage_damaged_crate",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      0,
+      3
+    ],
+    "path": "Assets/environment/generated/storage_damaged_crate.png",
+    "size": [
+      226,
+      188
+    ]
+  },
+  {
+    "name": "storage_collapsed_crate",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      1,
+      3
+    ],
+    "path": "Assets/environment/generated/storage_collapsed_crate.png",
+    "size": [
+      256,
+      177
+    ]
+  },
+  {
+    "name": "storage_scroll_bundle",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      2,
+      3
+    ],
+    "path": "Assets/environment/generated/storage_scroll_bundle.png",
+    "size": [
+      232,
+      198
+    ]
+  },
+  {
+    "name": "storage_supply_basket",
+    "source": "storage_props_4x4.png",
+    "cell": [
+      3,
+      3
+    ],
+    "path": "Assets/environment/generated/storage_supply_basket.png",
+    "size": [
+      238,
+      176
+    ]
+  },
+  {
+    "name": "ornament_dragon_relief_monument",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      0,
+      0
+    ],
+    "path": "Assets/environment/generated/ornament_dragon_relief_monument.png",
+    "size": [
+      256,
+      232
+    ]
+  },
+  {
+    "name": "ornament_circular_ritual_altar",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      1,
+      0
+    ],
+    "path": "Assets/environment/generated/ornament_circular_ritual_altar.png",
+    "size": [
+      256,
+      166
+    ]
+  },
+  {
+    "name": "ornament_rectangular_ceremonial_altar",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      2,
+      0
+    ],
+    "path": "Assets/environment/generated/ornament_rectangular_ceremonial_altar.png",
+    "size": [
+      256,
+      190
+    ]
+  },
+  {
+    "name": "ornament_guardian_statue",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      3,
+      0
+    ],
+    "path": "Assets/environment/generated/ornament_guardian_statue.png",
+    "size": [
+      246,
+      216
+    ]
+  },
+  {
+    "name": "ornament_sword_shrine",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      0,
+      1
+    ],
+    "path": "Assets/environment/generated/ornament_sword_shrine.png",
+    "size": [
+      256,
+      243
+    ]
+  },
+  {
+    "name": "ornament_ancient_bell",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      1,
+      1
+    ],
+    "path": "Assets/environment/generated/ornament_ancient_bell.png",
+    "size": [
+      256,
+      241
+    ]
+  },
+  {
+    "name": "ornament_rune_obelisk",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      2,
+      1
+    ],
+    "path": "Assets/environment/generated/ornament_rune_obelisk.png",
+    "size": [
+      256,
+      243
+    ]
+  },
+  {
+    "name": "ornament_damaged_rune_obelisk",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      3,
+      1
+    ],
+    "path": "Assets/environment/generated/ornament_damaged_rune_obelisk.png",
+    "size": [
+      249,
+      236
+    ]
+  },
+  {
+    "name": "ornament_chained_relic",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      0,
+      2
+    ],
+    "path": "Assets/environment/generated/ornament_chained_relic.png",
+    "size": [
+      256,
+      159
+    ]
+  },
+  {
+    "name": "ornament_spiritual_fountain",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      1,
+      2
+    ],
+    "path": "Assets/environment/generated/ornament_spiritual_fountain.png",
+    "size": [
+      256,
+      256
+    ]
+  },
+  {
+    "name": "ornament_small_sarcophagus",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      2,
+      2
+    ],
+    "path": "Assets/environment/generated/ornament_small_sarcophagus.png",
+    "size": [
+      256,
+      221
+    ]
+  },
+  {
+    "name": "ornament_broken_monument",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      3,
+      2
+    ],
+    "path": "Assets/environment/generated/ornament_broken_monument.png",
+    "size": [
+      256,
+      175
+    ]
+  },
+  {
+    "name": "ornament_incense_shrine",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      0,
+      3
+    ],
+    "path": "Assets/environment/generated/ornament_incense_shrine.png",
+    "size": [
+      256,
+      162
+    ]
+  },
+  {
+    "name": "ornament_prison_memorial",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      1,
+      3
+    ],
+    "path": "Assets/environment/generated/ornament_prison_memorial.png",
+    "size": [
+      256,
+      188
+    ]
+  },
+  {
+    "name": "ornament_boss_emblem_pedestal",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      2,
+      3
+    ],
+    "path": "Assets/environment/generated/ornament_boss_emblem_pedestal.png",
+    "size": [
+      256,
+      186
+    ]
+  },
+  {
+    "name": "ornament_damaged_dragon_altar",
+    "source": "chamber_ornaments_4x4.png",
+    "cell": [
+      3,
+      3
+    ],
+    "path": "Assets/environment/generated/ornament_damaged_dragon_altar.png",
+    "size": [
+      256,
+      176
+    ]
+  },
+  {
+    "name": "debris_loose_stones",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      0,
+      0
+    ],
+    "path": "Assets/environment/generated/debris_loose_stones.png",
+    "size": [
+      224,
+      130
+    ]
+  },
+  {
+    "name": "debris_rubble_pile",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      1,
+      0
+    ],
+    "path": "Assets/environment/generated/debris_rubble_pile.png",
+    "size": [
+      247,
+      156
+    ]
+  },
+  {
+    "name": "debris_broken_floor_slab",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      2,
+      0
+    ],
+    "path": "Assets/environment/generated/debris_broken_floor_slab.png",
+    "size": [
+      240,
+      143
+    ]
+  },
+  {
+    "name": "debris_wall_bricks",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      3,
+      0
+    ],
+    "path": "Assets/environment/generated/debris_wall_bricks.png",
+    "size": [
+      243,
+      161
+    ]
+  },
+  {
+    "name": "debris_pillar_fragments",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      0,
+      1
+    ],
+    "path": "Assets/environment/generated/debris_pillar_fragments.png",
+    "size": [
+      241,
+      256
+    ]
+  },
+  {
+    "name": "debris_ceramic_fragments",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      1,
+      1
+    ],
+    "path": "Assets/environment/generated/debris_ceramic_fragments.png",
+    "size": [
+      240,
+      243
+    ]
+  },
+  {
+    "name": "debris_wooden_boards",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      2,
+      1
+    ],
+    "path": "Assets/environment/generated/debris_wooden_boards.png",
+    "size": [
+      246,
+      256
+    ]
+  },
+  {
+    "name": "debris_broken_crate",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      3,
+      1
+    ],
+    "path": "Assets/environment/generated/debris_broken_crate.png",
+    "size": [
+      247,
+      255
+    ]
+  },
+  {
+    "name": "debris_fallen_plaque",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      0,
+      2
+    ],
+    "path": "Assets/environment/generated/debris_fallen_plaque.png",
+    "size": [
+      243,
+      256
+    ]
+  },
+  {
+    "name": "debris_tablet_fragment",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      1,
+      2
+    ],
+    "path": "Assets/environment/generated/debris_tablet_fragment.png",
+    "size": [
+      256,
+      256
+    ]
+  },
+  {
+    "name": "debris_chain_coil",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      2,
+      2
+    ],
+    "path": "Assets/environment/generated/debris_chain_coil.png",
+    "size": [
+      253,
+      256
+    ]
+  },
+  {
+    "name": "debris_bones_rubble",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      3,
+      2
+    ],
+    "path": "Assets/environment/generated/debris_bones_rubble.png",
+    "size": [
+      248,
+      256
+    ]
+  },
+  {
+    "name": "debris_torn_cloth_stones",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      0,
+      3
+    ],
+    "path": "Assets/environment/generated/debris_torn_cloth_stones.png",
+    "size": [
+      247,
+      217
+    ]
+  },
+  {
+    "name": "debris_weapon_fragments",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      1,
+      3
+    ],
+    "path": "Assets/environment/generated/debris_weapon_fragments.png",
+    "size": [
+      255,
+      219
+    ]
+  },
+  {
+    "name": "debris_ash_pile",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      2,
+      3
+    ],
+    "path": "Assets/environment/generated/debris_ash_pile.png",
+    "size": [
+      255,
+      216
+    ]
+  },
+  {
+    "name": "debris_moss_stones",
+    "source": "debris_props_4x4.png",
+    "cell": [
+      3,
+      3
+    ],
+    "path": "Assets/environment/generated/debris_moss_stones.png",
+    "size": [
+      248,
+      223
+    ]
+  }
+]

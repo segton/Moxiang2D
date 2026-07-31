@@ -2,8 +2,8 @@
 """Validate .mox level structure and referenced runtime assets.
 
 This catches the most common desktop/web mismatch before compilation:
-missing files, case-only path errors, invalid atlas grids, malformed v11
-obstacles, broken animation metadata and duplicate light IDs.
+missing files, case-only path errors, invalid atlas grids, malformed v11-v13
+obstacles, terrain-aware decal metadata and duplicate light IDs.
 """
 from __future__ import annotations
 
@@ -116,6 +116,8 @@ def validate(level: Path) -> list[str]:
         return ["invalid level version"]
     if version < 11:
         errors.append(f"level version {version}; atmosphere authoring requires version 11")
+    if version > 13:
+        errors.append(f"level version {version}; validator currently supports up to version 13")
 
     try:
         chamber_header, chamber_body = section(lines, "CHAMBERS")
@@ -136,17 +138,28 @@ def validate(level: Path) -> list[str]:
         styled_ids: set[int] = set()
         for record in style_body:
             fields = shlex.split(record)
-            if len(fields) != 6:
-                errors.append(f"CHAMBER_STYLES malformed: {record}")
+            expected_style_fields = 9 if version >= 12 else 6
+            if len(fields) != expected_style_fields:
+                errors.append(
+                    f"CHAMBER_STYLES malformed: expected {expected_style_fields} "
+                    f"fields, found {len(fields)}: {record}"
+                )
                 continue
             chamber_id = int(fields[0])
             styled_ids.add(chamber_id)
             rgba = [int(value) for value in fields[1:5]]
             vignette = float(fields[5])
+            camera_zoom = float(fields[6]) if version >= 12 else 1.5
+            focus_x = float(fields[7]) if version >= 12 else 0.0
+            focus_y = float(fields[8]) if version >= 12 else 0.0
             if any(value < 0 or value > 255 for value in rgba):
                 errors.append(f"chamber {chamber_id}: ambient RGBA outside 0..255")
             if not 0.0 <= vignette <= 0.85:
                 errors.append(f"chamber {chamber_id}: vignette outside 0..0.85")
+            if not 0.35 <= camera_zoom <= 3.5:
+                errors.append(f"chamber {chamber_id}: camera zoom outside 0.35..3.5")
+            if abs(focus_x) > 4096 or abs(focus_y) > 4096:
+                errors.append(f"chamber {chamber_id}: camera focus offset is unreasonable")
         missing_styles = chamber_ids - styled_ids
         if missing_styles:
             errors.append(f"missing CHAMBER_STYLES for IDs {sorted(missing_styles)}")
@@ -379,11 +392,17 @@ def validate(level: Path) -> list[str]:
 
         obstacle_header, obstacle_body = section(lines, "OBSTACLES")
         check_count("OBSTACLES", obstacle_header, obstacle_body, errors)
+        expected_obstacle_fields = 43 if version >= 13 else (37 if version >= 12 else 28)
+        blocking_obstacles: list[dict[str, float | int]] = []
         for row, record in enumerate(obstacle_body, start=1):
             fields = shlex.split(record)
-            if len(fields) != 28:
-                errors.append(f"OBSTACLES row {row}: expected 28 fields, found {len(fields)}")
+            if len(fields) != expected_obstacle_fields:
+                errors.append(
+                    f"OBSTACLES row {row}: expected {expected_obstacle_fields} "
+                    f"fields, found {len(fields)}"
+                )
                 continue
+
             layer = int(fields[8])
             mode = int(fields[9])
             opacity = float(fields[14])
@@ -392,9 +411,76 @@ def validate(level: Path) -> list[str]:
             rows = int(fields[17])
             frame_count = int(fields[18])
             fps = float(fields[19])
-            asset = fields[21]
             position_x = float(fields[0])
             position_y = float(fields[1])
+            size_x = float(fields[2])
+            size_y = float(fields[3])
+            height_level = int(fields[5])
+
+            if version >= 12:
+                source_frame = int(fields[21])
+                source_rect = tuple(float(value) for value in fields[22:26])
+                rotation = float(fields[26])
+                terrain_elevation = int(fields[27])
+                clip_to_elevation = int(fields[28]) != 0
+                allow_on_ramps = int(fields[29]) != 0
+                asset = fields[30]
+                collision_enabled = int(fields[31]) != 0
+                collision_shape = int(fields[33])
+                collider_x = float(fields[34])
+                collider_y = float(fields[35])
+                collider_radius = float(fields[36])
+                if version >= 13:
+                    visual_offset_x = float(fields[37])
+                    visual_offset_y = float(fields[38])
+                    collider_offset_x = float(fields[39])
+                    collider_offset_y = float(fields[40])
+                    visual_anchor_y = float(fields[41])
+                    depth_bias = float(fields[42])
+                else:
+                    visual_offset_x = 0.0
+                    visual_offset_y = 0.0
+                    collider_offset_x = 0.0
+                    collider_offset_y = 0.0
+                    visual_anchor_y = 1.0
+                    depth_bias = 0.0
+            else:
+                source_frame = 0
+                source_rect = (0.0, 0.0, 0.0, 0.0)
+                rotation = 0.0
+                terrain_elevation = -1
+                clip_to_elevation = False
+                allow_on_ramps = False
+                asset = fields[21]
+                collision_enabled = int(fields[22]) != 0
+                collision_shape = int(fields[24])
+                collider_x = float(fields[25])
+                collider_y = float(fields[26])
+                collider_radius = float(fields[27])
+                visual_offset_x = 0.0
+                visual_offset_y = 0.0
+                collider_offset_x = 0.0
+                collider_offset_y = 0.0
+                visual_anchor_y = 1.0
+                depth_bias = 0.0
+
+            if not 0.0 <= visual_anchor_y <= 1.0:
+                errors.append(f"OBSTACLES row {row}: visual anchor Y outside 0..1")
+            if abs(depth_bias) > 4096.0:
+                errors.append(f"OBSTACLES row {row}: unreasonable visual height bias")
+
+            if collision_enabled and mode == 0 and height_level <= 0:
+                blocking_obstacles.append({
+                    "x": position_x + collider_offset_x,
+                    "y": position_y + collider_offset_y,
+                    "size_x": size_x,
+                    "size_y": size_y,
+                    "shape": collision_shape,
+                    "collider_x": collider_x,
+                    "collider_y": collider_y,
+                    "radius": collider_radius,
+                })
+
             placed_cell = world_cell(position_x, position_y)
             if placed_cell is None:
                 errors.append(
@@ -405,6 +491,7 @@ def validate(level: Path) -> list[str]:
                     f"OBSTACLES row {row}: position is on disabled cell "
                     f"({placed_cell[0]}, {placed_cell[1]})"
                 )
+
             if layer not in (0, 1, 2):
                 errors.append(f"OBSTACLES row {row}: invalid render layer {layer}")
             if mode not in (0, 1):
@@ -415,19 +502,167 @@ def validate(level: Path) -> list[str]:
                 errors.append(f"OBSTACLES row {row}: animation grid must be positive")
             if frame_count <= 0 or frame_count > columns * rows:
                 errors.append(f"OBSTACLES row {row}: frame count exceeds animation grid")
+            if source_frame < 0 or source_frame >= max(1, columns * rows):
+                errors.append(f"OBSTACLES row {row}: source frame outside animation grid")
             if animated and fps <= 0.0:
                 errors.append(f"OBSTACLES row {row}: animated prop requires positive FPS")
+            if abs(rotation) > 100000.0:
+                errors.append(f"OBSTACLES row {row}: unreasonable decal rotation")
+
+            source_x, source_y, source_w, source_h = source_rect
+            custom_source = source_w > 0.0 and source_h > 0.0
+            if (source_w > 0.0) != (source_h > 0.0):
+                errors.append(f"OBSTACLES row {row}: custom source width/height must both be positive")
+            if source_x < 0.0 or source_y < 0.0:
+                errors.append(f"OBSTACLES row {row}: custom source origin cannot be negative")
+
+            if mode == 1 and version >= 12 and placed_cell is not None:
+                cell_x, cell_y, cell_enabled, _ = placed_cell
+                if clip_to_elevation and cell_enabled and len(elevation_grid) == map_height:
+                    actual_elevation = elevation_grid[cell_y][cell_x]
+                    if terrain_elevation != actual_elevation:
+                        errors.append(
+                            f"OBSTACLES row {row}: decal anchor elevation "
+                            f"{terrain_elevation} does not match terrain {actual_elevation}"
+                        )
+                if (
+                    not allow_on_ramps and
+                    len(ramp_grid) == map_height and
+                    ramp_grid[cell_y][cell_x] != 0
+                ):
+                    errors.append(f"OBSTACLES row {row}: decal anchor is on a ramp")
+
             if asset:
                 asset_path = exact_path(project, asset)
                 if asset_path is None or not asset_path.is_file():
                     errors.append(f"OBSTACLES row {row}: missing/case-mismatched asset {asset}")
                 else:
                     with Image.open(asset_path) as image:
-                        if image.width % columns or image.height % rows:
+                        if custom_source:
+                            if source_x + source_w > image.width or source_y + source_h > image.height:
+                                errors.append(
+                                    f"OBSTACLES row {row}: custom source rectangle exceeds "
+                                    f"{asset} size {image.width}x{image.height}"
+                                )
+                        elif image.width % columns or image.height % rows:
                             errors.append(
                                 f"OBSTACLES row {row}: {asset} size {image.width}x{image.height} "
                                 f"is not divisible by {columns}x{rows}"
                             )
+
+        # Perform a second reachability pass with collision-enabled world
+        # props. This catches decorative clusters that accidentally seal the
+        # linear route even though the terrain and ramps themselves are valid.
+        if (
+            map_width > 0 and
+            map_height > 0 and
+            len(cell_layout) == map_height and
+            len(elevation_grid) == map_height and
+            len(ramp_grid) == map_height
+        ):
+            tile_size = 64.0
+            origin_x = -map_width * tile_size * 0.5
+            origin_y = -map_height * tile_size * 0.5
+            player_radius = 20.0
+
+            def cell_blocked_by_prop(cell_x: int, cell_y: int) -> bool:
+                center_x = origin_x + (cell_x + 0.5) * tile_size
+                center_y = origin_y + (cell_y + 0.5) * tile_size
+                for obstacle in blocking_obstacles:
+                    delta_x = center_x - float(obstacle["x"])
+                    delta_y = center_y - float(obstacle["y"])
+                    if int(obstacle["shape"]) == 0:
+                        width = float(obstacle["collider_x"])
+                        height = float(obstacle["collider_y"])
+                        if width <= 0.0 or height <= 0.0:
+                            width = float(obstacle["size_x"])
+                            height = float(obstacle["size_y"])
+                        if (
+                            abs(delta_x) <= width * 0.5 + player_radius and
+                            abs(delta_y) <= height * 0.5 + player_radius
+                        ):
+                            return True
+                    else:
+                        radius = float(obstacle["radius"]) + player_radius + 4.0
+                        if delta_x * delta_x + delta_y * delta_y <= radius * radius:
+                            return True
+                return False
+
+            obstacle_start: tuple[int, int] | None = None
+            for y in range(map_height - 1, -1, -1):
+                candidates = [
+                    x for x in range(map_width)
+                    if cell_layout[y][x][0] != 0 and not cell_blocked_by_prop(x, y)
+                ]
+                if candidates:
+                    obstacle_start = (
+                        min(candidates, key=lambda x: abs(x - map_width // 2)),
+                        y,
+                    )
+                    break
+
+            if obstacle_start is None:
+                errors.append("all southern entrance cells are blocked by collision props")
+            else:
+                obstacle_queue = deque([obstacle_start])
+                obstacle_visited = {obstacle_start}
+                while obstacle_queue:
+                    x, y = obstacle_queue.popleft()
+                    for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                        nx, ny = x + dx, y + dy
+                        if not (0 <= nx < map_width and 0 <= ny < map_height):
+                            continue
+                        if (nx, ny) in obstacle_visited or cell_layout[ny][nx][0] == 0:
+                            continue
+                        if cell_blocked_by_prop(nx, ny):
+                            continue
+
+                        traversable = elevation_grid[ny][nx] == elevation_grid[y][x]
+                        if not traversable:
+                            source_direction = ramp_grid[y][x]
+                            if source_direction in offsets:
+                                rdx, rdy = offsets[source_direction]
+                                traversable = (
+                                    (x + rdx, y + rdy) == (nx, ny) and
+                                    elevation_grid[ny][nx] == elevation_grid[y][x] + 1
+                                )
+                            if not traversable:
+                                target_direction = ramp_grid[ny][nx]
+                                if target_direction in offsets:
+                                    rdx, rdy = offsets[target_direction]
+                                    traversable = (
+                                        (nx + rdx, ny + rdy) == (x, y) and
+                                        elevation_grid[y][x] == elevation_grid[ny][nx] + 1
+                                    )
+
+                        if traversable:
+                            obstacle_visited.add((nx, ny))
+                            obstacle_queue.append((nx, ny))
+
+                obstacle_reached_chambers = {
+                    cell_layout[y][x][1]
+                    for x, y in obstacle_visited
+                    if cell_layout[y][x][0] != 0
+                }
+                obstacle_missing_chambers = chamber_ids - obstacle_reached_chambers
+                if obstacle_missing_chambers:
+                    errors.append(
+                        "collision props block progression to chambers: "
+                        f"{sorted(obstacle_missing_chambers)}"
+                    )
+
+                northern_y = min(
+                    y for y in range(map_height)
+                    if any(cell_layout[y][x][0] != 0 for x in range(map_width))
+                )
+                northern_targets = {
+                    (x, northern_y)
+                    for x in range(map_width)
+                    if cell_layout[northern_y][x][0] != 0 and
+                    not cell_blocked_by_prop(x, northern_y)
+                }
+                if northern_targets and not (northern_targets & obstacle_visited):
+                    errors.append("collision props block the authored northern level exit")
 
         light_header, light_body = section(lines, "LIGHTS")
         check_count("LIGHTS", light_header, light_body, errors)
