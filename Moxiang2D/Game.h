@@ -2004,7 +2004,7 @@ private:
     int previousChamberId = -1;
 
     float chamberFadeSpeed = 2.6f;
-    float chamberWaveStartDelay = 1.10f;
+    float chamberWaveStartDelay = 0.35f;
     float chamberClearedMessageTimer = 0.0f;
 
 
@@ -2228,7 +2228,7 @@ private:
 
     // Six attack frames × 0.07 seconds = 0.42 seconds,
     // matching the current player.attackInterval.
-    float playerAttackFrameDuration = 0.07f;
+    float playerAttackFrameDuration = 0.04f;
 
     // Zero-based frame index.
     // Frame 3 means the fourth attack frame causes damage.
@@ -2474,6 +2474,11 @@ private:
     Rectangle attackButtonRect{};
     bool attackButtonDown = false;
 
+
+    // Temporary gameplay test.
+    // T toggles automatic basic melee attacks.
+    bool testAutoAttackEnabled = true;
+
     Rectangle dashButtonRect{};
     bool dashButtonDown = false;
     bool dashButtonWasDown = false;
@@ -2571,16 +2576,16 @@ private:
 
     // Circle animation before the enemy starts emerging.
     float enemySpawnGroundEffectDuration =
-        0.70f;
+        0.18f;
 
     // Time taken for the enemy to rise fully from underground.
     float enemySpawnEmergenceDuration =
-        1.40f;
+        0.34f;
 
     // After the enemy is fully above ground and active,
     // fade both the circle and bright enemy tint.
     float enemySpawnFadeDuration =
-        0.45f;
+        0.16f;
 
     // Ground-effect diameter in world pixels.
     float enemySpawnEffectVisualSize =

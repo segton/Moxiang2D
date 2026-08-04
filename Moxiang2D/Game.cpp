@@ -14764,6 +14764,20 @@ void Game::UpdateDebugControls()
         );
     }
 
+    if (IsKeyPressed(KEY_T))
+    {
+        testAutoAttackEnabled =
+            !testAutoAttackEnabled;
+
+        TraceLog(
+            LOG_INFO,
+            "[AUTO ATTACK] %s",
+            testAutoAttackEnabled
+            ? "ENABLED"
+            : "DISABLED"
+        );
+    }
+
     if (IsKeyPressed(KEY_THREE))
     {
         SpawnEnemy(
@@ -17428,10 +17442,10 @@ void Game::InitCombat()
     player.hp = 12000;
     player.maxHp = 12000;
 
-    player.attackDamage = 12;
-    player.attackInterval = 0.42f;
-    player.meleeRange = 78.0f;
-    player.attackAssistRange = 360.0f;
+    player.attackDamage = 18;
+    player.attackInterval = 0.28f;
+    player.meleeRange = 92.0f;
+    player.attackAssistRange = 480.0f;
 
     attackButtonDown = false;
     attackAssistPathTimer = 0.0f;
@@ -17522,19 +17536,19 @@ void Game::InitCombat()
     nextDongfengWaveId = 1;
 
     skills[0].type = SkillType::SpinningBlade; // Wind Blades
-    skills[0].cooldown = 3.0f;
+    skills[0].cooldown = 2.0f;
     skills[0].cooldownRemaining = 0.0f;
     skills[0].unlocked = true;
     skills[0].level = 1;
 
     skills[1].type = SkillType::Huashan;
-    skills[1].cooldown = 5.0f;
+    skills[1].cooldown = 3.0f;
     skills[1].cooldownRemaining = 0.0f;
     skills[1].unlocked = false;
     skills[1].level = 1;
 
     skills[2].type = SkillType::Dongfeng;
-    skills[2].cooldown = 8.0f;
+    skills[2].cooldown = 5.f;
     skills[2].cooldownRemaining = 0.0f;
     skills[2].unlocked = false;
     skills[2].level = 1;
@@ -17977,21 +17991,34 @@ void Game::StartChamberWave(
         (chamberWave - 1);
 
     wave.enemiesSpawned = 0;
-    wave.enemiesToSpawn =
-        5 +
-        std::min(
-            chamberOrder,
-            4
-        ) +
-        (chamberWave - 1) * 2;
+    if (chamberOrder == 0)
+    {
+        wave.enemiesToSpawn =
+            chamberWave == 1
+            ? 7
+            : 9;
+    }
+    else
+    {
+        wave.enemiesToSpawn =
+            chamberWave == 1
+            ? 10
+            : 5;
+    }
 
     wave.spawnTimer = 0.0f;
     wave.spawnInterval =
         std::max(
-            0.32f,
-            0.72f -
-            static_cast<float>(chamberOrder) * 0.035f -
-            static_cast<float>(chamberWave - 1) * 0.06f
+            0.20f,
+            0.30f -
+            static_cast<float>(
+                chamberOrder
+                ) *
+            0.02f -
+            static_cast<float>(
+                chamberWave - 1
+                ) *
+            0.03f
         );
 
     wave.waveActive = true;
@@ -17999,7 +18026,7 @@ void Game::StartChamberWave(
     wave.nextWaveTimer =
         chamberWave == 1
         ? chamberWaveStartDelay
-        : 1.35f;
+        : 0.45f;
 
     gameState = GameState::Playing;
 
@@ -18122,6 +18149,28 @@ void Game::UpdateWave(float dt)
             chamber->currentWave
         );
 
+    // Chamber 0, Wave 1:
+// introduce the first spectacular active ability quickly.
+    if (
+        chamber->id == 0 &&
+        chamber->wavesCompleted == 1 &&
+        !skills[1].unlocked
+        )
+    {
+        UnlockSkill(
+            1
+        );
+
+        SpawnHitSpark(
+            playerPosition
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[PROGRESSION] Huashan unlocked."
+        );
+    }
+
     if (
         chamber->wavesCompleted <
         chamber->wavesRequired
@@ -18133,6 +18182,28 @@ void Game::UpdateWave(float dt)
         );
 
         return;
+    }
+
+    // Chamber 0 cleared:
+// give the player the complete three-skill loadout
+// before entering the boss chamber.
+    if (
+        chamber->id == 0 &&
+        !skills[2].unlocked
+        )
+    {
+        UnlockSkill(
+            2
+        );
+
+        SpawnHitSpark(
+            playerPosition
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[PROGRESSION] Dongfeng unlocked."
+        );
     }
 
     chamber->cleared = true;
@@ -24188,13 +24259,70 @@ void Game::UpdateMeleeAttack(
         return;
     }
 
-    // Releasing the button stops automatic repeat.
-    if (!attackButtonDown)
+    const bool manualAttackRequested =
+        attackButtonDown;
+
+    Enemy* target =
+        nullptr;
+
+    // Manual attack keeps the existing behaviour.
+    // It may swing even when no enemy is nearby.
+    if (manualAttackRequested)
+    {
+        target =
+            FindNearestEnemy(
+                playerPosition,
+                playerAttackAutoFaceRange
+            );
+    }
+    else if (testAutoAttackEnabled)
+    {
+        // Only begin an automatic sword attack when the target
+        // is close enough for the impact frame to connect.
+        const float automaticAttackRange =
+            player.meleeRange +
+            55.0f;
+
+        target =
+            FindNearestEnemy(
+                playerPosition,
+                automaticAttackRange
+            );
+
+        if (
+            target == nullptr ||
+            IsEnemySpawnProtected(
+                *target
+            )
+            )
+        {
+            return;
+        }
+
+        const int playerElevation =
+            GetTerrainElevationAtWorld(
+                playerPosition
+            );
+
+        const int targetElevation =
+            GetTerrainElevationAtWorld(
+                target->pos
+            );
+
+        if (
+            playerElevation !=
+            targetElevation
+            )
+        {
+            return;
+        }
+    }
+    else
     {
         return;
     }
 
-    // Respect the normal melee cooldown.
+    // Respect the basic-attack cooldown.
     if (
         player.attackTimer <
         player.attackInterval
@@ -24203,18 +24331,9 @@ void Game::UpdateMeleeAttack(
         return;
     }
 
-    // Find an enemy only for facing and possible damage.
-    // The player never moves toward this enemy.
-    Enemy* target =
-        FindNearestEnemy(
-            playerPosition,
-            playerAttackAutoFaceRange
-        );
-
     player.attackTimer =
         0.0f;
 
-    // A null target is valid and produces an air attack.
     StartPlayerAttackAnimation(
         target
     );
