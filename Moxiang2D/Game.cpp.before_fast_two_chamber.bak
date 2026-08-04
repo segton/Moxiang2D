@@ -1501,7 +1501,6 @@ void Game::Init()
     }
 
     LoadSmallEnemySpriteSheet();
-    LoadMediumEnemySpriteSheet();
     LoadShooterSpriteSheets();
     LoadBossSpriteSheets();
 
@@ -1617,27 +1616,6 @@ void Game::Shutdown()
         UnloadTexture(smallEnemySpriteSheet);
         smallEnemySpriteSheet = {};
     }
-
-    if (mediumEnemyIdleSpriteSheet.id != 0)
-    {
-        UnloadTexture(
-            mediumEnemyIdleSpriteSheet
-        );
-
-        mediumEnemyIdleSpriteSheet = {};
-    }
-
-    if (mediumEnemyWalkSpriteSheet.id != 0)
-    {
-        UnloadTexture(
-            mediumEnemyWalkSpriteSheet
-        );
-
-        mediumEnemyWalkSpriteSheet = {};
-    }
-
-    mediumEnemyIdleSpriteLoaded = false;
-    mediumEnemyWalkSpriteLoaded = false;
 
     if (currentObstacleTexture.id != 0)
     {
@@ -3229,10 +3207,7 @@ void Game::ResetChamberEncounterProgress()
     {
         chamber.cleared = false;
         chamber.encounterStarted = false;
-        chamber.wavesRequired =
-            chamber.id == BossChamberId
-            ? 1
-            : 2;
+        chamber.wavesRequired = 2;
         chamber.wavesCompleted = 0;
         chamber.currentWave = 0;
 
@@ -3252,16 +3227,7 @@ void Game::ResetChamberEncounterProgress()
     }
 
     wave = {};
-
-    const DungeonChamber* activeChamber =
-        FindChamberById(
-            activeChamberId
-        );
-
-    wave.chamberWavesRequired =
-        activeChamber != nullptr
-        ? activeChamber->wavesRequired
-        : 2;
+    wave.chamberWavesRequired = 2;
 
     previousChamberId = -1;
     chamberClearedMessageTimer = 0.0f;
@@ -3288,10 +3254,7 @@ void Game::StartChamberEncounter(
     }
 
     chamber->encounterStarted = true;
-    chamber->wavesRequired =
-        chamber->id == BossChamberId
-        ? 1
-        : 2;
+    chamber->wavesRequired = 2;
     chamber->wavesCompleted = 0;
     chamber->currentWave = 1;
 
@@ -5506,14 +5469,6 @@ bool Game::LoadLevel(const char* path)
                         obstacle.imagePath =
                             portablePath;
                     }
-                }
-
-                if (obstacle.colliderAuto)
-                {
-                    obstacle.colliderOffset = {
-                        0.0f,
-                        0.0f
-                    };
                 }
 
                 UpdateObstacleAutoCollider(
@@ -10406,21 +10361,24 @@ int Game::GetObstacleAt(
 ) const
 {
     constexpr float selectionPadding =
-        14.0f;
-
-    const Vector2 mouseScreen =
-        GetMousePosition();
+        10.0f;
 
     for (
         int obstacleIndex =
-        static_cast<int>(obstacles.size()) - 1;
+        static_cast<int>(
+            obstacles.size()
+            ) - 1;
         obstacleIndex >= 0;
         --obstacleIndex
         )
     {
         const Obstacle& obstacle =
-            obstacles[obstacleIndex];
+            obstacles[
+                obstacleIndex
+            ];
 
+        // Floor decals have their own selection tool.
+        // They must not steal clicks from upright obstacles.
         if (
             obstacle.renderMode !=
             ObstacleRenderMode::Billboard
@@ -10437,9 +10395,6 @@ int Game::GetObstacleAt(
         {
             continue;
         }
-
-        bool hit =
-            false;
 
         if (obstacle.collisionEnabled)
         {
@@ -10468,7 +10423,7 @@ int Game::GetObstacleAt(
                     selectionRadius
                     )
                 {
-                    hit = true;
+                    return obstacleIndex;
                 }
             }
             else
@@ -10499,83 +10454,47 @@ int Game::GetObstacleAt(
                     )
                     )
                 {
-                    hit = true;
+                    return obstacleIndex;
                 }
             }
         }
 
-        if (!hit)
-        {
-            const Vector2 footprintCenter =
-                obstacle.position;
+        // Also provide a small ground-footprint selection zone.
+        // This helps select decorative props with collision disabled.
+        const Vector2 footprintCenter =
+            obstacle.position;
 
-            const Vector2 footprintSize{
-                std::max(
-                    TileSize * 0.55f,
-                    obstacle.size.x * 0.44f
-                ),
+        const Vector2 footprintSize{
+            std::max(
+                TileSize * 0.45f,
+                obstacle.size.x * 0.36f
+            ),
 
-                std::max(
-                    TileSize * 0.34f,
-                    obstacle.size.x * 0.26f
-                )
-            };
+            std::max(
+                TileSize * 0.30f,
+                obstacle.size.x * 0.22f
+            )
+        };
 
-            const Rectangle footprint{
-                footprintCenter.x -
-                    footprintSize.x * 0.5f,
-                footprintCenter.y -
-                    footprintSize.y * 0.5f,
-                footprintSize.x,
-                footprintSize.y
-            };
+        const Rectangle footprint{
+            footprintCenter.x -
+                footprintSize.x *
+                0.5f,
 
-            if (
-                CheckCollisionPointRec(
-                    worldPosition,
-                    footprint
-                )
-                )
-            {
-                hit = true;
-            }
-        }
+            footprintCenter.y -
+                footprintSize.y *
+                0.5f,
 
-        if (!hit)
-        {
-            const Vector2 baseScreen =
-                GetObstacleViewPosition(
-                    obstacle
-                );
+            footprintSize.x,
+            footprintSize.y
+        };
 
-            Rectangle visualRect{
-                baseScreen.x -
-                    obstacle.size.x * 0.5f -
-                    10.0f,
-
-                baseScreen.y -
-                    obstacle.size.y -
-                    10.0f,
-
-                obstacle.size.x +
-                    20.0f,
-
-                obstacle.size.y +
-                    20.0f
-            };
-
-            if (
-                CheckCollisionPointRec(
-                    mouseScreen,
-                    visualRect
-                )
-                )
-            {
-                hit = true;
-            }
-        }
-
-        if (hit)
+        if (
+            CheckCollisionPointRec(
+                worldPosition,
+                footprint
+            )
+            )
         {
             return obstacleIndex;
         }
@@ -14401,6 +14320,9 @@ void Game::UpdateObstacleAutoCollider(
         return;
     }
 
+    // For upright sprites, visual height includes portions
+    // extending upward. The physical footprint should mainly
+    // be derived from visual width.
     const float visualWidth =
         std::max(
             8.0f,
@@ -14412,9 +14334,6 @@ void Game::UpdateObstacleAutoCollider(
         0.42f
     };
 
-    float backOffset =
-        0.0f;
-
     switch (obstacle.type)
     {
     case 0: // Tree
@@ -14422,63 +14341,55 @@ void Game::UpdateObstacleAutoCollider(
             0.34f,
             0.24f
         };
-        backOffset = visualWidth * 0.04f;
         break;
 
     case 1: // Rock / rubble
         footprintRatio = {
-            0.74f,
-            0.50f
+            0.78f,
+            0.55f
         };
-        backOffset = visualWidth * 0.06f;
         break;
 
     case 2: // Wall-like prop
         footprintRatio = {
-            0.88f,
-            0.26f
+            0.94f,
+            0.30f
         };
-        backOffset = visualWidth * 0.10f;
         break;
 
     case 3: // Fence
         footprintRatio = {
-            0.92f,
-            0.18f
+            0.94f,
+            0.20f
         };
-        backOffset = visualWidth * 0.08f;
         break;
 
-    case 4: // Building / large altar / chest-like large object
+    case 4: // Building / large altar
         footprintRatio = {
-            0.72f,
-            0.42f
+            0.82f,
+            0.54f
         };
-        backOffset = visualWidth * 0.12f;
         break;
 
     case 5: // Bush / low clutter
         footprintRatio = {
-            0.70f,
-            0.42f
+            0.72f,
+            0.46f
         };
-        backOffset = visualWidth * 0.04f;
         break;
 
     case 6: // Statue / pillar
         footprintRatio = {
-            0.54f,
-            0.38f
+            0.58f,
+            0.42f
         };
-        backOffset = visualWidth * 0.08f;
         break;
 
     default: // Custom image
         footprintRatio = {
-            0.62f,
-            0.40f
+            0.66f,
+            0.44f
         };
-        backOffset = visualWidth * 0.06f;
         break;
     }
 
@@ -14496,20 +14407,17 @@ void Game::UpdateObstacleAutoCollider(
         )
     };
 
+    // Using the smaller dimension avoids a circular collider
+    // becoming much wider than the object's visible base.
     obstacle.colliderRadius =
         std::max(
             4.0f,
             std::min(
                 obstacle.colliderSize.x,
                 obstacle.colliderSize.y
-            ) * 0.5f
+            ) *
+            0.5f
         );
-
-    // Push collider slightly  back  so it sits closer to the visible base.
-    obstacle.colliderOffset = {
-        0.0f,
-        0.0f
-    };
 }
 
 void Game::DrawGround()
@@ -14773,12 +14681,6 @@ void Game::OpenManualUpgradeMenu()
 
     GenerateSkillChoices();
 
-    if (currentUpgradeChoices.empty())
-    {
-        upgradeMenuOpenedManually = false;
-        return;
-    }
-
     gameState =
         GameState::ChoosingUpgrade;
 
@@ -15017,7 +14919,7 @@ void Game::DrawDebugUpgradeButton() const
 }
 void Game::DrawUi()
 {
-    DrawRectangle(0, 0, GetScreenWidth(), 110, Color{ 0, 0, 0, 130 });
+    DrawRectangle(0, 0, GetScreenWidth(), 62, Color{ 0, 0, 0, 130 });
 
     const char* rendererTitle =
         rendererMode == WorldRendererMode::Hybrid3D
@@ -15067,7 +14969,6 @@ void Game::DrawUi()
         chamberFontSize,
         Color{ 235, 210, 140, 255 }
     );
-
 }
 void Game::DrawEditorWorldOverlay()
 {
@@ -15441,22 +15342,6 @@ void Game::DrawEditorUi()
         }
     }
 
-    ImGui::Separator();
-
-    ImGui::Text(
-        "Gameplay Rendering"
-    );
-
-    ImGui::Checkbox(
-        "Show Normal Enemy Health Bars",
-        &showNormalEnemyHealthBars
-    );
-
-    ImGui::TextDisabled(
-        "The boss health bar is always shown."
-    );
-
-
     if (buildMode)
     {
         ImGui::Separator();
@@ -15544,57 +15429,57 @@ void Game::DrawEditorUi()
 
     ImGui::Separator();
 
-    if (ImGui::Button("Save Level"))
-    {
-        SaveLevel(
-            DefaultLevelPath
-        );
-    }
-
-    ImGui::SameLine();
-
-    if (ImGui::Button("Load Level"))
-    {
-        if (
-            !LoadLevel(
-                DefaultLevelPath
-            )
-            )
-        {
-            LoadDefaultLevel();
-        }
-
-        ClearEditorHistory();
-
-        InvalidateGroundCache();
-        MarkHybridTerrainDirty();
-    }
-
-    if (ImGui::Button("Undo (Ctrl+Z)"))
-    {
-        UndoEditor();
-    }
-
-    ImGui::SameLine();
-
-    if (
-        ImGui::Button(
-            "Redo (Ctrl+Shift+Z)"
-        )
-        )
-    {
-        RedoEditor();
-    }
-
-    ImGui::Text(
-        "History: %d undo / %d redo",
-        static_cast<int>(
-            editorUndoHistory.size()
-            ),
-        static_cast<int>(
-            editorRedoHistory.size()
-            )
+   if (ImGui::Button("Save Level"))
+{
+    SaveLevel(
+        DefaultLevelPath
     );
+}
+
+ImGui::SameLine();
+
+if (ImGui::Button("Load Level"))
+{
+    if (
+        !LoadLevel(
+            DefaultLevelPath
+        )
+        )
+    {
+        LoadDefaultLevel();
+    }
+
+    ClearEditorHistory();
+
+    InvalidateGroundCache();
+    MarkHybridTerrainDirty();
+}
+
+if (ImGui::Button("Undo (Ctrl+Z)"))
+{
+    UndoEditor();
+}
+
+ImGui::SameLine();
+
+if (
+    ImGui::Button(
+        "Redo (Ctrl+Shift+Z)"
+    )
+    )
+{
+    RedoEditor();
+}
+
+ImGui::Text(
+    "History: %d undo / %d redo",
+    static_cast<int>(
+        editorUndoHistory.size()
+    ),
+    static_cast<int>(
+        editorRedoHistory.size()
+    )
+);
 
     ImGui::SameLine();
 
@@ -17650,16 +17535,10 @@ void Game::InitCombat()
     nextEnemyId = 1;
     nextDongfengWaveId = 1;
 
-    enemiesDefeatedTotal = 0;
-    nextSkillUnlockThresholdIndex = 0;
-    pendingSkillChoiceCount = 0;
-    nextAutomaticUpgradeKillCount = 12;
-    automaticUpgradeCursor = 0;
-
     skills[0].type = SkillType::SpinningBlade; // Wind Blades
     skills[0].cooldown = 2.0f;
     skills[0].cooldownRemaining = 0.0f;
-    skills[0].unlocked = false;
+    skills[0].unlocked = true;
     skills[0].level = 1;
 
     skills[1].type = SkillType::Huashan;
@@ -18097,9 +17976,6 @@ void Game::StartChamberWave(
         chamberOrder++;
     }
 
-    const bool bossChamber =
-        chamber->id == BossChamberId;
-
     chamber->encounterStarted = true;
     chamber->currentWave = chamberWave;
 
@@ -18107,40 +17983,50 @@ void Game::StartChamberWave(
     wave.chamberWave = chamberWave;
     wave.chamberWavesRequired = chamber->wavesRequired;
 
-    // Retain ordinary stat scaling, but give the Boss arena one encounter.
+    // Retain the original wave-based stat scaling without making a
+    // chamber ID such as 100 create absurd enemy health.
     wave.wave =
         1 +
-        chamberOrder * 2 +
+        chamberOrder * chamber->wavesRequired +
         (chamberWave - 1);
 
     wave.enemiesSpawned = 0;
-
-    // Chamber 0 is a fast progression arena. Chamber 1 is Boss-only.
-    wave.enemiesToSpawn =
-        bossChamber
-        ? 1
-        : (
+    if (chamberOrder == 0)
+    {
+        wave.enemiesToSpawn =
             chamberWave == 1
-            ? 8
-            : 10
-            );
+            ? 7
+            : 9;
+    }
+    else
+    {
+        wave.enemiesToSpawn =
+            chamberWave == 1
+            ? 10
+            : 5;
+    }
 
     wave.spawnTimer = 0.0f;
     wave.spawnInterval =
-        bossChamber
-        ? 0.20f
-        : 0.30f;
+        std::max(
+            0.20f,
+            0.30f -
+            static_cast<float>(
+                chamberOrder
+                ) *
+            0.02f -
+            static_cast<float>(
+                chamberWave - 1
+                ) *
+            0.03f
+        );
 
     wave.waveActive = true;
     wave.waitingForNextWave = true;
     wave.nextWaveTimer =
-        bossChamber
-        ? 0.45f
-        : (
-            chamberWave == 1
-            ? chamberWaveStartDelay
-            : 0.45f
-            );
+        chamberWave == 1
+        ? chamberWaveStartDelay
+        : 0.45f;
 
     gameState = GameState::Playing;
 
@@ -18201,37 +18087,30 @@ void Game::UpdateWave(float dt)
         {
             wave.spawnTimer = 0.0f;
 
+            const int roll =
+                GetRandomValue(
+                    1,
+                    100
+                );
+
             EnemyType type =
                 EnemyType::Grunt;
 
-            if (chamber->id == BossChamberId)
+            if (roll <= 45)
             {
-                type = EnemyType::Boss;
+                type = EnemyType::Grunt;
+            }
+            else if (roll <= 68)
+            {
+                type = EnemyType::Runner;
+            }
+            else if (roll <= 88)
+            {
+                type = EnemyType::Shooter;
             }
             else
             {
-                const int roll =
-                    GetRandomValue(
-                        1,
-                        100
-                    );
-
-                if (roll <= 45)
-                {
-                    type = EnemyType::Grunt;
-                }
-                else if (roll <= 68)
-                {
-                    type = EnemyType::Runner;
-                }
-                else if (roll <= 88)
-                {
-                    type = EnemyType::Shooter;
-                }
-                else
-                {
-                    type = EnemyType::Tank;
-                }
+                type = EnemyType::Tank;
             }
 
             SpawnEnemyInChamber(
@@ -18270,6 +18149,28 @@ void Game::UpdateWave(float dt)
             chamber->currentWave
         );
 
+    // Chamber 0, Wave 1:
+// introduce the first spectacular active ability quickly.
+    if (
+        chamber->id == 0 &&
+        chamber->wavesCompleted == 1 &&
+        !skills[1].unlocked
+        )
+    {
+        UnlockSkill(
+            1
+        );
+
+        SpawnHitSpark(
+            playerPosition
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[PROGRESSION] Huashan unlocked."
+        );
+    }
+
     if (
         chamber->wavesCompleted <
         chamber->wavesRequired
@@ -18281,6 +18182,28 @@ void Game::UpdateWave(float dt)
         );
 
         return;
+    }
+
+    // Chamber 0 cleared:
+// give the player the complete three-skill loadout
+// before entering the boss chamber.
+    if (
+        chamber->id == 0 &&
+        !skills[2].unlocked
+        )
+    {
+        UnlockSkill(
+            2
+        );
+
+        SpawnHitSpark(
+            playerPosition
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[PROGRESSION] Dongfeng unlocked."
+        );
     }
 
     chamber->cleared = true;
@@ -19047,7 +18970,7 @@ void Game::SpawnEnemyInChamber(
         enemy.speed = 72.0f;
 
         enemy.hp =
-            8000 +
+            800 +
             wave.wave * 80;
 
         enemy.maxHp =
@@ -19087,22 +19010,12 @@ void Game::SpawnEnemyInChamber(
             2.0f;
     }
 
-    const int initialEnemyFrameCount =
-        type == EnemyType::Tank
-        ? mediumEnemyIdleFramesPerRow
-        : smallEnemyFramesPerRow;
-
-    const float initialEnemyFrameDuration =
-        type == EnemyType::Tank
-        ? mediumEnemyIdleFrameDuration
-        : smallEnemyFrameDuration;
-
-    if (initialEnemyFrameCount > 0)
+    if (smallEnemyFramesPerRow > 0)
     {
         enemy.spriteFrame =
             GetRandomValue(
                 0,
-                initialEnemyFrameCount - 1
+                smallEnemyFramesPerRow - 1
             );
     }
     else
@@ -19115,7 +19028,7 @@ void Game::SpawnEnemyInChamber(
             GetRandomValue(0, 1000)
             ) /
         1000.0f *
-        initialEnemyFrameDuration;
+        smallEnemyFrameDuration;
 
     enemy.spriteDirection =
         PlayerDirection::Down;
@@ -20408,55 +20321,27 @@ void Game::SpawnHitSpark(Vector2 pos)
     }
 }
 
-void Game::SpawnDamageNumber(
-    Vector2 pos,
-    int value
-)
+void Game::SpawnDamageNumber(Vector2 pos, int value)
 {
     if (!CanSpawnVfx(1))
     {
         return;
     }
 
-    VfxParticle particle;
+    VfxParticle p;
+    p.type = VfxType::FloatingDamage;
+    p.pos = Vector2Add(pos, { -8.0f, -18.0f });
+    p.velocity = { 0.0f, -42.0f };
+    p.radius = 0.0f;
+    p.life = 0.55f;
+    p.maxLife = 0.55f;
+    p.value = value;
+    p.color = { 255, 245, 170, 255 };
+    p.active = true;
 
-    particle.type =
-        VfxType::FloatingDamage;
-
-    particle.pos =
-        pos;
-
-    particle.velocity = {
-        0.0f,
-        0.0f
-    };
-
-    particle.radius =
-        0.0f;
-
-    particle.life =
-        0.70f;
-
-    particle.maxLife =
-        0.70f;
-
-    particle.value =
-        value;
-
-    particle.color = {
-        255,
-        230,
-        130,
-        255
-    };
-
-    particle.active =
-        true;
-
-    vfxParticles.push_back(
-        particle
-    );
+    vfxParticles.push_back(p);
 }
+
 void Game::SpawnDeathBurst(Vector2 pos)
 {
     const int particleCount = 6;
@@ -20505,58 +20390,25 @@ void Game::SpawnLightningLine(Vector2 start, Vector2 end)
     vfxParticles.push_back(p);
 }
 
-void Game::UpdateVfx(
-    float dt
-)
+void Game::UpdateVfx(float dt)
 {
-    for (
-        VfxParticle& particle :
-        vfxParticles
-        )
+    for (VfxParticle& p : vfxParticles)
     {
-        if (!particle.active)
+        if (!p.active)
         {
             continue;
         }
 
-        particle.life -=
-            dt;
+        p.life -= dt;
 
-        if (
-            particle.life <=
-            0.0f
-            )
+        if (p.life <= 0.0f)
         {
-            particle.active =
-                false;
-
+            p.active = false;
             continue;
         }
 
-        // Floating damage uses its lifetime to calculate
-        // vertical screen movement while drawing.
-        if (
-            particle.type ==
-            VfxType::FloatingDamage
-            )
-        {
-            continue;
-        }
-
-        particle.pos =
-            Vector2Add(
-                particle.pos,
-                Vector2Scale(
-                    particle.velocity,
-                    dt
-                )
-            );
-
-        particle.velocity =
-            Vector2Scale(
-                particle.velocity,
-                0.92f
-            );
+        p.pos = Vector2Add(p.pos, Vector2Scale(p.velocity, dt));
+        p.velocity = Vector2Scale(p.velocity, 0.92f);
     }
 }
 
@@ -21535,7 +21387,7 @@ void Game::SpawnWhirlwindBlades()
         blade.damage = damage;
         blade.life = duration;
         blade.hitTimer = 0.0f;
-        blade.hitInterval = 0.5f;
+        blade.hitInterval = 0.12f;
         blade.active = true;
 
         orbitalBlades.push_back(blade);
@@ -21827,11 +21679,7 @@ void Game::DrawEnemies()
 
         DrawCircleV(drawPos, enemy.radius, color);
 
-        if (
-            showNormalEnemyHealthBars &&
-            enemy.type != EnemyType::Boss &&
-            enemy.hp < enemy.maxHp
-            )
+        if (enemy.hp < enemy.maxHp || enemy.type == EnemyType::Boss)
         {
             float hpRatio = Clamp(
                 static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp),
@@ -21937,152 +21785,7 @@ void Game::DrawVfx()
 }
 void Game::DrawCombatHud()
 {
-    const Enemy* activeBoss = nullptr;
-
-    for (const Enemy& enemy : enemies)
-    {
-        if (
-            enemy.active &&
-            enemy.type == EnemyType::Boss &&
-            enemy.chamberId == activeChamberId
-            )
-        {
-            activeBoss = &enemy;
-            break;
-        }
-    }
-
-    if (activeBoss != nullptr)
-    {
-        const bool bossHealing =
-            activeBoss->bossActionState ==
-            BossActionState::HealingWindup ||
-            activeBoss->bossActionState ==
-            BossActionState::HealingActive;
-
-        const int screenWidth = GetScreenWidth();
-        const int barWidth =
-            std::max(
-                280,
-                std::min(
-                    760,
-                    screenWidth - 120
-                )
-            );
-
-        const int barHeight = 24;
-        const int barX =
-            screenWidth / 2 -
-            barWidth / 2;
-
-        const int barY = 42;
-
-        const float hpRatio =
-            Clamp(
-                static_cast<float>(
-                    activeBoss->hp
-                    ) /
-                static_cast<float>(
-                    std::max(
-                        1,
-                        activeBoss->maxHp
-                    )
-                    ),
-                0.0f,
-                1.0f
-            );
-
-        const char* bossTitle =
-            "AZURE DUNGEON WARDEN";
-
-        const int titleSize = 24;
-        const int titleWidth =
-            MeasureText(
-                bossTitle,
-                titleSize
-            );
-
-        DrawRectangle(
-            barX - 18,
-            8,
-            barWidth + 36,
-            88,
-            Color{ 0, 0, 0, 205 }
-        );
-
-        DrawRectangleLines(
-            barX - 18,
-            8,
-            barWidth + 36,
-            88,
-            Color{ 210, 80, 70, 255 }
-        );
-
-        DrawText(
-            bossTitle,
-            screenWidth / 2 -
-            titleWidth / 2,
-            14,
-            titleSize,
-            Color{ 255, 225, 190, 255 }
-        );
-
-        Rectangle backBar{
-            static_cast<float>(barX),
-            static_cast<float>(barY),
-            static_cast<float>(barWidth),
-            static_cast<float>(barHeight)
-        };
-
-        Rectangle frontBar = backBar;
-        frontBar.width *= hpRatio;
-
-        DrawRectangleRec(
-            backBar,
-            Color{ 45, 35, 38, 255 }
-        );
-
-        DrawRectangleRec(
-            frontBar,
-            Color{ 205, 48, 52, 255 }
-        );
-
-        DrawRectangleLinesEx(
-            backBar,
-            2.0f,
-            Color{ 255, 210, 150, 255 }
-        );
-
-        const char* bossBarText =
-            bossHealing
-            ? "HEALING  |  IMMUNE"
-            : TextFormat(
-                "%d / %d",
-                activeBoss->hp,
-                activeBoss->maxHp
-            );
-
-        const int bossBarTextSize = 17;
-        const int bossBarTextWidth =
-            MeasureText(
-                bossBarText,
-                bossBarTextSize
-            );
-
-        DrawText(
-            bossBarText,
-            screenWidth / 2 -
-            bossBarTextWidth / 2,
-            barY + 3,
-            bossBarTextSize,
-            WHITE
-        );
-    }
-
-    const int y =
-        activeBoss != nullptr
-        ? 108
-        : 68;
+    const int y = 68;
 
     const DungeonChamber* chamber =
         FindChamberById(
@@ -22160,8 +21863,18 @@ void Game::DrawCombatHud()
 
     const Color exitColor =
         chamberCleared
-        ? Color{ 120, 255, 145, 255 }
-    : Color{ 255, 170, 80, 255 };
+        ? Color{
+            120,
+            255,
+            145,
+            255
+    }
+        : Color{
+            255,
+            170,
+            80,
+            255
+    };
 
     const char* encounterStatus =
         chamberCleared
@@ -22199,17 +21912,19 @@ void Game::DrawCombatHud()
             GetScreenWidth() / 2 -
             boxWidth / 2;
 
-        const int boxY =
-            activeBoss != nullptr
-            ? 112
-            : 86;
+        const int boxY = 86;
 
         DrawRectangle(
             boxX,
             boxY,
             boxWidth,
             56,
-            Color{ 0, 0, 0, 205 }
+            Color{
+                0,
+                0,
+                0,
+                205
+            }
         );
 
         DrawRectangleLines(
@@ -22818,66 +22533,70 @@ bool Game::TryChooseUpgradeAtScreen(Vector2 screenPos)
 
 void Game::ApplyUpgradeChoice(int choiceIndex)
 {
-    if (
-        choiceIndex < 0 ||
-        choiceIndex >=
-        static_cast<int>(
-            currentUpgradeChoices.size()
-            )
-        )
+    if (choiceIndex < 0 || choiceIndex >= static_cast<int>(currentUpgradeChoices.size()))
     {
         return;
     }
 
-    const UpgradeChoice choice =
-        currentUpgradeChoices[choiceIndex];
+    const UpgradeChoice& choice = currentUpgradeChoices[choiceIndex];
 
-    const int slotIndex =
-        FindSkillSlotIndex(
-            choice.skillType
-        );
+    int slotIndex = FindSkillSlotIndex(choice.skillType);
 
-    // Choice screens now unlock skills only. Later levels are automatic.
-    if (
-        slotIndex >= 0 &&
-        !skills[slotIndex].unlocked
-        )
+    if (slotIndex >= 0)
     {
-        UnlockSkill(
-            slotIndex
-        );
+        if (!skills[slotIndex].unlocked)
+        {
+            skills[slotIndex].unlocked = true;
+            skills[slotIndex].level = 1;
+        }
+        else
+        {
+            skills[slotIndex].level++;
 
-        skills[slotIndex].level = 1;
+            if (skills[slotIndex].level > 20)
+            {
+                skills[slotIndex].level = 20;
+            }
+        }
+
+        skills[slotIndex].cooldownRemaining = 0.0f;
     }
 
-    upgradeMenuOpenedManually = false;
+    const bool returnToCurrentWave =
+        upgradeMenuOpenedManually;
+
+    upgradeMenuOpenedManually =
+        false;
+
     currentUpgradeChoices.clear();
 
-    gameState = GameState::Playing;
+    if (returnToCurrentWave)
+    {
+        // Manual upgrade:
+        // resume the same wave without changing its counters.
+        gameState =
+            GameState::Playing;
+
+        attackButtonDown =
+            false;
+
+        dashButtonDown =
+            false;
+
+        dashButtonPressed =
+            false;
+
+        return;
+    }
+
+    // Chamber encounters start their own next wave. A non-manual
+    // upgrade therefore only returns to gameplay.
+    gameState =
+        GameState::Playing;
 
     attackButtonDown = false;
     dashButtonDown = false;
     dashButtonPressed = false;
-    joystickActive = false;
-    joystickDirection = { 0.0f, 0.0f };
-
-    // Area attacks may pass more than one unlock threshold in one frame.
-    TryOpenPendingSkillChoice();
-
-    // Catch up automatic upgrades if the last unlock was chosen late.
-    if (AreAllCoreSkillsUnlocked())
-    {
-        while (
-            enemiesDefeatedTotal >=
-            nextAutomaticUpgradeKillCount
-            )
-        {
-            ApplyAutomaticSkillUpgrade();
-
-            nextAutomaticUpgradeKillCount +=
-                automaticUpgradeKillInterval;
-        }
-    }
 }
 
 void Game::UnlockSkill(int slotIndex)
@@ -22912,143 +22631,6 @@ void Game::LevelUpSkill(int slotIndex)
         skills[slotIndex].level = 20;
     }
 }
-bool Game::AreAllCoreSkillsUnlocked() const
-{
-    for (const SkillSlot& skill : skills)
-    {
-        if (!skill.unlocked)
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-void Game::TryOpenPendingSkillChoice()
-{
-    if (
-        pendingSkillChoiceCount <= 0 ||
-        gameState != GameState::Playing ||
-        AreAllCoreSkillsUnlocked()
-        )
-    {
-        return;
-    }
-
-    GenerateSkillChoices();
-
-    if (currentUpgradeChoices.empty())
-    {
-        pendingSkillChoiceCount = 0;
-        return;
-    }
-
-    pendingSkillChoiceCount--;
-    upgradeMenuOpenedManually = false;
-    gameState = GameState::ChoosingUpgrade;
-
-    attackButtonDown = false;
-    dashButtonDown = false;
-    dashButtonPressed = false;
-    joystickActive = false;
-    joystickDirection = { 0.0f, 0.0f };
-}
-
-void Game::ApplyAutomaticSkillUpgrade()
-{
-    if (!AreAllCoreSkillsUnlocked())
-    {
-        return;
-    }
-
-    int selectedSlot = -1;
-    int lowestLevel = 1000000;
-
-    // Begin from the rotating cursor so equal-level skills alternate.
-    for (int offset = 0; offset < 3; ++offset)
-    {
-        const int slotIndex =
-            (
-                automaticUpgradeCursor +
-                offset
-                ) %
-            3;
-
-        if (
-            skills[slotIndex].unlocked &&
-            skills[slotIndex].level < lowestLevel
-            )
-        {
-            lowestLevel = skills[slotIndex].level;
-            selectedSlot = slotIndex;
-        }
-    }
-
-    if (selectedSlot < 0)
-    {
-        return;
-    }
-
-    LevelUpSkill(
-        selectedSlot
-    );
-
-    automaticUpgradeCursor =
-        (
-            selectedSlot +
-            1
-            ) %
-        3;
-
-    TraceLog(
-        LOG_INFO,
-        "[PROGRESSION] Automatic upgrade: %s Lv.%d at %d defeats.",
-        GetSkillDisplayName(
-            skills[selectedSlot].type
-        ),
-        skills[selectedSlot].level,
-        enemiesDefeatedTotal
-    );
-}
-
-void Game::RegisterEnemyDefeat()
-{
-    enemiesDefeatedTotal++;
-
-    while (
-        nextSkillUnlockThresholdIndex <
-        static_cast<int>(
-            skillUnlockKillThresholds.size()
-            ) &&
-        enemiesDefeatedTotal >=
-        skillUnlockKillThresholds[
-            nextSkillUnlockThresholdIndex
-        ]
-        )
-    {
-        pendingSkillChoiceCount++;
-        nextSkillUnlockThresholdIndex++;
-    }
-
-    if (!AreAllCoreSkillsUnlocked())
-    {
-        TryOpenPendingSkillChoice();
-        return;
-    }
-
-    while (
-        enemiesDefeatedTotal >=
-        nextAutomaticUpgradeKillCount
-        )
-    {
-        ApplyAutomaticSkillUpgrade();
-
-        nextAutomaticUpgradeKillCount +=
-            automaticUpgradeKillInterval;
-    }
-}
-
 void Game::UpdateJoystick(float dt)
 {
     (void)dt;
@@ -23450,42 +23032,39 @@ void Game::GenerateSkillChoices()
 {
     currentUpgradeChoices.clear();
 
-    const SkillType pool[3] =
+    SkillType pool[3] =
     {
         SkillType::SpinningBlade,
         SkillType::Huashan,
         SkillType::Dongfeng
     };
 
-    for (const SkillType type : pool)
+    for (int i = 0; i < 3; ++i)
     {
-        const int slotIndex =
-            FindSkillSlotIndex(
-                type
-            );
-
-        if (
-            slotIndex < 0 ||
-            skills[slotIndex].unlocked
-            )
-        {
-            continue;
-        }
+        SkillType type = pool[i];
 
         UpgradeChoice choice;
         choice.skillType = type;
         choice.title = GetSkillDisplayName(type);
         choice.subtitle = GetSkillSubtitle(type);
         choice.description = GetSkillDescription(type);
-        choice.unlocksSkill = true;
-        choice.targetLevel = 1;
         choice.cardRect = {};
 
-        currentUpgradeChoices.push_back(
-            choice
-        );
-    }
+        int slotIndex = FindSkillSlotIndex(type);
 
+        if (slotIndex >= 0 && skills[slotIndex].unlocked)
+        {
+            choice.unlocksSkill = false;
+            choice.targetLevel = skills[slotIndex].level + 1;
+        }
+        else
+        {
+            choice.unlocksSkill = true;
+            choice.targetLevel = 1;
+        }
+
+        currentUpgradeChoices.push_back(choice);
+    }
     UpdateUpgradeChoiceLayout();
 }
 
@@ -25938,14 +25517,11 @@ void Game::ApplyDamageToEnemy(
 )
 {
     if (
-        enemy.type ==
-        EnemyType::Boss &&
-        (
-            enemy.bossActionState ==
-            BossActionState::HealingWindup ||
-            enemy.bossActionState ==
-            BossActionState::HealingActive
-            )
+        !enemy.active ||
+        enemy.chamberId != activeChamberId ||
+        IsEnemySpawnProtected(
+            enemy
+        )
         )
     {
         return;
@@ -25982,8 +25558,6 @@ void Game::ApplyDamageToEnemy(
         SpawnDeathBurst(
             enemy.pos
         );
-
-        RegisterEnemyDefeat();
 
         return;
     }
@@ -28351,17 +27925,9 @@ void Game::DrawEnemyVisual(
             EnemyType::Boss
         );
 
-    const bool usesMediumEnemySprite =
-        enemy.type ==
-        EnemyType::Tank &&
-        EnemyHasDedicatedSprite(
-            EnemyType::Tank
-        );
-
     const bool usesBlobEnemySprite =
         !usesShooterEnemySprite &&
         !usesBossEnemySprite &&
-        !usesMediumEnemySprite &&
         ShouldUseBlobEnemySprite(
             enemy
         );
@@ -28394,18 +27960,6 @@ void Game::DrawEnemyVisual(
             ) *
         bossVisualScale;
 
-    const float mediumVisualWidth =
-        static_cast<float>(
-            mediumEnemyFrameWidth
-            ) *
-        mediumEnemyVisualScale;
-
-    const float mediumVisualHeight =
-        static_cast<float>(
-            mediumEnemyFrameHeight
-            ) *
-        mediumEnemyVisualScale;
-
     float visualSize =
         enemy.radius *
         2.0f;
@@ -28424,14 +27978,6 @@ void Game::DrawEnemyVisual(
             std::max(
                 bossVisualWidth,
                 bossVisualHeight
-            );
-    }
-    else if (usesMediumEnemySprite)
-    {
-        visualSize =
-            std::max(
-                mediumVisualWidth,
-                mediumVisualHeight
             );
     }
     else if (usesBlobEnemySprite)
@@ -28666,12 +28212,6 @@ void Game::DrawEnemyVisual(
             finalEnemyVisualHeight
     };
 
-    const Vector2 mediumDrawPosition{
-        groundPosition.x,
-        groundPosition.y -
-            finalEnemyVisualHeight
-    };
-
     // Blob and circle enemies use a centre anchor.
     float centreVisualLift =
         enemy.radius;
@@ -28761,31 +28301,6 @@ void Game::DrawEnemyVisual(
                 0,
                 0,
                 85
-            }
-        );
-    }
-    else if (usesMediumEnemySprite)
-    {
-        DrawEllipse(
-            static_cast<int>(
-                groundPosition.x +
-                2.0f
-                ),
-            static_cast<int>(
-                groundPosition.y +
-                7.0f
-                ),
-            mediumVisualWidth *
-            0.22f *
-            shadowScale,
-            mediumVisualHeight *
-            0.055f *
-            shadowScale,
-            Color{
-                0,
-                0,
-                0,
-                82
             }
         );
     }
@@ -28886,14 +28401,6 @@ void Game::DrawEnemyVisual(
                     bodyTint
                 );
             }
-            else if (usesMediumEnemySprite)
-            {
-                DrawMediumEnemySprite(
-                    enemy,
-                    mediumDrawPosition,
-                    bodyTint
-                );
-            }
             else if (usesBlobEnemySprite)
             {
                 DrawSmallEnemySprite(
@@ -28957,14 +28464,15 @@ void Game::DrawEnemyVisual(
     // --------------------------------------------------
 
     if (
-        showNormalEnemyHealthBars &&
         !IsEnemySpawnProtected(
             enemy
         ) &&
-        enemy.type !=
-        EnemyType::Boss &&
-        enemy.hp <
-        enemy.maxHp
+        (
+            enemy.hp <
+            enemy.maxHp ||
+            enemy.type ==
+            EnemyType::Boss
+            )
         )
     {
         const float hpRatio =
@@ -29011,17 +28519,6 @@ void Game::DrawEnemyVisual(
                 bossDrawPosition.y -
                 bossVisualHeight *
                 0.98f;
-        }
-        else if (usesMediumEnemySprite)
-        {
-            hpBarWidth =
-                mediumVisualWidth *
-                0.70f;
-
-            visualTop =
-                mediumDrawPosition.y -
-                mediumVisualHeight *
-                mediumEnemyAnchorY;
         }
         else if (usesBlobEnemySprite)
         {
@@ -29266,12 +28763,9 @@ bool Game::IsForegroundVfx(
     VfxType type
 ) const
 {
-    // Ground circles remain attached to the terrain.
-    // Everything else belongs to the post-actor VFX layer.
     return
-        !IsGroundVfx(
-            type
-        );
+        type ==
+        VfxType::FloatingDamage;
 }
 
 void Game::DrawVfxParticleVisual(
@@ -29329,91 +28823,18 @@ void Game::DrawVfxParticleVisual(
         VfxType::FloatingDamage
         )
     {
-        const float progress =
-            1.0f -
-            t;
-
-        Vector2 numberPosition =
-            viewPosition;
-
-        numberPosition.y -=
-            38.0f +
-            progress *
-            42.0f;
-
-        const char* text =
+        DrawText(
             TextFormat(
                 "%d",
                 particle.value
-            );
-
-        constexpr int fontSize =
-            22;
-
-        const int textWidth =
-            MeasureText(
-                text,
-                fontSize
-            );
-
-        const int textX =
+            ),
             static_cast<int>(
-                numberPosition.x -
-                static_cast<float>(
-                    textWidth
-                    ) *
-                0.5f
-                );
-
-        const int textY =
+                viewPosition.x
+                ),
             static_cast<int>(
-                numberPosition.y
-                );
-
-        const Color outlineColor{
-            20,
-            8,
-            4,
-            color.a
-        };
-
-        DrawText(
-            text,
-            textX - 2,
-            textY,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX + 2,
-            textY,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY - 2,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY + 2,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY,
-            fontSize,
+                viewPosition.y
+                ),
+            18,
             color
         );
     }
@@ -30900,60 +30321,24 @@ void Game::DrawWorldGroundEffects()
 
 void Game::DrawWorldForegroundEffects()
 {
+
     DrawBossFallingRocks2D();
-
-    // --------------------------------------------------
-    // Combat VFX layer
-    //
-    // Player attack trails, hit sparks, lightning,
-    // death bursts and other non-ground effects.
-    // --------------------------------------------------
-
     for (
         const VfxParticle& particle :
         vfxParticles
         )
     {
         if (
-            !particle.active ||
-            !IsForegroundVfx(
+            particle.active &&
+            IsForegroundVfx(
                 particle.type
-            ) ||
-            particle.type ==
-            VfxType::FloatingDamage
+            )
             )
         {
-            continue;
+            DrawVfxParticleVisual(
+                particle
+            );
         }
-
-        DrawVfxParticleVisual(
-            particle
-        );
-    }
-
-    // --------------------------------------------------
-    // Floating text layer
-    //
-    // Always draw damage numbers after combat VFX.
-    // --------------------------------------------------
-
-    for (
-        const VfxParticle& particle :
-        vfxParticles
-        )
-    {
-        if (
-            !particle.active ||
-            particle.type !=
-            VfxType::FloatingDamage
-            )
-        {
-            continue;
-        }
-
-        DrawVfxParticleVisual(
-            particle
-        );
     }
 }
 
@@ -33111,173 +32496,6 @@ void Game::LoadSmallEnemySpriteSheet()
     );
 }
 
-void Game::LoadMediumEnemySpriteSheet()
-{
-    const char* idleCandidates[] = {
-        "Assets/enemies/medium_enemy_idle.png",
-        "Assets/enemies/medium_idle.png",
-        "Assets/enemies/tank_idle.png"
-    };
-
-    const char* walkCandidates[] = {
-        "Assets/enemies/medium_enemy_walk.png",
-        "Assets/enemies/medium_walk.png",
-        "Assets/enemies/tank_walk.png"
-    };
-
-    auto LoadFirstAvailable =
-        [](
-            const char* const* candidates,
-            int candidateCount,
-            Texture2D& outTexture,
-            bool& outLoaded,
-            const char*& outLoadedPath
-            )
-        {
-            outTexture = {};
-            outLoaded = false;
-            outLoadedPath = nullptr;
-
-            for (
-                int candidateIndex = 0;
-                candidateIndex < candidateCount;
-                ++candidateIndex
-                )
-            {
-                const char* candidate =
-                    candidates[candidateIndex];
-
-                if (!FileExists(candidate))
-                {
-                    continue;
-                }
-
-                Texture2D texture =
-                    LoadTexture(candidate);
-
-                if (texture.id == 0)
-                {
-                    continue;
-                }
-
-                SetTextureFilter(
-                    texture,
-                    TEXTURE_FILTER_POINT
-                );
-
-                outTexture = texture;
-                outLoaded = true;
-                outLoadedPath = candidate;
-
-                return;
-            }
-        };
-
-    const char* loadedIdlePath = nullptr;
-    const char* loadedWalkPath = nullptr;
-
-    LoadFirstAvailable(
-        idleCandidates,
-        static_cast<int>(
-            sizeof(idleCandidates) /
-            sizeof(idleCandidates[0])
-            ),
-        mediumEnemyIdleSpriteSheet,
-        mediumEnemyIdleSpriteLoaded,
-        loadedIdlePath
-    );
-
-    LoadFirstAvailable(
-        walkCandidates,
-        static_cast<int>(
-            sizeof(walkCandidates) /
-            sizeof(walkCandidates[0])
-            ),
-        mediumEnemyWalkSpriteSheet,
-        mediumEnemyWalkSpriteLoaded,
-        loadedWalkPath
-    );
-
-    if (mediumEnemyIdleSpriteLoaded)
-    {
-        const int detectedIdleFrames =
-            mediumEnemyIdleSpriteSheet.width /
-            std::max(
-                1,
-                mediumEnemyFrameWidth
-            );
-
-        if (detectedIdleFrames > 0)
-        {
-            mediumEnemyIdleFramesPerRow =
-                detectedIdleFrames;
-        }
-    }
-
-    if (mediumEnemyWalkSpriteLoaded)
-    {
-        const int detectedWalkFrames =
-            mediumEnemyWalkSpriteSheet.width /
-            std::max(
-                1,
-                mediumEnemyFrameWidth
-            );
-
-        if (detectedWalkFrames > 0)
-        {
-            mediumEnemyWalkFramesPerRow =
-                detectedWalkFrames;
-        }
-    }
-
-    const int expectedHeight =
-        mediumEnemyFrameHeight *
-        mediumEnemyDirectionRows;
-
-    if (
-        mediumEnemyIdleSpriteLoaded &&
-        mediumEnemyIdleSpriteSheet.height <
-        expectedHeight
-        )
-    {
-        TraceLog(
-            LOG_WARNING,
-            "[MEDIUM ENEMY] Idle sheet is too short. "
-            "Expected at least %d pixels, received %d.",
-            expectedHeight,
-            mediumEnemyIdleSpriteSheet.height
-        );
-    }
-
-    if (
-        mediumEnemyWalkSpriteLoaded &&
-        mediumEnemyWalkSpriteSheet.height <
-        expectedHeight
-        )
-    {
-        TraceLog(
-            LOG_WARNING,
-            "[MEDIUM ENEMY] Walk sheet is too short. "
-            "Expected at least %d pixels, received %d.",
-            expectedHeight,
-            mediumEnemyWalkSpriteSheet.height
-        );
-    }
-
-    TraceLog(
-        LOG_INFO,
-        "[MEDIUM ENEMY] Idle=%s frames=%d | Walk=%s frames=%d",
-        loadedIdlePath != nullptr
-        ? loadedIdlePath
-        : "missing",
-        mediumEnemyIdleFramesPerRow,
-        loadedWalkPath != nullptr
-        ? loadedWalkPath
-        : "missing",
-        mediumEnemyWalkFramesPerRow
-    );
-}
-
 bool Game::IsSmallAnimatedEnemy(
     EnemyType type
 ) const
@@ -33292,23 +32510,15 @@ void Game::UpdateSmallEnemyAnimation(
     float dt
 )
 {
-    const bool usesBlobSprite =
+    bool usesBlobSprite =
         ShouldUseBlobEnemySprite(
             enemy
         );
 
-    const bool usesMediumSprite =
-        enemy.type == EnemyType::Tank &&
-        (
-            mediumEnemyIdleSpriteLoaded ||
-            mediumEnemyWalkSpriteLoaded
-            );
-
-    if (
-        !usesBlobSprite &&
-        !usesMediumSprite
-        )
+    if (!usesBlobSprite)
     {
+        // Keep this synchronized so enabling the toggle later
+        // does not produce a false direction from an old position.
         enemy.previousAnimationPosition =
             enemy.pos;
 
@@ -33318,7 +32528,9 @@ void Game::UpdateSmallEnemyAnimation(
         return;
     }
 
-    bool movedThisFrame = false;
+    // ---------------------------------------------
+    // Update direction from movement.
+    // ---------------------------------------------
 
     if (!enemy.animationPositionInitialized)
     {
@@ -33330,7 +32542,7 @@ void Game::UpdateSmallEnemyAnimation(
     }
     else
     {
-        const Vector2 worldMovement =
+        Vector2 worldMovement =
             Vector2Subtract(
                 enemy.pos,
                 enemy.previousAnimationPosition
@@ -33339,11 +32551,10 @@ void Game::UpdateSmallEnemyAnimation(
         enemy.previousAnimationPosition =
             enemy.pos;
 
-        movedThisFrame =
+        if (
             Vector2Length(worldMovement) >
-            0.01f;
-
-        if (movedThisFrame)
+            0.01f
+            )
         {
             Vector2 viewMovement =
                 WorldVectorToView(
@@ -33368,69 +32579,14 @@ void Game::UpdateSmallEnemyAnimation(
         }
     }
 
-    int frameCount =
-        smallEnemyFramesPerRow;
+    // ---------------------------------------------
+    // Update frames.
+    // ---------------------------------------------
 
-    float frameDuration =
-        smallEnemyFrameDuration;
-
-    if (usesMediumSprite)
-    {
-        const EnemyAnimationState desiredState =
-            movedThisFrame
-            ? EnemyAnimationState::Walking
-            : EnemyAnimationState::Idle;
-
-        if (
-            enemy.animationState !=
-            desiredState
-            )
-        {
-            enemy.animationState =
-                desiredState;
-
-            enemy.spriteFrame = 0;
-            enemy.spriteAnimTimer = 0.0f;
-        }
-
-        if (
-            enemy.animationState ==
-            EnemyAnimationState::Walking
-            )
-        {
-            frameCount =
-                mediumEnemyWalkFramesPerRow;
-
-            frameDuration =
-                mediumEnemyWalkFrameDuration;
-        }
-        else
-        {
-            frameCount =
-                mediumEnemyIdleFramesPerRow;
-
-            frameDuration =
-                mediumEnemyIdleFrameDuration;
-        }
-    }
-
-    frameCount =
-        std::max(
-            1,
-            frameCount
-        );
-
-    frameDuration =
-        std::max(
-            0.01f,
-            frameDuration
-        );
-
-    if (frameCount <= 1)
+    if (smallEnemyFramesPerRow <= 1)
     {
         enemy.spriteFrame = 0;
         enemy.spriteAnimTimer = 0.0f;
-
         return;
     }
 
@@ -33443,142 +32599,22 @@ void Game::UpdateSmallEnemyAnimation(
 
     while (
         enemy.spriteAnimTimer >=
-        frameDuration
+        smallEnemyFrameDuration
         )
     {
         enemy.spriteAnimTimer -=
-            frameDuration;
+            smallEnemyFrameDuration;
 
         enemy.spriteFrame++;
 
         if (
             enemy.spriteFrame >=
-            frameCount
+            smallEnemyFramesPerRow
             )
         {
             enemy.spriteFrame = 0;
         }
     }
-}
-
-bool Game::GetMediumEnemyAnimationFrame(
-    const Enemy& enemy,
-    Texture2D& outTexture,
-    Rectangle& outSource,
-    float& outWidthPixels,
-    float& outHeightPixels,
-    float& outAnchorY
-) const
-{
-    const bool wantsWalking =
-        enemy.animationState ==
-        EnemyAnimationState::Walking;
-
-    int frameCount = 1;
-
-    if (
-        wantsWalking &&
-        mediumEnemyWalkSpriteLoaded &&
-        mediumEnemyWalkSpriteSheet.id != 0
-        )
-    {
-        outTexture =
-            mediumEnemyWalkSpriteSheet;
-
-        frameCount =
-            mediumEnemyWalkFramesPerRow;
-    }
-    else if (
-        mediumEnemyIdleSpriteLoaded &&
-        mediumEnemyIdleSpriteSheet.id != 0
-        )
-    {
-        outTexture =
-            mediumEnemyIdleSpriteSheet;
-
-        frameCount =
-            mediumEnemyIdleFramesPerRow;
-    }
-    else if (
-        mediumEnemyWalkSpriteLoaded &&
-        mediumEnemyWalkSpriteSheet.id != 0
-        )
-    {
-        // Walk animation is also the fallback when
-        // the idle sheet is unavailable.
-        outTexture =
-            mediumEnemyWalkSpriteSheet;
-
-        frameCount =
-            mediumEnemyWalkFramesPerRow;
-    }
-    else
-    {
-        return false;
-    }
-
-    frameCount =
-        std::max(
-            1,
-            frameCount
-        );
-
-    const int frame =
-        std::max(
-            0,
-            std::min(
-                enemy.spriteFrame,
-                frameCount - 1
-            )
-        );
-
-    int directionRow =
-        GetPlayerDirectionRow(
-            enemy.spriteDirection
-        );
-
-    directionRow =
-        std::max(
-            0,
-            std::min(
-                directionRow,
-                mediumEnemyDirectionRows - 1
-            )
-        );
-
-    outSource = {
-        static_cast<float>(
-            frame *
-            mediumEnemyFrameWidth
-        ),
-        static_cast<float>(
-            directionRow *
-            mediumEnemyFrameHeight
-        ),
-        static_cast<float>(
-            mediumEnemyFrameWidth
-        ),
-        static_cast<float>(
-            mediumEnemyFrameHeight
-        )
-    };
-
-    outWidthPixels =
-        static_cast<float>(
-            mediumEnemyFrameWidth
-            ) *
-        mediumEnemyVisualScale;
-
-    outHeightPixels =
-        static_cast<float>(
-            mediumEnemyFrameHeight
-            ) *
-        mediumEnemyVisualScale;
-
-    outAnchorY =
-        mediumEnemyAnchorY;
-
-    return true;
 }
 
 void Game::DrawSmallEnemySprite(
@@ -33663,51 +32699,6 @@ void Game::DrawSmallEnemySprite(
     );
 }
 
-void Game::DrawMediumEnemySprite(
-    const Enemy& enemy,
-    Vector2 drawPosition,
-    Color tint
-)
-{
-    Texture2D texture{};
-    Rectangle source{};
-
-    float widthPixels = 0.0f;
-    float heightPixels = 0.0f;
-    float anchorY = 1.0f;
-
-    if (
-        !GetMediumEnemyAnimationFrame(
-            enemy,
-            texture,
-            source,
-            widthPixels,
-            heightPixels,
-            anchorY
-        )
-        )
-    {
-        return;
-    }
-
-    DrawTexturePro(
-        texture,
-        source,
-        Rectangle{
-            drawPosition.x,
-            drawPosition.y,
-            widthPixels,
-            heightPixels
-        },
-        Vector2{
-            widthPixels * 0.5f,
-            heightPixels * anchorY
-        },
-        0.0f,
-        tint
-    );
-}
-
 void Game::DrawShooterEnemySprite(
     const Enemy& enemy,
     Vector2 drawPosition,
@@ -33770,15 +32761,7 @@ bool Game::EnemyHasDedicatedSprite(
             smallEnemySpriteSheet.id != 0;
 
     case EnemyType::Tank:
-        return
-            (
-                mediumEnemyIdleSpriteLoaded &&
-                mediumEnemyIdleSpriteSheet.id != 0
-                ) ||
-            (
-                mediumEnemyWalkSpriteLoaded &&
-                mediumEnemyWalkSpriteSheet.id != 0
-                );
+        return false;
 
     case EnemyType::Shooter:
         return
@@ -38217,47 +37200,6 @@ void Game::DrawHybridEnemy3D(
     }
 
     // --------------------------------------------------
- // Dedicated medium enemy idle/walk animation
- // --------------------------------------------------
-
-    if (enemy.type == EnemyType::Tank)
-    {
-        Texture2D mediumTexture{};
-        Rectangle mediumSource{};
-
-        float mediumWidthPixels = 0.0f;
-        float mediumHeightPixels = 0.0f;
-        float mediumAnchorY = 1.0f;
-
-        if (
-            GetMediumEnemyAnimationFrame(
-                enemy,
-                mediumTexture,
-                mediumSource,
-                mediumWidthPixels,
-                mediumHeightPixels,
-                mediumAnchorY
-            )
-            )
-        {
-            DrawHybridBillboardFrame(
-                mediumTexture,
-                mediumSource,
-                enemy.pos,
-                mediumWidthPixels,
-                mediumHeightPixels,
-                mediumAnchorY,
-                finalEnemyVisualHeight,
-                spriteTint,
-                HybridBillboardOrientation::UprightWorld,
-                enemyWhiteFlash
-            );
-
-            return;
-        }
-    }
-
-    // --------------------------------------------------
    // Dedicated shooter sprite
    // --------------------------------------------------
 
@@ -39268,42 +38210,31 @@ void Game::DrawHybridActors3D()
 
     DrawHybridDongfeng3D();
 
-    // --------------------------------------------------
-// Dedicated Hybrid combat VFX layer
-//
-// These effects are rendered after players and enemies,
-// but before foreground room decorations.
-// --------------------------------------------------
-
-    for (
-        const VfxParticle& particle :
-        vfxParticles
-        )
+    for (const VfxParticle& particle : vfxParticles)
     {
         if (
-            !particle.active ||
-            IsGroundVfx(
+            particle.active &&
+            !IsGroundVfx(
                 particle.type
-            ) ||
-            particle.type ==
-            VfxType::FloatingDamage
-            )
-        {
-            continue;
-        }
-
-        if (
-            !IsWorldPositionInVisibleChamber(
-                particle.pos
+            ) &&
+            !IsForegroundVfx(
+                particle.type
             )
             )
         {
-            continue;
-        }
+            if (
+                !IsWorldPositionInVisibleChamber(
+                    particle.pos
+                )
+                )
+            {
+                continue;
+            }
 
-        DrawHybridVfx3D(
-            particle
-        );
+            DrawHybridVfx3D(
+                particle
+            );
+        }
     }
 
     // Foreground ornaments intentionally ignore world depth. This supports
@@ -39952,74 +38883,46 @@ void Game::DrawHybridEditorOverlay3D()
 
     if (showObstacleColliders)
     {
-        // Editor guides must remain visible through sprites,
-        // terrain walls and other obstacles.
+        // Collider guides are editor helpers, so show them
+        // through nearby props and walls.
         rlDisableDepthTest();
 
-        // Draw all ordinary colliders first.
         for (
             int obstacleIndex = 0;
             obstacleIndex <
-            static_cast<int>(obstacles.size());
+            static_cast<int>(
+                obstacles.size()
+                );
             ++obstacleIndex
             )
         {
-            if (
-                obstacleIndex ==
-                selectedObstacleIndex
-                )
-            {
-                continue;
-            }
+            const Obstacle& obstacle =
+                obstacles[
+                    obstacleIndex
+                ];
 
-            DrawObstacleColliderDebug3D(
-                obstacles[obstacleIndex],
-                Color{
+            const bool isSelected =
+                obstacleIndex ==
+                selectedObstacleIndex;
+
+            const Color colliderColor =
+                isSelected
+                ? Color{
+                    255,
+                    230,
+                    60,
+                    255
+            }
+                : Color{
                     255,
                     70,
                     70,
                     210
-                }
-            );
-        }
-
-        // Draw the selected collider last so it is always
-        // visible on top of every other collider guide.
-        if (
-            selectedObstacleIndex >= 0 &&
-            selectedObstacleIndex <
-            static_cast<int>(obstacles.size())
-            )
-        {
-            const Obstacle& selectedObstacle =
-                obstacles[selectedObstacleIndex];
+            };
 
             DrawObstacleColliderDebug3D(
-                selectedObstacle,
-                Color{
-                    255,
-                    235,
-                    55,
-                    255
-                }
-            );
-
-            const Vector2 selectedCenter =
-                GetObstacleCollisionCenter(
-                    selectedObstacle
-                );
-
-            DrawSphereWires(
-                WorldToHybrid3D(
-                    selectedCenter,
-                    12.0f
-                ),
-                PixelsToHybridUnits(
-                    7.0f
-                ),
-                8,
-                8,
-                WHITE
+                obstacle,
+                colliderColor
             );
         }
 
@@ -40080,14 +38983,10 @@ void Game::DrawHybridWorld3D()
 
 void Game::DrawHybridScreenOverlays2D()
 {
-    // --------------------------------------------------
-    // NPC names
-    // --------------------------------------------------
 
-    for (
-        const NPC& npc :
-        npcs
-        )
+
+
+    for (const NPC& npc : npcs)
     {
         if (
             !IsWorldPositionInVisibleChamber(
@@ -40098,7 +38997,7 @@ void Game::DrawHybridScreenOverlays2D()
             continue;
         }
 
-        const Vector2 screen =
+        Vector2 screen =
             GetWorldToScreen(
                 WorldToHybrid3D(
                     npc.position,
@@ -40109,399 +39008,201 @@ void Game::DrawHybridScreenOverlays2D()
 
         DrawText(
             npc.name.c_str(),
-            static_cast<int>(
-                screen.x - 66.0f
-                ),
-            static_cast<int>(
-                screen.y
-                ),
+            static_cast<int>(screen.x - 66.0f),
+            static_cast<int>(screen.y),
             18,
             WHITE
         );
     }
 
-    // --------------------------------------------------
-    // Normal-enemy health bars
-    // --------------------------------------------------
-
-    if (showNormalEnemyHealthBars)
-    {
-        const Vector3 cameraForward =
-            Vector3Normalize(
-                Vector3Subtract(
-                    hybridCamera.target,
-                    hybridCamera.position
-                )
-            );
-
-        const float verticalProjectionScale =
-            sqrtf(
-                std::max(
-                    0.0001f,
-                    1.0f -
-                    cameraForward.y *
-                    cameraForward.y
-                )
-            );
-
-        for (
-            const Enemy& enemy :
-            enemies
-            )
-        {
-            if (
-                !enemy.active ||
-                enemy.type ==
-                EnemyType::Boss ||
-                !IsChamberVisible(
-                    enemy.chamberId
-                ) ||
-                enemy.hp >=
-                enemy.maxHp ||
-                IsEnemySpawnProtected(
-                    enemy
-                )
-                )
-            {
-                continue;
-            }
-
-            float healthBarWidth =
-                enemy.radius *
-                2.0f;
-
-            float healthBarHeightAboveGround =
-                enemy.visualHeight +
-                enemy.radius *
-                2.0f +
-                18.0f;
-
-            Texture2D unusedTexture{};
-            Rectangle unusedSource{};
-
-            float spriteWidthPixels =
-                0.0f;
-
-            float spriteHeightPixels =
-                0.0f;
-
-            float spriteAnchorY =
-                0.98f;
-
-            bool usesUprightSprite =
-                false;
-
-            // --------------------------------------------------
-            // Archer dimensions
-            // --------------------------------------------------
-
-            if (
-                enemy.type ==
-                EnemyType::Shooter
-                )
-            {
-                usesUprightSprite =
-                    GetShooterAnimationFrame(
-                        enemy,
-                        unusedTexture,
-                        unusedSource,
-                        spriteWidthPixels,
-                        spriteHeightPixels,
-                        spriteAnchorY
-                    );
-            }
-
-            // --------------------------------------------------
-            // Medium-enemy dimensions
-            // --------------------------------------------------
-
-            else if (
-                enemy.type ==
-                EnemyType::Tank
-                )
-            {
-                usesUprightSprite =
-                    GetMediumEnemyAnimationFrame(
-                        enemy,
-                        unusedTexture,
-                        unusedSource,
-                        spriteWidthPixels,
-                        spriteHeightPixels,
-                        spriteAnchorY
-                    );
-            }
-
-            if (usesUprightSprite)
-            {
-                const float compensatedSpriteHeight =
-                    spriteHeightPixels /
-                    std::max(
-                        0.35f,
-                        verticalProjectionScale
-                    );
-
-                healthBarHeightAboveGround =
-                    enemy.visualHeight +
-                    compensatedSpriteHeight *
-                    spriteAnchorY +
-                    18.0f;
-
-                healthBarWidth =
-                    spriteWidthPixels *
-                    (
-                        enemy.type ==
-                        EnemyType::Tank
-                        ? 0.70f
-                        : 0.68f
-                        );
-            }
-            else if (
-                ShouldUseBlobEnemySprite(
-                    enemy
-                )
-                )
-            {
-                const float visualSize =
-                    GetBlobEnemyVisualSize(
-                        enemy
-                    );
-
-                healthBarHeightAboveGround =
-                    enemy.visualHeight +
-                    visualSize *
-                    0.92f +
-                    14.0f;
-
-                healthBarWidth =
-                    visualSize *
-                    0.70f;
-            }
-
-            const Vector2 screen =
-                GetWorldToScreen(
-                    WorldToHybrid3D(
-                        enemy.pos,
-                        healthBarHeightAboveGround
-                    ),
-                    hybridCamera
-                );
-
-            const float hpRatio =
-                Clamp(
-                    static_cast<float>(
-                        enemy.hp
-                        ) /
-                    static_cast<float>(
-                        std::max(
-                            1,
-                            enemy.maxHp
-                        )
-                        ),
-                    0.0f,
-                    1.0f
-                );
-
-            Rectangle backBar{
-                screen.x -
-                    healthBarWidth *
-                    0.5f,
-
-                screen.y,
-
-                healthBarWidth,
-                6.0f
-            };
-
-            Rectangle borderBar{
-                backBar.x - 1.0f,
-                backBar.y - 1.0f,
-                backBar.width + 2.0f,
-                backBar.height + 2.0f
-            };
-
-            Rectangle frontBar =
-                backBar;
-
-            frontBar.width *=
-                hpRatio;
-
-            DrawRectangleRec(
-                borderBar,
-                Color{
-                    12,
-                    12,
-                    12,
-                    230
-                }
-            );
-
-            DrawRectangleRec(
-                backBar,
-                Color{
-                    55,
-                    48,
-                    48,
-                    230
-                }
-            );
-
-            DrawRectangleRec(
-                frontBar,
-                Color{
-                    205,
-                    38,
-                    48,
-                    255
-                }
-            );
-        }
-    }
-
-    // --------------------------------------------------
-    // Damage-number overlay
-    //
-    // This is intentionally drawn after the health bars
-    // and after the 3D combat VFX.
-    // --------------------------------------------------
-
     for (
-        const VfxParticle& particle :
-        vfxParticles
+        const Enemy& enemy :
+        enemies
         )
     {
         if (
-            !particle.active ||
-            particle.type !=
-            VfxType::FloatingDamage
+            !enemy.active ||
+            !IsChamberVisible(
+                enemy.chamberId
+            ) ||
+            (
+                enemy.hp >= enemy.maxHp &&
+                enemy.type != EnemyType::Boss
+                )
             )
         {
             continue;
         }
 
-        float lifeRatio =
-            1.0f;
+        // --------------------------------------------------
+        // Detect the actual active shooter sprite dimensions
+        // --------------------------------------------------
+
+        bool usesShooterSprite =
+            false;
+
+        float shooterWidthPixels =
+            0.0f;
+
+        float shooterHeightPixels =
+            0.0f;
+
+        float shooterAnchorY =
+            0.98f;
 
         if (
-            particle.maxLife >
-            0.0f
+            enemy.type ==
+            EnemyType::Shooter
             )
         {
-            lifeRatio =
-                Clamp(
-                    particle.life /
-                    particle.maxLife,
-                    0.0f,
-                    1.0f
+            Texture2D unusedTexture{};
+            Rectangle unusedSource{};
+
+            usesShooterSprite =
+                GetShooterAnimationFrame(
+                    enemy,
+                    unusedTexture,
+                    unusedSource,
+                    shooterWidthPixels,
+                    shooterHeightPixels,
+                    shooterAnchorY
                 );
         }
 
-        const float progress =
-            1.0f -
-            lifeRatio;
+        const bool usesBlobSprite =
+            !usesShooterSprite &&
+            ShouldUseBlobEnemySprite(
+                enemy
+            );
 
-        Vector2 screen =
+        float healthBarWidth =
+            enemy.radius *
+            2.0f;
+
+        float healthBarHeightAboveGround =
+            enemy.visualHeight +
+            enemy.radius *
+            2.0f +
+            12.0f;
+
+        // --------------------------------------------------
+        // Archer health bar
+        // --------------------------------------------------
+
+        if (usesShooterSprite)
+        {
+            // UprightWorld billboards compensate their physical
+            // height to avoid looking vertically compressed.
+            // Apply the same compensation to the health bar.
+            Vector3 cameraForward =
+                Vector3Normalize(
+                    Vector3Subtract(
+                        hybridCamera.target,
+                        hybridCamera.position
+                    )
+                );
+
+            const float verticalProjectionScale =
+                sqrtf(
+                    std::max(
+                        0.0001f,
+                        1.0f -
+                        cameraForward.y *
+                        cameraForward.y
+                    )
+                );
+
+            const float compensatedShooterHeight =
+                shooterHeightPixels /
+                std::max(
+                    0.35f,
+                    verticalProjectionScale
+                );
+
+            constexpr float shooterHealthBarGap =
+                18.0f;
+
+            healthBarHeightAboveGround =
+                enemy.visualHeight +
+                compensatedShooterHeight *
+                shooterAnchorY +
+                shooterHealthBarGap;
+
+            healthBarWidth =
+                shooterWidthPixels *
+                0.68f;
+        }
+        else if (usesBlobSprite)
+        {
+            const float visualSize =
+                GetBlobEnemyVisualSize(
+                    enemy
+                );
+
+            healthBarHeightAboveGround =
+                enemy.visualHeight +
+                visualSize *
+                0.92f +
+                12.0f;
+
+            healthBarWidth =
+                visualSize *
+                0.70f;
+        }
+
+        const Vector2 screen =
             GetWorldToScreen(
                 WorldToHybrid3D(
-                    particle.pos,
-                    110.0f
+                    enemy.pos,
+                    healthBarHeightAboveGround
                 ),
                 hybridCamera
             );
 
-        screen.y -=
-            16.0f +
-            progress *
-            42.0f;
-
-        Color textColor =
-            particle.color;
-
-        textColor.a =
-            static_cast<unsigned char>(
+        const float hpRatio =
+            Clamp(
                 static_cast<float>(
-                    particle.color.a
-                    ) *
-                lifeRatio
-                );
-
-        const char* text =
-            TextFormat(
-                "%d",
-                particle.value
+                    enemy.hp
+                    ) /
+                static_cast<float>(
+                    std::max(
+                        1,
+                        enemy.maxHp
+                    )
+                    ),
+                0.0f,
+                1.0f
             );
 
-        constexpr int fontSize =
-            22;
+        Rectangle backBar{
+            screen.x -
+                healthBarWidth *
+                0.5f,
 
-        const int textWidth =
-            MeasureText(
-                text,
-                fontSize
-            );
+            screen.y,
 
-        const int textX =
-            static_cast<int>(
-                screen.x -
-                static_cast<float>(
-                    textWidth
-                    ) *
-                0.5f
-                );
-
-        const int textY =
-            static_cast<int>(
-                screen.y
-                );
-
-        const Color outlineColor{
-            20,
-            8,
-            4,
-            textColor.a
+            healthBarWidth,
+            6.0f
         };
 
-        DrawText(
-            text,
-            textX - 2,
-            textY,
-            fontSize,
-            outlineColor
+        Rectangle frontBar =
+            backBar;
+
+        frontBar.width *=
+            hpRatio;
+
+        DrawRectangleRec(
+            backBar,
+            DARKGRAY
         );
 
-        DrawText(
-            text,
-            textX + 2,
-            textY,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY - 2,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY + 2,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY,
-            fontSize,
-            textColor
+        DrawRectangleRec(
+            frontBar,
+            RED
         );
     }
 
-    DrawSelectedObstacleScreenOutline();
+    DrawWorldForegroundEffects();
 }
 
 Rectangle Game::GetHuashanImpactSourceRect(
@@ -42866,9 +41567,8 @@ void Game::UpdateBossBehavior(
         0.0f
         )
     {
-        StartBossCenterDash(
-            enemy,
-            BossDashPurpose::CenterHealing
+        StartBossHealing(
+            enemy
         );
 
         UpdateBossAnimation(
@@ -42956,45 +41656,11 @@ void Game::UpdateBossBehavior(
         enemy.bossDashTimer -=
             dt;
 
-        const bool centerSpecialDash =
-            enemy.bossDashPurpose ==
-            BossDashPurpose::CenterRoar ||
-            enemy.bossDashPurpose ==
-            BossDashPurpose::CenterLaser ||
-            enemy.bossDashPurpose ==
-            BossDashPurpose::CenterHealing;
-
         Vector2 totalMovement =
             Vector2Scale(
                 enemy.bossDashVelocity,
                 dt
             );
-
-        if (centerSpecialDash)
-        {
-            const Vector2 remaining =
-                Vector2Subtract(
-                    enemy.bossDashTargetPosition,
-                    enemy.pos
-                );
-
-            const float remainingDistance =
-                Vector2Length(
-                    remaining
-                );
-
-            const float maximumDistance =
-                Vector2Length(
-                    enemy.bossDashVelocity
-                ) *
-                dt;
-
-            if (remainingDistance <= maximumDistance)
-            {
-                totalMovement = remaining;
-                enemy.bossDashTimer = 0.0f;
-            }
-        }
 
         const float movementLength =
             Vector2Length(
@@ -43028,8 +41694,7 @@ void Game::UpdateBossBehavior(
             )
         {
             if (
-                enemy.bossDashPurpose ==
-                BossDashPurpose::ChaseSlam &&
+                enemy.bossDashIsForward &&
                 Vector2Distance(
                     enemy.pos,
                     playerPosition
@@ -43050,7 +41715,6 @@ void Game::UpdateBossBehavior(
                 );
 
             if (
-                !centerSpecialDash &&
                 !CanEnemyStandAt(
                     enemy.pos,
                     nextPosition,
@@ -43145,48 +41809,6 @@ void Game::UpdateBossBehavior(
                 )
             {
                 StartBossBombardmentRoar(
-                    enemy
-                );
-            }
-
-            // ----------------------------------------------
-            // Centre-stage specials begin only after the Boss
-            // reaches the exact authored arena centre.
-            // ----------------------------------------------
-
-            else if (
-                completedPurpose ==
-                BossDashPurpose::CenterRoar
-                )
-            {
-                enemy.pos =
-                    enemy.bossDashTargetPosition;
-
-                StartBossBombardmentRoar(
-                    enemy
-                );
-            }
-            else if (
-                completedPurpose ==
-                BossDashPurpose::CenterLaser
-                )
-            {
-                enemy.pos =
-                    enemy.bossDashTargetPosition;
-
-                StartBossLaser(
-                    enemy
-                );
-            }
-            else if (
-                completedPurpose ==
-                BossDashPurpose::CenterHealing
-                )
-            {
-                enemy.pos =
-                    enemy.bossDashTargetPosition;
-
-                StartBossHealing(
                     enemy
                 );
             }
@@ -43394,9 +42016,8 @@ void Game::UpdateBossBehavior(
             0.0f
             )
         {
-            StartBossCenterDash(
-                enemy,
-                BossDashPurpose::CenterRoar
+            StartBossBombardmentRoar(
+                enemy
             );
 
             UpdateBossAnimation(
@@ -43485,9 +42106,8 @@ void Game::UpdateBossBehavior(
         0.0f
         )
     {
-        StartBossCenterDash(
-            enemy,
-            BossDashPurpose::CenterLaser
+        StartBossLaser(
+            enemy
         );
 
         UpdateBossAnimation(
@@ -44036,197 +42656,6 @@ void Game::UpdatePlayerKnockback(
 
     player.pos =
         playerPosition;
-}
-
-void Game::StartBossCenterDash(
-    Enemy& enemy,
-    BossDashPurpose purpose
-)
-{
-    if (
-        enemy.type != EnemyType::Boss ||
-        enemy.bossActionState != BossActionState::None ||
-        enemy.bossDashCharging ||
-        enemy.bossDashTimer > 0.0f ||
-        (
-            purpose != BossDashPurpose::CenterRoar &&
-            purpose != BossDashPurpose::CenterLaser &&
-            purpose != BossDashPurpose::CenterHealing
-            )
-        )
-    {
-        return;
-    }
-
-    const DungeonChamber* chamber =
-        FindChamberById(
-            enemy.chamberId
-        );
-
-    if (
-        chamber == nullptr ||
-        !chamber->hasCells
-        )
-    {
-        if (purpose == BossDashPurpose::CenterHealing)
-        {
-            StartBossHealing(enemy);
-        }
-
-        return;
-    }
-
-    const Vector2 preferredCenter{
-        chamber->worldBounds.x +
-            chamber->worldBounds.width * 0.5f,
-        chamber->worldBounds.y +
-            chamber->worldBounds.height * 0.5f
-    };
-
-    Vector2 targetPosition =
-        preferredCenter;
-
-    float bestDistanceSquared =
-        std::numeric_limits<float>::max();
-
-    bool foundTarget = false;
-
-    for (int y = chamber->minCellY; y <= chamber->maxCellY; ++y)
-    {
-        for (int x = chamber->minCellX; x <= chamber->maxCellX; ++x)
-        {
-            if (
-                !IsCellEnabled(x, y) ||
-                terrainCells[
-                    CellIndex(x, y)
-                ].chamberId != enemy.chamberId ||
-                IsCellBlocked(x, y)
-                        )
-            {
-                continue;
-            }
-
-            const Vector2 candidate =
-                CellToWorld(
-                    x,
-                    y
-                );
-
-            const float distanceSquared =
-                DistanceSquared(
-                    candidate,
-                    preferredCenter
-                );
-
-            if (distanceSquared < bestDistanceSquared)
-            {
-                bestDistanceSquared = distanceSquared;
-                targetPosition = candidate;
-                foundTarget = true;
-            }
-        }
-    }
-
-    if (!foundTarget)
-    {
-        if (purpose == BossDashPurpose::CenterHealing)
-        {
-            StartBossHealing(enemy);
-        }
-
-        return;
-    }
-
-    enemy.bossDashTargetPosition =
-        targetPosition;
-
-    Vector2 direction =
-        Vector2Subtract(
-            targetPosition,
-            enemy.pos
-        );
-
-    const float distance =
-        Vector2Length(
-            direction
-        );
-
-    if (distance <= 2.0f)
-    {
-        enemy.pos = targetPosition;
-
-        if (purpose == BossDashPurpose::CenterRoar)
-        {
-            StartBossBombardmentRoar(
-                enemy
-            );
-        }
-        else if (purpose == BossDashPurpose::CenterLaser)
-        {
-            StartBossLaser(
-                enemy
-            );
-        }
-        else
-        {
-            StartBossHealing(
-                enemy
-            );
-        }
-
-        return;
-    }
-
-    direction =
-        Vector2Normalize(
-            direction
-        );
-
-    const float dashSpeed =
-        bossCenterDashSpeed *
-        GetBossDashPowerMultiplier(
-            enemy
-        );
-
-    enemy.bossDashPurpose =
-        purpose;
-
-    enemy.bossDashIsForward =
-        true;
-
-    enemy.bossDashTimer =
-        std::max(
-            0.08f,
-            distance /
-            std::max(
-                1.0f,
-                dashSpeed
-            )
-        );
-
-    enemy.bossDashVelocity =
-        Vector2Scale(
-            direction,
-            dashSpeed
-        );
-
-    enemy.bossDashAfterimageTimer =
-        0.0f;
-
-    enemy.path.clear();
-    enemy.pathIndex = 0;
-
-    enemy.animationState =
-        EnemyAnimationState::Walking;
-
-    SetEnemyFacingFromWorldDirection(
-        enemy,
-        direction
-    );
-
-    SpawnBossDashAfterimage(
-        enemy
-    );
 }
 
 void Game::StartBossForwardDash(
@@ -45374,14 +43803,16 @@ float Game::GetBossSpecialStunDuration(
         )
     {
     case 0:
-        return 1.10f;
+        return 4.50f;
 
     case 1:
-        return 0.80f;
+        return 3.50f;
 
     case 2:
-        return 0.55f;
+        return 2.20f;
 
+        // At 25% HP and below, damage can no longer
+        // stagger the Boss.
     case 3:
     default:
         return 0.0f;
@@ -47268,46 +45699,55 @@ void Game::UpdateBossHealing(
         }
     }
 
+    const bool healingTimeCompleted =
+        enemy.bossHealingTimer >=
+        safeDuration;
+
     const bool allWavesSpawned =
         enemy.bossHealingWavesSpawned >=
         bossHealingMinionWaveCount;
 
-    bool hasAnyHealingMinions =
+    bool finalWaveDefeated =
         false;
 
     if (allWavesSpawned)
     {
-        for (
-            int waveNumber = 1;
-            waveNumber <= enemy.bossHealingWavesSpawned;
-            ++waveNumber
-            )
-        {
-            if (
-                HasLivingBossHealingMinions(
-                    enemy,
-                    waveNumber
-                )
-                )
-            {
-                hasAnyHealingMinions =
-                    true;
-
-                break;
-            }
-        }
+        finalWaveDefeated =
+            !HasLivingBossHealingMinions(
+                enemy,
+                enemy.bossHealingWavesSpawned
+            );
     }
 
-    // Killing the complete summoned guard group ends healing immediately.
-    // The Boss keeps only the health restored up to this moment, so faster
-    // wave clears directly reduce the total amount healed. The duration is
-    // now only a cap on gradual healing, not a mandatory wait timer.
+    // The Boss remains in its healing loop until both:
+    //
+    // 1. The intended healing duration has completed.
+    // 2. All three minion waves have been defeated.
     if (
+        !healingTimeCompleted ||
         !allWavesSpawned ||
-        hasAnyHealingMinions
+        !finalWaveDefeated
         )
     {
         return;
+    }
+
+    // Ensure the complete 20% healing amount is applied.
+    const int remainingHealing =
+        enemy.bossHealingTargetAmount -
+        enemy.bossHealingAmountApplied;
+
+    if (remainingHealing > 0)
+    {
+        enemy.hp =
+            std::min(
+                enemy.maxHp,
+                enemy.hp +
+                remainingHealing
+            );
+
+        enemy.bossHealingAmountApplied =
+            enemy.bossHealingTargetAmount;
     }
 
     // Use double the ordinary special stun duration.
@@ -47659,122 +46099,8 @@ Vector2 Game::GetObstacleCollisionCenter(
     const Obstacle& obstacle
 ) const
 {
-    // Upright obstacle sprites use obstacle.position as their
-    // front-most bottom ground anchor, not the footprint centre.
-    //
-    // Move backward by half of the physical footprint so the
-    // collision diamond sits underneath the visible object.
-    if (obstacle.colliderAuto)
-    {
-        return Vector2{
-            obstacle.position.x -
-                obstacle.colliderSize.x * 0.5f,
-
-            obstacle.position.y -
-                obstacle.colliderSize.y * 0.5f
-        };
-    }
-
-    // Manually authored colliders may still use their custom offset.
     return Vector2Add(
         obstacle.position,
         obstacle.colliderOffset
     );
-}
-
-void Game::DrawSelectedObstacleScreenOutline() const
-{
-#if MOXIANG_USE_IMGUI
-
-    if (
-        !buildMode ||
-        selectedObstacleIndex < 0 ||
-        selectedObstacleIndex >=
-        static_cast<int>(obstacles.size())
-        )
-    {
-        return;
-    }
-
-    const Obstacle& obstacle =
-        obstacles[selectedObstacleIndex];
-
-    if (
-        obstacle.renderMode !=
-        ObstacleRenderMode::Billboard
-        )
-    {
-        return;
-    }
-
-    // This is the same ground/base screen position used
-    // by the obstacle sprite.
-    const Vector2 baseScreen =
-        GetObstacleViewPosition(
-            obstacle
-        );
-
-    constexpr float outlinePadding =
-        5.0f;
-
-    Rectangle outline{
-        baseScreen.x -
-            obstacle.size.x * 0.5f -
-            outlinePadding,
-
-        baseScreen.y -
-            obstacle.size.y -
-            outlinePadding,
-
-        obstacle.size.x +
-            outlinePadding * 2.0f,
-
-        obstacle.size.y +
-            outlinePadding * 2.0f
-    };
-
-    // Dark backing keeps the selection frame readable
-    // against bright and dark sprites.
-    DrawRectangleLinesEx(
-        outline,
-        5.0f,
-        Color{
-            0,
-            0,
-            0,
-            210
-        }
-    );
-
-    DrawRectangleLinesEx(
-        outline,
-        2.0f,
-        Color{
-            255,
-            235,
-            55,
-            255
-        }
-    );
-
-    // Show the sprite's actual bottom anchor.
-    DrawCircleV(
-        baseScreen,
-        5.0f,
-        Color{
-            255,
-            235,
-            55,
-            255
-        }
-    );
-
-    DrawCircleLines(
-        static_cast<int>(baseScreen.x),
-        static_cast<int>(baseScreen.y),
-        9.0f,
-        WHITE
-    );
-
-#endif
 }

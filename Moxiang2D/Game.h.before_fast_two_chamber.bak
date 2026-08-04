@@ -282,12 +282,7 @@ enum class BossDashPurpose
     ChaseSlam,
 
     // Retreat dash, followed by bombardment roar.
-    BombardmentEscape,
-
-    // Dramatic movement to the chamber centre before a special.
-    CenterRoar,
-    CenterLaser,
-    CenterHealing
+    BombardmentEscape
 };
 
 enum class ProjectileOwner
@@ -798,9 +793,6 @@ struct Enemy
     float bossDashTimer = 0.0f;
     Vector2 bossDashVelocity{};
 
-    // Exact destination used by centre-stage special-attack dashes.
-    Vector2 bossDashTargetPosition{};
-
     bool active = false;
 
     EnemyAnimationState animationState =
@@ -1096,9 +1088,6 @@ private:
 
     static constexpr int MaximumMapDimension = 512;
     static constexpr float TileSize = 64.0f;
-
-    // The second authored chamber is the dedicated Boss arena.
-    static constexpr int BossChamberId = 1;
 
     static constexpr const char* DefaultLevelPath = "levels/level01.mox";
 
@@ -1502,11 +1491,6 @@ private:
     void UnlockSkill(int slotIndex);
     void LevelUpSkill(int slotIndex);
 
-    bool AreAllCoreSkillsUnlocked() const;
-    void RegisterEnemyDefeat();
-    void TryOpenPendingSkillChoice();
-    void ApplyAutomaticSkillUpgrade();
-
     bool CanPlayerStandAt(Vector2 worldPosition) const;
     void MovePlayerWithJoystick(float dt);
 
@@ -1735,7 +1719,6 @@ private:
 
 
     void LoadSmallEnemySpriteSheet();
-    void LoadMediumEnemySpriteSheet();
 
     bool IsSmallAnimatedEnemy(
         EnemyType type
@@ -1751,21 +1734,6 @@ private:
         Vector2 drawPosition,
         Color tint
     );
-
-    void DrawMediumEnemySprite(
-        const Enemy& enemy,
-        Vector2 drawPosition,
-        Color tint
-    );
-
-    bool GetMediumEnemyAnimationFrame(
-        const Enemy& enemy,
-        Texture2D& outTexture,
-        Rectangle& outSource,
-        float& outWidthPixels,
-        float& outHeightPixels,
-        float& outAnchorY
-    ) const;
 
     bool EnemyHasDedicatedSprite(
         EnemyType type
@@ -2078,7 +2046,7 @@ private:
     // Transparent pixels underneath the visible feet
 
 
-    float playerSpeed = 420.0f;
+    float playerSpeed = 320.0f;
 
     // Movement speed while the attack button is held
 // or an attack animation is still playing.
@@ -2215,26 +2183,6 @@ private:
     float smallEnemyFrameDuration = 0.12f;
     float smallEnemyVisualScale = 4.8f;
 
-    // Medium enemy (Tank) directional animations.
-    Texture2D mediumEnemyIdleSpriteSheet{};
-    Texture2D mediumEnemyWalkSpriteSheet{};
-
-    bool mediumEnemyIdleSpriteLoaded = false;
-    bool mediumEnemyWalkSpriteLoaded = false;
-
-    int mediumEnemyFrameWidth = 256;
-    int mediumEnemyFrameHeight = 256;
-    int mediumEnemyDirectionRows = 8;
-
-    int mediumEnemyIdleFramesPerRow = 9;
-    int mediumEnemyWalkFramesPerRow = 9;
-
-    float mediumEnemyIdleFrameDuration = 0.14f;
-    float mediumEnemyWalkFrameDuration = 0.09f;
-
-    float mediumEnemyVisualScale = 0.58f;
-    float mediumEnemyAnchorY = 0.98f;
-
     // Player damage feedback.
     float playerDamageFlashTimer = 0.0f;
 
@@ -2322,9 +2270,6 @@ private:
     bool showGrid = true;
     bool showObstacleColliders = true;
     bool showEditorMarkerLegend = true;
-    // Normal-enemy health bars are optional.
-// The boss HUD is unaffected by this setting.
-    bool showNormalEnemyHealthBars = false;
 
     static constexpr int MaximumEditorHistoryEntries = 24;
 
@@ -2499,22 +2444,6 @@ private:
 
     SkillSlot skills[3];
 
-    // Kill-driven progression. The player starts without active skills.
-    int enemiesDefeatedTotal = 0;
-
-    std::array<int, 3> skillUnlockKillThresholds{
-        2,
-        5,
-        9
-    };
-
-    int nextSkillUnlockThresholdIndex = 0;
-    int pendingSkillChoiceCount = 0;
-
-    int nextAutomaticUpgradeKillCount = 12;
-    int automaticUpgradeKillInterval = 3;
-    int automaticUpgradeCursor = 0;
-
     WaveManager wave;
 
     // Stops only automatic wave spawning.
@@ -2607,10 +2536,10 @@ private:
         0.0f;
 
     float huashanScreenShakeDuration =
-        1.f;
+        1.2f;
 
     float huashanScreenShakeStrength =
-        38.0f;
+        60.0f;
 
     Vector2 huashanScreenShakeOffset{
         0.0f,
@@ -2937,8 +2866,8 @@ private:
     float bossIdleFrameDuration = 0.14f;
     float bossWalkFrameDuration = 0.14f;
 
-    // 256 × 0.90 = approximately 230 pixels tall.boss size
-    float bossVisualScale = 1.8f;
+    // 256 × 0.90 = approximately 230 pixels tall.
+    float bossVisualScale = 1.4f;
 
     void UpdateBossBehavior(
         Enemy& enemy,
@@ -3089,8 +3018,7 @@ private:
 
     float bossChargeCooldown = 8.0f;
 
-    // Short punishment after colliding with a wall or obstacle.
-    float bossChargeWallStunDuration = 1.20f;
+    float bossChargeWallStunDuration = 2.60f;
 
     float bossChargePlayerKnockbackForce = 1500.0f;
     float bossChargePlayerKnockbackDuration = 0.45f;
@@ -3114,7 +3042,7 @@ private:
 
     // Laser attack.
     float bossLaserWindupDuration = 3.f;
-    float bossLaserDuration = 3.5f;
+    float bossLaserDuration = 3.0f;
     float bossLaserCooldown = 7.0f;
 
     // Lower value creates more noticeable tracking delay.
@@ -3136,9 +3064,6 @@ private:
     float bossForwardDashDuration = 0.4f;
     float bossForwardDashSpeed = 1050.0f;
     float bossForwardDashCooldown = 3.5f;
-
-    // Fast theatrical repositioning before roar and laser.
-    float bossCenterDashSpeed = 1350.0f;
 
     float bossDashAfterimageInterval = 0.08f;
 
@@ -3258,7 +3183,7 @@ private:
     // Boss takes only 20% of incoming damage while
     // preparing or actively healing.
     float bossHealingDamageTakenMultiplier =
-        0.0f;
+        0.20f;
 
     // Prevents repeated healing phases immediately after
     // the ending stun.
@@ -3282,10 +3207,11 @@ private:
 
     // Ending stun is double the Boss's usual special stun.
     float bossHealingEndStunMultiplier =
-        0.55f;
+        2.0f;
 
+    // Ensures the healing stun is always substantial.
     float bossHealingMinimumEndStunDuration =
-        1.35f;
+        6.0f;
 
     // Previously 20.
     float bossLaserWidth = 170.0f;
@@ -3308,11 +3234,6 @@ private:
     float GetBossDashDurationMultiplier(
         const Enemy& enemy
     ) const;
-
-    void StartBossCenterDash(
-        Enemy& enemy,
-        BossDashPurpose purpose
-    );
 
     void StartBossForwardDash(
         Enemy& enemy
@@ -3345,7 +3266,4 @@ private:
     Vector2 GetObstacleCollisionCenter(
         const Obstacle& obstacle
     ) const;
-
-    void DrawSelectedObstacleScreenOutline() const;
-
 };
