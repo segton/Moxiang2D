@@ -50,6 +50,18 @@ Generated\ Files/
 TestResult.xml
 nunit-*.xml
 
+# Generated web build output
+/build-web/WebBuild/
+/build-web/WebBuild.zip
+/build-web/output/
+/build-web/lib/
+/build-web/raylib-obj/
+/build-web/raylib/
+
+# Local repository and dependency archives
+/Moxiang2D-current.bundle
+/external.zip
+
 # Build Results of an ATL Project
 [Dd]ebugPS/
 [Rr]eleasePS/

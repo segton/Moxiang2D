@@ -2053,6 +2053,358 @@ void Game::LoadDefaultLevel()
     };
 }
 
+Game::EditorHistorySnapshot
+Game::CaptureEditorHistorySnapshot() const
+{
+    EditorHistorySnapshot snapshot;
+
+    snapshot.mapWidth =
+        MapWidth;
+
+    snapshot.mapHeight =
+        MapHeight;
+
+    snapshot.terrainElevationStep =
+        terrainElevationStep;
+
+    snapshot.tiles =
+        tiles;
+
+    snapshot.terrainCells =
+        terrainCells;
+
+    snapshot.chambers =
+        chambers;
+
+    snapshot.obstacles =
+        obstacles;
+
+    snapshot.lights =
+        lights;
+
+    // Texture2D contains a GPU resource handle.
+    // History snapshots must not own or unload these handles.
+    // Textures are restored from imagePath instead.
+    for (
+        Obstacle& obstacle :
+        snapshot.obstacles
+        )
+    {
+        obstacle.texture = {};
+        obstacle.hasTexture = false;
+    }
+
+    return snapshot;
+}
+void Game::RestoreEditorHistorySnapshot(
+    const EditorHistorySnapshot& snapshot
+)
+{
+    editorHistoryRestoring =
+        true;
+
+    // Release textures belonging to the current state.
+    for (
+        Obstacle& obstacle :
+        obstacles
+        )
+    {
+        if (
+            obstacle.texture.id != 0
+            )
+        {
+            UnloadTexture(
+                obstacle.texture
+            );
+
+            obstacle.texture = {};
+            obstacle.hasTexture = false;
+        }
+    }
+
+    MapWidth =
+        snapshot.mapWidth;
+
+    MapHeight =
+        snapshot.mapHeight;
+
+    editorNewMapWidth =
+        MapWidth;
+
+    editorNewMapHeight =
+        MapHeight;
+
+    terrainElevationStep =
+        snapshot.terrainElevationStep;
+
+    tiles =
+        snapshot.tiles;
+
+    terrainCells =
+        snapshot.terrainCells;
+
+    chambers =
+        snapshot.chambers;
+
+    obstacles =
+        snapshot.obstacles;
+
+    lights =
+        snapshot.lights;
+
+    // Reload every obstacle texture from its saved project path.
+    for (
+        Obstacle& obstacle :
+        obstacles
+        )
+    {
+        obstacle.texture = {};
+        obstacle.hasTexture = false;
+
+        if (
+            obstacle.imagePath.empty()
+            )
+        {
+            continue;
+        }
+
+        const std::string portablePath =
+            ToPortableAssetPath(
+                obstacle.imagePath
+            );
+
+        const std::string loadPath =
+            ResolveAssetPathForLoad(
+                portablePath
+            );
+
+        if (
+            !loadPath.empty() &&
+            LoadObstacleTexture(
+                obstacle,
+                loadPath
+            )
+            )
+        {
+            obstacle.imagePath =
+                portablePath;
+        }
+    }
+
+    selectedObstacleIndex = -1;
+    selectedLightIndex = -1;
+
+    draggingObstacle = false;
+    draggingLight = false;
+
+    currentPath.clear();
+    pathIndex = 0;
+    hasPath = false;
+
+    RebuildChamberBounds();
+    UpdateActiveChamber(true);
+    EnsurePlayerLight();
+
+    InvalidateGroundCache();
+    MarkHybridTerrainDirty();
+
+    editorHistoryRestoring =
+        false;
+}
+void Game::RecordEditorUndoPoint()
+{
+    if (editorHistoryRestoring)
+    {
+        return;
+    }
+
+    editorUndoHistory.push_back(
+        CaptureEditorHistorySnapshot()
+    );
+
+    while (
+        static_cast<int>(
+            editorUndoHistory.size()
+            ) >
+        MaximumEditorHistoryEntries
+        )
+    {
+        editorUndoHistory.pop_front();
+    }
+
+    // Any new edit invalidates the old redo chain.
+    editorRedoHistory.clear();
+}
+
+void Game::UndoEditor()
+{
+    if (
+        editorUndoHistory.empty()
+        )
+    {
+        return;
+    }
+
+    EditorHistorySnapshot currentState =
+        CaptureEditorHistorySnapshot();
+
+    EditorHistorySnapshot previousState =
+        std::move(
+            editorUndoHistory.back()
+        );
+
+    editorUndoHistory.pop_back();
+
+    editorRedoHistory.push_back(
+        std::move(
+            currentState
+        )
+    );
+
+    while (
+        static_cast<int>(
+            editorRedoHistory.size()
+            ) >
+        MaximumEditorHistoryEntries
+        )
+    {
+        editorRedoHistory.pop_front();
+    }
+
+    RestoreEditorHistorySnapshot(
+        previousState
+    );
+
+    TraceLog(
+        LOG_INFO,
+        "[EDITOR] Undo | undo=%d redo=%d",
+        static_cast<int>(
+            editorUndoHistory.size()
+            ),
+        static_cast<int>(
+            editorRedoHistory.size()
+            )
+    );
+}
+
+void Game::RedoEditor()
+{
+    if (
+        editorRedoHistory.empty()
+        )
+    {
+        return;
+    }
+
+    EditorHistorySnapshot currentState =
+        CaptureEditorHistorySnapshot();
+
+    EditorHistorySnapshot nextState =
+        std::move(
+            editorRedoHistory.back()
+        );
+
+    editorRedoHistory.pop_back();
+
+    editorUndoHistory.push_back(
+        std::move(
+            currentState
+        )
+    );
+
+    while (
+        static_cast<int>(
+            editorUndoHistory.size()
+            ) >
+        MaximumEditorHistoryEntries
+        )
+    {
+        editorUndoHistory.pop_front();
+    }
+
+    RestoreEditorHistorySnapshot(
+        nextState
+    );
+
+    TraceLog(
+        LOG_INFO,
+        "[EDITOR] Redo | undo=%d redo=%d",
+        static_cast<int>(
+            editorUndoHistory.size()
+            ),
+        static_cast<int>(
+            editorRedoHistory.size()
+            )
+    );
+}
+
+void Game::ClearEditorHistory()
+{
+    editorUndoHistory.clear();
+    editorRedoHistory.clear();
+
+    editorHistoryRestoring =
+        false;
+}
+
+void Game::HandleEditorHistoryShortcuts()
+{
+#if MOXIANG_USE_IMGUI
+
+    if (!buildMode)
+    {
+        return;
+    }
+
+    // Do not intercept Ctrl+Z while entering a path,
+    // name or other text into an ImGui field.
+    if (
+        ImGui::GetIO().WantTextInput
+        )
+    {
+        return;
+    }
+
+#endif
+
+    const bool controlDown =
+        IsKeyDown(
+            KEY_LEFT_CONTROL
+        ) ||
+        IsKeyDown(
+            KEY_RIGHT_CONTROL
+        );
+
+    if (!controlDown)
+    {
+        return;
+    }
+
+    const bool shiftDown =
+        IsKeyDown(
+            KEY_LEFT_SHIFT
+        ) ||
+        IsKeyDown(
+            KEY_RIGHT_SHIFT
+        );
+
+    if (
+        IsKeyPressed(
+            KEY_Z
+        )
+        )
+    {
+        if (shiftDown)
+        {
+            RedoEditor();
+        }
+        else
+        {
+            UndoEditor();
+        }
+    }
+}
+
 Rectangle Game::MakeChamberWorldBounds(
     int minCellX,
     int minCellY,
@@ -2548,6 +2900,8 @@ void Game::CreateNewMap(
     }
 
     InvalidateGroundCache();
+
+    ClearEditorHistory();
 
     TraceLog(
         LOG_INFO,
@@ -3446,8 +3800,7 @@ bool Game::SaveLevel(const char* path) const
         return false;
     }
 
-    out << "MOXIANG_LEVEL 13\n";
-
+    out << "MOXIANG_LEVEL 14\n";
     out << "TILES " << MapWidth << " " << MapHeight << "\n";
 
     for (int y = 0; y < MapHeight; ++y)
@@ -3811,6 +4164,9 @@ bool Game::SaveLevel(const char* path) const
                 ) << " "
             << static_cast<int>(
                 obstacle.renderMode
+                ) << " "
+            << static_cast<int>(
+                obstacle.billboardOrientation
                 ) << " "
             << static_cast<int>(obstacle.tint.r) << " "
             << static_cast<int>(obstacle.tint.g) << " "
@@ -4778,6 +5134,11 @@ bool Game::LoadLevel(const char* path)
                         ObstacleRenderMode::Billboard
                         );
 
+                int billboardOrientation =
+                    static_cast<int>(
+                        HybridBillboardOrientation::FaceCamera
+                        );
+
                 int tintR = 255;
                 int tintG = 255;
                 int tintB = 255;
@@ -4800,7 +5161,15 @@ bool Game::LoadLevel(const char* path)
                         >> castsShadow
                         >> blocksLight
                         >> renderLayer
-                        >> renderMode
+                        >> renderMode;
+
+                    if (version >= 14)
+                    {
+                        in
+                            >> billboardOrientation;
+                    }
+
+                    in
                         >> tintR
                         >> tintG
                         >> tintB
@@ -4821,7 +5190,9 @@ bool Game::LoadLevel(const char* path)
                         >> obstacle.terrainElevation
                         >> obstacle.clipToTerrainElevation
                         >> obstacle.allowOnRamps
-                        >> std::quoted(imagePath)
+                        >> std::quoted(
+                            imagePath
+                        )
                         >> collisionEnabled
                         >> colliderAuto
                         >> collisionShape
@@ -4956,6 +5327,19 @@ bool Game::LoadLevel(const char* path)
                         )
                     );
 
+                billboardOrientation =
+                    std::max(
+                        static_cast<int>(
+                            HybridBillboardOrientation::FaceCamera
+                            ),
+                        std::min(
+                            static_cast<int>(
+                                HybridBillboardOrientation::WorldPlaneZ
+                                ),
+                            billboardOrientation
+                        )
+                    );
+
                 const std::string portablePath =
                     ToPortableAssetPath(
                         imagePath
@@ -4989,6 +5373,11 @@ bool Game::LoadLevel(const char* path)
                 obstacle.renderMode =
                     static_cast<ObstacleRenderMode>(
                         renderMode
+                        );
+
+                obstacle.billboardOrientation =
+                    static_cast<HybridBillboardOrientation>(
+                        billboardOrientation
                         );
 
                 obstacle.tint = {
@@ -7465,6 +7854,11 @@ void Game::Update(float dt)
     buildModeWasActive =
         buildMode;
 
+    if (buildMode)
+    {
+        HandleEditorHistoryShortcuts();
+    }
+
 #endif
 
     // B creates a Boss for animation and behaviour testing.
@@ -8360,6 +8754,16 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
         return;
     }
 
+    // Record the complete level state once at the beginning
+// of this mouse gesture.
+//
+// Holding and dragging over several terrain cells therefore
+// produces one undo action rather than one action per frame.
+    if (pressed)
+    {
+        RecordEditorUndoPoint();
+    }
+
     const bool usingWallTool =
         editorTool ==
         static_cast<int>(
@@ -9246,6 +9650,21 @@ void Game::HandleEditorWorldInput(Vector2 screenPosition, bool pressed, bool dow
                     std::min(
                         static_cast<int>(ObstacleRenderMode::GroundDecal),
                         newObstacleRenderMode
+                    )
+                )
+                );
+
+        obstacle.billboardOrientation =
+            static_cast<HybridBillboardOrientation>(
+                std::max(
+                    static_cast<int>(
+                        HybridBillboardOrientation::FaceCamera
+                        ),
+                    std::min(
+                        static_cast<int>(
+                            HybridBillboardOrientation::WorldPlaneZ
+                            ),
+                        newObstacleBillboardOrientation
                     )
                 )
                 );
@@ -14996,85 +15415,57 @@ void Game::DrawEditorUi()
 
     ImGui::Separator();
 
-    if (ImGui::Button("Save Level"))
+   if (ImGui::Button("Save Level"))
+{
+    SaveLevel(
+        DefaultLevelPath
+    );
+}
+
+ImGui::SameLine();
+
+if (ImGui::Button("Load Level"))
+{
+    if (
+        !LoadLevel(
+            DefaultLevelPath
+        )
+        )
     {
-        SaveLevel(DefaultLevelPath);
+        LoadDefaultLevel();
     }
 
-    ImGui::SameLine();
+    ClearEditorHistory();
 
-    if (ImGui::Button("Load Level"))
-    {
-        if (!LoadLevel(DefaultLevelPath))
-        {
-            LoadDefaultLevel();
-            InitializeTestChambers();
-        }
+    InvalidateGroundCache();
+    MarkHybridTerrainDirty();
+}
 
-        int spawnCellX = MapWidth / 2;
-        int spawnCellY = MapHeight / 2;
+if (ImGui::Button("Undo (Ctrl+Z)"))
+{
+    UndoEditor();
+}
 
-        const bool hasAuthoredEntrance =
-            FindLevelEntranceCell(
-                spawnCellX,
-                spawnCellY
-            );
+ImGui::SameLine();
 
-        Vector2 requestedSpawn =
-            CellToWorld(
-                spawnCellX,
-                spawnCellY
-            );
+if (
+    ImGui::Button(
+        "Redo (Ctrl+Shift+Z)"
+    )
+    )
+{
+    RedoEditor();
+}
 
-        if (
-            hasAuthoredEntrance ||
-            FindNearestWalkableCell(
-                requestedSpawn,
-                spawnCellX,
-                spawnCellY
-            )
-            )
-        {
-            playerPosition =
-                CellToWorld(
-                    spawnCellX,
-                    spawnCellY
-                );
-        }
-        else
-        {
-            playerPosition = requestedSpawn;
-        }
-
-        player.pos = playerPosition;
-        player.moveTarget = playerPosition;
-        player.hasMoveTarget = false;
-
-        currentPath.clear();
-        pathIndex = 0;
-        hasPath = false;
-
-        UpdateActiveChamber(true);
-        InvalidateGroundCache();
-
-        if (
-            rendererMode ==
-            WorldRendererMode::Hybrid3D
-            )
-        {
-            hybridCameraTargetWorld =
-                playerPosition;
-
-            UpdateHybridCamera(0.0f);
-        }
-        else
-        {
-            camera.target =
-                WorldToViewElevated(
-                    playerPosition
-                );
-        }
-    }
+ImGui::Text(
+    "History: %d undo / %d redo",
+    static_cast<int>(
+        editorUndoHistory.size()
+    ),
+    static_cast<int>(
+        editorRedoHistory.size()
+    )
+);
 
     ImGui::SameLine();
 
@@ -16029,6 +16420,32 @@ void Game::DrawEditorUi()
         2
     );
 
+    if (
+        newObstacleRenderMode ==
+        static_cast<int>(
+            ObstacleRenderMode::Billboard
+            )
+        )
+    {
+        const char* obstacleProjectionModes[] = {
+            "Screen Facing - Default",
+            "Upright Camera Facing",
+            "World Plane X",
+            "World Plane Z"
+        };
+
+        ImGui::Combo(
+            "Obstacle Projection",
+            &newObstacleBillboardOrientation,
+            obstacleProjectionModes,
+            4
+        );
+
+        ImGui::TextDisabled(
+            "Use World Plane X/Z only for gates, walls and architecture."
+        );
+    }
+
     float obstacleTintFloat[4] = {
         static_cast<float>(newObstacleTint.r) / 255.0f,
         static_cast<float>(newObstacleTint.g) / 255.0f,
@@ -16244,6 +16661,54 @@ void Game::DrawEditorUi()
         ImGui::Checkbox(
             "Selected Casts Shadow",
             &selectedObstacle.castsShadow
+        );
+
+        // --------------------------------------------------
+// Projection used by this specific existing obstacle.
+// --------------------------------------------------
+
+        int selectedProjection =
+            static_cast<int>(
+                selectedObstacle.billboardOrientation
+                );
+
+        const char* selectedProjectionModes[] = {
+            "Screen Facing - Default",
+            "Upright Camera Facing",
+            "World Plane X",
+            "World Plane Z"
+        };
+
+        if (
+            ImGui::Combo(
+                "Selected Projection",
+                &selectedProjection,
+                selectedProjectionModes,
+                4
+            )
+            )
+        {
+            selectedProjection =
+                std::max(
+                    static_cast<int>(
+                        HybridBillboardOrientation::FaceCamera
+                        ),
+                    std::min(
+                        static_cast<int>(
+                            HybridBillboardOrientation::WorldPlaneZ
+                            ),
+                        selectedProjection
+                    )
+                );
+
+            selectedObstacle.billboardOrientation =
+                static_cast<HybridBillboardOrientation>(
+                    selectedProjection
+                    );
+        }
+
+        ImGui::TextDisabled(
+            "World Plane X/Z projects gates and wall architecture onto a fixed world plane."
         );
 
         ImGui::Checkbox(
@@ -30535,8 +31000,8 @@ void Game::EnsurePlayerLight()
     playerLight.id = GetNextLightId();
     playerLight.name = "Player Readability";
     playerLight.position = playerPosition;
-    playerLight.radius = 125.0f;
-    playerLight.intensity = 0.52f;
+    playerLight.radius = 190.0f;
+    playerLight.intensity = 0.58f;
     playerLight.color = Color{ 255, 242, 220, 255 };
     playerLight.enabled = true;
     playerLight.followsPlayer = true;
@@ -30692,7 +31157,7 @@ void Game::CreateTestLights()
         light.position = fallbackPositions[index];
         light.chamberId = FindChamberAtWorld(light.position);
         light.radius = index == 2 ? 330.0f : 260.0f;
-        light.intensity = index == 2 ? 0.50f : 0.58f;
+        light.intensity = index == 2 ? 0.68f : 0.75f;
         light.color = fallbackColors[index];
         light.enabled = true;
         light.flickerAmount = index == 2 ? 0.04f : 0.12f;
@@ -35637,9 +36102,7 @@ void Game::DrawHybridBillboardFrame(
         HybridBillboardOrientation::FaceCamera
         )
     {
-        // A full camera-facing billboard uses the camera's real screen
-        // basis. This avoids the vertical foreshortening produced by an
-        // upright/cylindrical billboard under a steep isometric camera.
+        // Full camera-facing billboard.
         billboardRight =
             Vector3Normalize(
                 Vector3CrossProduct(
@@ -35669,11 +36132,12 @@ void Game::DrawHybridBillboardFrame(
                 )
             );
     }
-    else
+    else if (
+        orientation ==
+        HybridBillboardOrientation::UprightWorld
+        )
     {
-        // Cylindrical billboard:
-        // stays vertically upright while rotating horizontally
-        // to face the camera.
+        // Cylindrical billboard for characters.
         billboardUp = {
             0.0f,
             1.0f,
@@ -35714,11 +36178,7 @@ void Game::DrawHybridBillboardFrame(
                 )
             );
 
-        // A world-upright sprite normally appears shorter when
-        // viewed through the angled isometric camera.
-        //
-        // Increase its physical height to preserve the original
-        // sprite-sheet proportions on screen.
+        // Preserve character sprite proportions.
         const float verticalProjectionScale =
             sqrtf(
                 std::max(
@@ -35734,6 +36194,42 @@ void Game::DrawHybridBillboardFrame(
                 0.35f,
                 verticalProjectionScale
             );
+    }
+    else if (
+        orientation ==
+        HybridBillboardOrientation::WorldPlaneX
+        )
+    {
+        // Fixed plane along the X axis.
+        // Its surface normal faces approximately toward +Z.
+        billboardRight = {
+            1.0f,
+            0.0f,
+            0.0f
+        };
+
+        billboardUp = {
+            0.0f,
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        // Fixed plane along the Z axis.
+        // Negative Z keeps the front face directed toward the
+        // current fixed camera quadrant.
+        billboardRight = {
+            0.0f,
+            0.0f,
+            -1.0f
+        };
+
+        billboardUp = {
+            0.0f,
+            1.0f,
+            0.0f
+        };
     }
 
     // WorldToHybrid3D() returns the terrain contact point. anchorY is the
@@ -36867,7 +37363,8 @@ void Game::DrawHybridObstacle3D(
                 1.0f
             ),
             localHeight,
-            drawTint
+            drawTint,
+            obstacle.billboardOrientation
         );
 
         return;

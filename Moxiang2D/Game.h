@@ -457,8 +457,21 @@ enum class WorldRendererMode
 // should rotate only around the vertical world axis.
 enum class HybridBillboardOrientation
 {
+    // Uses the camera's complete screen basis.
+    // Suitable for effects and screen-facing sprites.
     FaceCamera = 0,
-    UprightWorld
+
+    // Remains vertically upright but rotates horizontally
+    // toward the camera. Suitable for characters.
+    UprightWorld,
+
+    // Fixed vertical plane whose width follows world X.
+    // Suitable for north/south wall decorations.
+    WorldPlaneX,
+
+    // Fixed vertical plane whose width follows world Z.
+    // Suitable for east/west wall decorations.
+    WorldPlaneZ
 };
 
 struct HybridTerrainBatch
@@ -516,13 +529,13 @@ struct DungeonChamber
     // Authored atmosphere. These values are blended while moving between
     // chambers, so the transition does not pop.
     Color ambientLight{
-        76,
-        82,
-        98,
+        120,
+        124,
+        138,
         255
     };
 
-    float vignetteStrength = 0.18f;
+    float vignetteStrength = 0.10f;
 
     // Shared gameplay-camera zoom. Larger rooms use a smaller value so the
     // complete combat space remains readable. Build Mode keeps manual zoom.
@@ -599,6 +612,9 @@ struct Obstacle
 
     ObstacleRenderMode renderMode =
         ObstacleRenderMode::Billboard;
+
+    HybridBillboardOrientation billboardOrientation =
+        HybridBillboardOrientation::FaceCamera;
 
     Color tint = WHITE;
     float opacity = 1.0f;
@@ -1079,6 +1095,20 @@ private:
     void InitTileBrushes();
     void LoadDefaultLevel();
 
+    struct EditorHistorySnapshot
+    {
+        int mapWidth = 0;
+        int mapHeight = 0;
+
+        float terrainElevationStep = 0.0f;
+
+        std::vector<int> tiles;
+        std::vector<TerrainCell> terrainCells;
+        std::vector<DungeonChamber> chambers;
+        std::vector<Obstacle> obstacles;
+        std::vector<Light2D> lights;
+    };
+
     // Dungeon chamber foundation.
     void InitializeTestChambers();
     void UpdateActiveChamber(bool forceUpdate = false);
@@ -1124,6 +1154,18 @@ private:
 
     bool SaveLevel(const char* path) const;
     bool LoadLevel(const char* path);
+
+    EditorHistorySnapshot CaptureEditorHistorySnapshot() const;
+
+    void RestoreEditorHistorySnapshot(
+        const EditorHistorySnapshot& snapshot
+    );
+
+    void RecordEditorUndoPoint();
+    void UndoEditor();
+    void RedoEditor();
+    void ClearEditorHistory();
+    void HandleEditorHistoryShortcuts();
 
     bool LoadTileBrushTexture(int tileIndex, const std::string& path);
 
@@ -1598,6 +1640,8 @@ private:
         DongfengWave,
         Vfx
     };
+
+
 
     struct WorldDrawItem
     {
@@ -2227,6 +2271,16 @@ private:
     bool showObstacleColliders = true;
     bool showEditorMarkerLegend = true;
 
+    static constexpr int MaximumEditorHistoryEntries = 24;
+
+    std::deque<EditorHistorySnapshot>
+        editorUndoHistory;
+
+    std::deque<EditorHistorySnapshot>
+        editorRedoHistory;
+
+    bool editorHistoryRestoring = false;
+
     EditorLightingMode editorLightingMode =
         EditorLightingMode::Unlit;
 
@@ -2279,6 +2333,11 @@ private:
     int newObstacleRenderMode =
         static_cast<int>(
             ObstacleRenderMode::Billboard
+            );
+
+    int newObstacleBillboardOrientation =
+        static_cast<int>(
+            HybridBillboardOrientation::FaceCamera
             );
 
     Color newObstacleTint = WHITE;
