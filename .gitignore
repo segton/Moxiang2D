@@ -45,6 +45,13 @@ Generated\ Files/
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
 
+# Generated web builds
+/build-web/
+
+# Local repository and dependency archives
+/Moxiang2D-current.bundle
+/external.zip
+
 # NUnit
 *.VisualState.xml
 TestResult.xml
