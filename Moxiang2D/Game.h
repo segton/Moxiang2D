@@ -42,7 +42,13 @@ enum class VfxType
     LightningLine,
     SkillCircle,
     DeathBurst,
-    SlashLine
+    SlashLine,
+
+    SlashSprite,
+    ImpactSprite,
+    SmokeSprite,
+    FireLoopSprite,
+    RockDebrisSprite
 };
 
 enum class TerrainCliffFace
@@ -142,8 +148,32 @@ struct VfxParticle
     float life = 0.0f;
     float maxLife = 1.0f;
 
+    bool flipX = false;
+
     int value = 0;          // For damage numbers
     Vector2 endPos{};       // For lightning lines
+
+    Vector2 drawSize{
+    32.0f,
+    32.0f
+    };
+
+    float visualHeight = 0.0f;
+    float verticalVelocity = 0.0f;
+    float gravity = 0.0f;
+
+    float rotationDegrees = 0.0f;
+    float spinSpeedDegrees = 0.0f;
+
+    float anchorY = 0.5f;
+
+    int spriteFrame = 0;
+    int spriteFrameCount = 1;
+
+    float spriteFrameTimer = 0.0f;
+    float spriteFrameDuration = 0.08f;
+
+    bool loopAnimation = false;
 
     Color color = WHITE;
     bool active = false;
@@ -1395,6 +1425,33 @@ private:
     void UpdateSkills(float dt);
     void UpdateVfx(float dt);
 
+    void LoadCombatVfxSpriteSheets();
+
+    Rectangle GetHorizontalVfxSourceRect(
+        Texture2D texture,
+        int frameCount,
+        int frame
+    ) const;
+
+    Vector2 GetVfxDrawPosition(
+        Vector2 worldPosition,
+        float visualHeight
+    ) const;
+
+    void SpawnRockImpactVfx(
+        Vector2 worldPosition
+    );
+
+    void SpawnFireLoop(
+        Vector2 worldPosition,
+        float duration,
+        float visualSize
+    );
+
+    void DrawSpriteVfxParticle(
+        const VfxParticle& particle
+    );
+
     void SpawnEnemy(EnemyType type);
     void SpawnEnemyInChamber(
         EnemyType type,
@@ -2148,6 +2205,32 @@ private:
     bool groundCacheReady = false;
     bool groundCacheDirty = true;
 
+    Texture2D slashVfxSpriteSheet{};
+    Texture2D impactVfxSpriteSheet{};
+    Texture2D smokeVfxSpriteSheet{};
+    Texture2D fireLoopVfxSpriteSheet{};
+    Texture2D rockDebrisVfxSpriteSheet{};
+
+    bool slashVfxLoaded = false;
+    bool impactVfxLoaded = false;
+    bool smokeVfxLoaded = false;
+    bool fireLoopVfxLoaded = false;
+    bool rockDebrisVfxLoaded = false;
+
+    int slashVfxFrameCount = 10;
+    int impactVfxFrameCount = 10;
+    int smokeVfxFrameCount = 7;
+    int fireLoopVfxFrameCount = 5;
+    int rockDebrisVfxFrameCount = 6;
+
+    float slashVfxFrameDuration = 0.030f;
+    float impactVfxFrameDuration = 0.035f;
+    float smokeVfxFrameDuration = 0.055f;
+    float fireLoopVfxFrameDuration = 0.080f;
+
+    // Change this if the slash faces 90 degrees away
+    // from the player's actual attack direction.
+    float slashVfxRotationOffsetDegrees = 0.0f;
 
 
 

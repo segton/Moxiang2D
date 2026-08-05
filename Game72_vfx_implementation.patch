@@ -1,0 +1,745 @@
+--- Game.h
++++ Game.h
+@@ -48,7 +48,8 @@
+     ImpactSprite,
+     SmokeSprite,
+     FireLoopSprite,
+-    RockDebrisSprite
++    RockDebrisSprite,
++    DongfengChargeStarSprite
+ };
+ 
+ enum class TerrainCliffFace
+@@ -152,8 +153,13 @@
+     Vector2 endPos{};       // For lightning lines
+ 
+     Vector2 drawSize{
+-    32.0f,
+-    32.0f
++        32.0f,
++        32.0f
++    };
++
++    Vector2 endDrawSize{
++        32.0f,
++        32.0f
+     };
+ 
+     float visualHeight = 0.0f;
+@@ -167,11 +173,15 @@
+ 
+     int spriteFrame = 0;
+     int spriteFrameCount = 1;
++    int spriteFrameOffset = 0;
+ 
+     float spriteFrameTimer = 0.0f;
+     float spriteFrameDuration = 0.08f;
+ 
+     bool loopAnimation = false;
++    bool flipX = false;
++    bool followPlayer = false;
++    bool scaleOverLife = false;
+ 
+     Color color = WHITE;
+     bool active = false;
+@@ -1437,7 +1447,12 @@
+     ) const;
+ 
+     void SpawnRockImpactVfx(
+-        Vector2 worldPosition
++        Vector2 worldPosition,
++        float rockVisualRadius
++    );
++
++    void SpawnDongfengChargeStar(
++        float duration
+     );
+ 
+     void SpawnFireLoop(
+@@ -1536,7 +1551,11 @@
+     void ActivateLightning();
+     void ActivateIceField();
+ 
+-    void SpawnHitSpark(Vector2 pos);
++    void SpawnHitSpark(
++        Vector2 pos,
++        float visualScale = 1.0f,
++        float visualHeight = 68.0f
++    );
+     void SpawnDamageNumber(Vector2 pos, int value);
+     void SpawnDeathBurst(Vector2 pos);
+     void SpawnLightningLine(Vector2 start, Vector2 end);
+@@ -2208,24 +2227,31 @@
+     Texture2D smokeVfxSpriteSheet{};
+     Texture2D fireLoopVfxSpriteSheet{};
+     Texture2D rockDebrisVfxSpriteSheet{};
++    Texture2D dongfengChargeStarSpriteSheet{};
+ 
+     bool slashVfxLoaded = false;
+     bool impactVfxLoaded = false;
+     bool smokeVfxLoaded = false;
+     bool fireLoopVfxLoaded = false;
+     bool rockDebrisVfxLoaded = false;
++    bool dongfengChargeStarLoaded = false;
+ 
+     int slashVfxFrameCount = 10;
+     int impactVfxFrameCount = 10;
+     int smokeVfxFrameCount = 7;
+     int fireLoopVfxFrameCount = 5;
+     int rockDebrisVfxFrameCount = 6;
++    int dongfengChargeStarFrameCount = 10;
+ 
+     float slashVfxFrameDuration = 0.030f;
+     float impactVfxFrameDuration = 0.035f;
+     float smokeVfxFrameDuration = 0.055f;
+     float fireLoopVfxFrameDuration = 0.080f;
+ 
++    float dongfengChargeStarStartSize = 320.0f;
++    float dongfengChargeStarEndSize = 72.0f;
++    float dongfengChargeStarVisualHeight = 112.0f;
++
+     // Change this if the slash faces 90 degrees away
+     // from the player's actual attack direction.
+     float slashVfxRotationOffsetDegrees = 0.0f;
+--- Game.cpp
++++ Game.cpp
+@@ -1840,11 +1840,16 @@
+         rockDebrisVfxSpriteSheet
+     );
+ 
++    UnloadVfxSheet(
++        dongfengChargeStarSpriteSheet
++    );
++
+     slashVfxLoaded = false;
+     impactVfxLoaded = false;
+     smokeVfxLoaded = false;
+     fireLoopVfxLoaded = false;
+     rockDebrisVfxLoaded = false;
++    dongfengChargeStarLoaded = false;
+ 
+     bossPreHealSpriteLoaded =
+         false;
+@@ -20441,35 +20446,20 @@
+             start
+         );
+ 
+-    if (
+-        Vector2Length(
+-            direction
+-        ) <=
+-        0.001f
+-        )
++    if (Vector2Length(direction) <= 0.001f)
+     {
+         direction =
+             GetPlayerFacingWorldDirection();
+     }
+ 
+-    if (
+-        Vector2Length(
+-            direction
+-        ) <=
+-        0.001f
+-        )
++    if (Vector2Length(direction) <= 0.001f)
+     {
+-        direction = {
+-            1.0f,
+-            0.0f
+-        };
++        direction = { 1.0f, 0.0f };
+     }
+     else
+     {
+         direction =
+-            Vector2Normalize(
+-                direction
+-            );
++            Vector2Normalize(direction);
+     }
+ 
+     if (
+@@ -20487,11 +20477,10 @@
+                 start,
+                 Vector2Scale(
+                     direction,
+-                    62.0f
++                    70.0f
+                 )
+             );
+ 
+-        // Used to calculate the displayed rotation.
+         particle.endPos =
+             Vector2Add(
+                 particle.pos,
+@@ -20501,13 +20490,18 @@
+                 )
+             );
+ 
++        // Keep the supplied 55:79 frame aspect ratio,
++        // but make the slash approximately 27% larger.
+         particle.drawSize = {
+-            130.0f,
+-            186.0f
++            165.0f,
++            237.0f
+         };
+ 
++        particle.endDrawSize =
++            particle.drawSize;
++
+         particle.visualHeight =
+-            72.0f;
++            78.0f;
+ 
+         particle.anchorY =
+             0.5f;
+@@ -20518,12 +20512,22 @@
+         particle.spriteFrameCount =
+             slashVfxFrameCount;
+ 
++        particle.spriteFrameOffset =
++            0;
++
+         particle.spriteFrameTimer =
+             0.0f;
+ 
+         particle.spriteFrameDuration =
+             slashVfxFrameDuration;
+ 
++        // The source animation swings the opposite way on
++        // the right-facing half of the eight directions.
++        particle.flipX =
++            playerDirection == PlayerDirection::UpRight ||
++            playerDirection == PlayerDirection::Right ||
++            playerDirection == PlayerDirection::DownRight;
++
+         particle.life =
+             static_cast<float>(
+                 slashVfxFrameCount
+@@ -20636,9 +20640,17 @@
+ }
+ 
+ void Game::SpawnHitSpark(
+-    Vector2 pos
++    Vector2 pos,
++    float visualScale,
++    float visualHeight
+ )
+ {
++    visualScale =
++        std::max(
++            0.10f,
++            visualScale
++        );
++
+     if (
+         impactVfxLoaded &&
+         impactVfxSpriteSheet.id != 0
+@@ -20658,12 +20670,15 @@
+             pos;
+ 
+         particle.drawSize = {
+-            136.0f,
+-            118.0f
++            136.0f * visualScale,
++            118.0f * visualScale
+         };
+ 
++        particle.endDrawSize =
++            particle.drawSize;
++
+         particle.visualHeight =
+-            68.0f;
++            visualHeight;
+ 
+         particle.anchorY =
+             0.5f;
+@@ -20674,6 +20689,9 @@
+         particle.spriteFrameCount =
+             impactVfxFrameCount;
+ 
++        particle.spriteFrameOffset =
++            0;
++
+         particle.spriteFrameTimer =
+             0.0f;
+ 
+@@ -20702,7 +20720,6 @@
+         return;
+     }
+ 
+-    // Small 2D fallback if the texture cannot load.
+     if (!CanSpawnVfx(1))
+     {
+         return;
+@@ -20717,7 +20734,7 @@
+         pos;
+ 
+     particle.radius =
+-        9.0f;
++        9.0f * visualScale;
+ 
+     particle.life =
+         0.14f;
+@@ -20852,6 +20869,12 @@
+             continue;
+         }
+ 
++        if (particle.followPlayer)
++        {
++            particle.pos =
++                playerPosition;
++        }
++
+         particle.life -=
+             dt;
+ 
+@@ -21064,6 +21087,12 @@
+         rockDebrisVfxSpriteSheet,
+         rockDebrisVfxLoaded
+     );
++
++    LoadSheet(
++        "Assets/vfx/spark_big.png",
++        dongfengChargeStarSpriteSheet,
++        dongfengChargeStarLoaded
++    );
+ }
+ 
+ void Game::UpdateSkillButtonRects()
+@@ -21609,7 +21638,9 @@
+     hasPath = false;
+     pendingNpc = -1;
+ 
+-    SpawnHitSpark(playerPosition);
++    SpawnDongfengChargeStar(
++        dongfengCastDuration
++    );
+ 
+     VfxParticle castCircle;
+     castCircle.type = VfxType::SkillCircle;
+@@ -26521,8 +26552,18 @@
+     enemy.damageFlashTimer =
+         damageFlashDuration;
+ 
++    const bool hitBoss =
++        enemy.type ==
++        EnemyType::Boss;
++
+     SpawnHitSpark(
+-        hitPos
++        hitPos,
++        hitBoss
++            ? 1.75f
++            : 1.0f,
++        hitBoss
++            ? 155.0f
++            : 68.0f
+     );
+ 
+     SpawnDamageNumber(
+@@ -29845,7 +29886,8 @@
+         particle.type == VfxType::ImpactSprite ||
+         particle.type == VfxType::SmokeSprite ||
+         particle.type == VfxType::FireLoopSprite ||
+-        particle.type == VfxType::RockDebrisSprite
++        particle.type == VfxType::RockDebrisSprite ||
++        particle.type == VfxType::DongfengChargeStarSprite
+         )
+     {
+         DrawSpriteVfxParticle(
+@@ -46679,7 +46721,8 @@
+         );
+ 
+         SpawnRockImpactVfx(
+-            rock.position
++            rock.position,
++            rock.visualRadius
+         );
+ 
+         rock.active =
+@@ -48389,7 +48432,8 @@
+     );
+ }
+ void Game::SpawnRockImpactVfx(
+-    Vector2 worldPosition
++    Vector2 worldPosition,
++    float rockVisualRadius
+ )
+ {
+     const int rockParticleCount =
+@@ -48416,8 +48460,28 @@
+         return;
+     }
+ 
++    rockVisualRadius =
++        std::max(
++            1.0f,
++            rockVisualRadius
++        );
++
+     if (smokeParticleCount > 0)
+     {
++        // The original 93x102 smoke was too small for
++        // a falling boss rock. Scale it from the rock
++        // radius while preserving the 31:34 frame ratio.
++        const float smokeHeight =
++            Clamp(
++                rockVisualRadius * 6.0f,
++                180.0f,
++                320.0f
++            );
++
++        const float smokeWidth =
++            smokeHeight *
++            (31.0f / 34.0f);
++
+         VfxParticle smoke;
+ 
+         smoke.type =
+@@ -48427,15 +48491,23 @@
+             worldPosition;
+ 
+         smoke.drawSize = {
+-            93.0f,
+-            102.0f
++            smokeWidth,
++            smokeHeight
+         };
+ 
++        smoke.endDrawSize =
++            smoke.drawSize;
++
+         smoke.visualHeight =
+-            5.0f;
++            std::max(
++                5.0f,
++                rockVisualRadius * 0.18f
++            );
+ 
+         smoke.verticalVelocity =
+-            32.0f;
++            44.0f +
++            rockVisualRadius *
++            0.45f;
+ 
+         smoke.anchorY =
+             1.0f;
+@@ -48446,6 +48518,9 @@
+         smoke.spriteFrameCount =
+             smokeVfxFrameCount;
+ 
++        smoke.spriteFrameOffset =
++            0;
++
+         smoke.spriteFrameDuration =
+             smokeVfxFrameDuration;
+ 
+@@ -48492,13 +48567,22 @@
+                 )
+                 );
+ 
++        const float sizeScale =
++            Clamp(
++                rockVisualRadius /
++                38.0f,
++                0.75f,
++                1.35f
++            );
++
+         const float visualSize =
+             static_cast<float>(
+                 GetRandomValue(
+                     22,
+                     42
+                 )
+-                );
++                ) *
++            sizeScale;
+ 
+         VfxParticle rock;
+ 
+@@ -48510,17 +48594,10 @@
+                 worldPosition,
+                 Vector2{
+                     static_cast<float>(
+-                        GetRandomValue(
+-                            -16,
+-                            16
+-                        )
++                        GetRandomValue(-16, 16)
+                     ),
+-
+                     static_cast<float>(
+-                        GetRandomValue(
+-                            -16,
+-                            16
+-                        )
++                        GetRandomValue(-16, 16)
+                     )
+                 }
+             );
+@@ -48528,7 +48605,6 @@
+         rock.velocity = {
+             cosf(angle) *
+                 horizontalSpeed,
+-
+             sinf(angle) *
+                 horizontalSpeed
+         };
+@@ -48538,6 +48614,9 @@
+             visualSize
+         };
+ 
++        rock.endDrawSize =
++            rock.drawSize;
++
+         rock.visualHeight =
+             static_cast<float>(
+                 GetRandomValue(
+@@ -48576,8 +48655,6 @@
+         rock.anchorY =
+             0.5f;
+ 
+-        // rock_gray.png contains six different debris sizes.
+-        // Each particle randomly selects one of them.
+         rock.spriteFrame =
+             GetRandomValue(
+                 0,
+@@ -48587,6 +48664,9 @@
+         rock.spriteFrameCount =
+             1;
+ 
++        rock.spriteFrameOffset =
++            0;
++
+         rock.life =
+             static_cast<float>(
+                 GetRandomValue(
+@@ -48611,6 +48691,94 @@
+     }
+ }
+ 
++void Game::SpawnDongfengChargeStar(
++    float duration
++)
++{
++    if (
++        !dongfengChargeStarLoaded ||
++        dongfengChargeStarSpriteSheet.id == 0 ||
++        duration <= 0.0f ||
++        !CanSpawnVfx(1)
++        )
++    {
++        return;
++    }
++
++    VfxParticle star;
++
++    star.type =
++        VfxType::DongfengChargeStarSprite;
++
++    star.pos =
++        playerPosition;
++
++    star.drawSize = {
++        dongfengChargeStarStartSize,
++        dongfengChargeStarStartSize
++    };
++
++    star.endDrawSize = {
++        dongfengChargeStarEndSize,
++        dongfengChargeStarEndSize
++    };
++
++    star.visualHeight =
++        dongfengChargeStarVisualHeight;
++
++    star.anchorY =
++        0.5f;
++
++    // spark_big.png has ten frames. Frames 4-9 begin
++    // at the largest flash and then contract to a point.
++    star.spriteFrame =
++        0;
++
++    star.spriteFrameOffset =
++        4;
++
++    star.spriteFrameCount =
++        6;
++
++    star.spriteFrameTimer =
++        0.0f;
++
++    star.spriteFrameDuration =
++        duration /
++        static_cast<float>(
++            star.spriteFrameCount
++        );
++
++    star.followPlayer =
++        true;
++
++    star.scaleOverLife =
++        true;
++
++    star.rotationDegrees =
++        0.0f;
++
++    star.spinSpeedDegrees =
++        120.0f;
++
++    star.life =
++        duration;
++
++    star.maxLife =
++        duration;
++
++    star.color =
++        WHITE;
++
++    star.active =
++        true;
++
++    vfxParticles.push_back(
++        star
++    );
++}
++
++
+ void Game::SpawnFireLoop(
+     Vector2 worldPosition,
+     float duration,
+@@ -48732,6 +48900,15 @@
+ 
+         break;
+ 
++    case VfxType::DongfengChargeStarSprite:
++        texture =
++            dongfengChargeStarSpriteSheet;
++
++        sheetFrameCount =
++            dongfengChargeStarFrameCount;
++
++        break;
++
+     default:
+         return;
+     }
+@@ -48741,13 +48918,26 @@
+         return;
+     }
+ 
+-    const Rectangle source =
++    const int sourceFrame =
++        particle.spriteFrameOffset +
++        particle.spriteFrame;
++
++    Rectangle source =
+         GetHorizontalVfxSourceRect(
+             texture,
+             sheetFrameCount,
+-            particle.spriteFrame
++            sourceFrame
+         );
+ 
++    if (particle.flipX)
++    {
++        source.x +=
++            source.width;
++
++        source.width =
++            -source.width;
++    }
++
+     Vector2 drawPosition =
+         GetVfxDrawPosition(
+             particle.pos,
+@@ -48757,8 +48947,37 @@
+     Vector2 drawSize =
+         particle.drawSize;
+ 
+-    // Legacy mode already receives camera.zoom from BeginMode2D().
+-    // Hybrid overlay sprites need an equivalent scale adjustment.
++    if (
++        particle.scaleOverLife &&
++        particle.maxLife > 0.0f
++        )
++    {
++        const float progress =
++            Clamp(
++                1.0f -
++                particle.life /
++                particle.maxLife,
++                0.0f,
++                1.0f
++            );
++
++        // Fast initial contraction, followed by a
++        // controlled settle immediately before release.
++        const float shrinkAmount =
++            1.0f -
++            powf(
++                1.0f - progress,
++                3.0f
++            );
++
++        drawSize =
++            Vector2Lerp(
++                particle.drawSize,
++                particle.endDrawSize,
++                shrinkAmount
++            );
++    }
++
+     if (
+         rendererMode ==
+         WorldRendererMode::Hybrid3D
+@@ -48858,6 +49077,19 @@
+                 1.0f
+             );
+     }
++    else if (
++        particle.type ==
++        VfxType::DongfengChargeStarSprite
++        )
++    {
++        alphaMultiplier =
++            Clamp(
++                particle.life /
++                0.08f,
++                0.0f,
++                1.0f
++            );
++    }
+ 
+     Color tint =
+         particle.color;
+@@ -48866,9 +49098,9 @@
+         static_cast<unsigned char>(
+             static_cast<float>(
+                 tint.a
+-                ) *
++            ) *
+             alphaMultiplier
+-            );
++        );
+ 
+     DrawTexturePro(
+         texture,
+@@ -48882,7 +49114,6 @@
+         Vector2{
+             drawSize.x *
+                 0.5f,
+-
+             drawSize.y *
+                 Clamp(
+                     particle.anchorY,
+@@ -48894,3 +49125,4 @@
+         tint
+     );
+ }
++

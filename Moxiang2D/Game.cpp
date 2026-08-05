@@ -1510,6 +1510,8 @@ void Game::Init()
 
     LoadEnemySpawnEffectSpriteSheet();
 
+    LoadCombatVfxSpriteSheets();
+
     InitCombat();
     LoadPlayerSpriteSheet();
 
@@ -1800,6 +1802,49 @@ void Game::Shutdown()
 
         bossHealingLoopSpriteSheet = {};
     }
+
+    auto UnloadVfxSheet =
+        [](
+            Texture2D& texture
+            )
+        {
+            if (texture.id == 0)
+            {
+                return;
+            }
+
+            UnloadTexture(
+                texture
+            );
+
+            texture = {};
+        };
+
+    UnloadVfxSheet(
+        slashVfxSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        impactVfxSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        smokeVfxSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        fireLoopVfxSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        rockDebrisVfxSpriteSheet
+    );
+
+    slashVfxLoaded = false;
+    impactVfxLoaded = false;
+    smokeVfxLoaded = false;
+    fireLoopVfxLoaded = false;
+    rockDebrisVfxLoaded = false;
 
     bossPreHealSpriteLoaded =
         false;
@@ -8275,6 +8320,28 @@ void Game::Draw()
 
     // Full-screen Huashan flash is also unlit.
     DrawHuashanImpactFlash();
+
+    // --------------------------------------------------
+    // PASS 4.5:
+    // Hybrid combat VFX overlay
+    //
+    // Hybrid foreground VFX are intentionally excluded
+    // from DrawHybridActors3D(), so they must be drawn
+    // here after the lighting composite.
+    // --------------------------------------------------
+
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        DrawWorldForegroundEffects();
+    }
+
+    // --------------------------------------------------
+    // PASS 5:
+    // UI and screen-space elements.
+    // --------------------------------------------------
 
     // --------------------------------------------------
     // PASS 5:
@@ -20380,33 +20447,321 @@ void Game::CleanupCombatObjects()
     );
 }
 
-void Game::SpawnHitSpark(Vector2 pos)
+void Game::SpawnSlashEffect(
+    Vector2 start,
+    Vector2 end
+)
 {
-    const int particleCount = 3;
-
-    if (!CanSpawnVfx(particleCount))
+    if (!CanSpawnVfx(1))
     {
         return;
     }
 
-    for (int i = 0; i < particleCount; ++i)
+    Vector2 direction =
+        Vector2Subtract(
+            end,
+            start
+        );
+
+    if (
+        Vector2Length(
+            direction
+        ) <=
+        0.001f
+        )
     {
-        float angle = static_cast<float>(GetRandomValue(0, 360)) * DEG2RAD;
-        float speed = static_cast<float>(GetRandomValue(80, 180));
-
-        VfxParticle p;
-        p.type = VfxType::HitSpark;
-        p.pos = pos;
-        p.velocity = { cosf(angle) * speed, sinf(angle) * speed };
-        p.radius = static_cast<float>(GetRandomValue(3, 6));
-        p.life = 0.18f;
-        p.maxLife = 0.18f;
-        p.color = { 255, 230, 80, 220 };
-        p.active = true;
-
-        vfxParticles.push_back(p);
+        direction =
+            GetPlayerFacingWorldDirection();
     }
+
+    if (
+        Vector2Length(
+            direction
+        ) <=
+        0.001f
+        )
+    {
+        direction = {
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        direction =
+            Vector2Normalize(
+                direction
+            );
+    }
+
+    if (
+        slashVfxLoaded &&
+        slashVfxSpriteSheet.id != 0
+        )
+    {
+        VfxParticle particle;
+
+        particle.type =
+            VfxType::SlashSprite;
+
+        particle.pos =
+            Vector2Add(
+                start,
+                Vector2Scale(
+                    direction,
+                    62.0f
+                )
+            );
+
+        // Used to calculate the displayed rotation.
+        particle.endPos =
+            Vector2Add(
+                particle.pos,
+                Vector2Scale(
+                    direction,
+                    100.0f
+                )
+            );
+
+        particle.drawSize = {
+            170.0f,
+            170.0f
+        };
+
+        particle.visualHeight =
+            72.0f;
+
+        particle.anchorY =
+            0.5f;
+
+        particle.spriteFrame =
+            0;
+
+        particle.spriteFrameCount =
+            slashVfxFrameCount;
+
+        particle.spriteFrameTimer =
+            0.0f;
+
+        particle.spriteFrameDuration =
+            slashVfxFrameDuration;
+
+        particle.life =
+            static_cast<float>(
+                slashVfxFrameCount
+                ) *
+            slashVfxFrameDuration;
+
+        particle.maxLife =
+            particle.life;
+
+        particle.color =
+            WHITE;
+
+        particle.active =
+            true;
+
+        vfxParticles.push_back(
+            particle
+        );
+
+        return;
+    }
+
+    VfxParticle particle;
+
+    particle.type =
+        VfxType::SlashLine;
+
+    particle.pos =
+        start;
+
+    particle.endPos =
+        end;
+
+    particle.radius =
+        18.0f;
+
+    particle.life =
+        0.14f;
+
+    particle.maxLife =
+        particle.life;
+
+    particle.color = {
+        180,
+        230,
+        255,
+        255
+    };
+
+    particle.active =
+        true;
+
+    vfxParticles.push_back(
+        particle
+    );
 }
+
+Rectangle Game::GetHorizontalVfxSourceRect(
+    Texture2D texture,
+    int frameCount,
+    int frame
+) const
+{
+    if (
+        texture.id == 0 ||
+        texture.width <= 0 ||
+        texture.height <= 0
+        )
+    {
+        return {};
+    }
+
+    frameCount =
+        std::max(
+            1,
+            frameCount
+        );
+
+    frame =
+        std::max(
+            0,
+            std::min(
+                frame,
+                frameCount - 1
+            )
+        );
+
+    const float frameWidth =
+        static_cast<float>(
+            texture.width
+            ) /
+        static_cast<float>(
+            frameCount
+            );
+
+    return Rectangle{
+        frameWidth *
+            static_cast<float>(
+                frame
+            ),
+
+        0.0f,
+
+        frameWidth,
+
+        static_cast<float>(
+            texture.height
+        )
+    };
+}
+
+void Game::SpawnHitSpark(
+    Vector2 pos
+)
+{
+    if (
+        impactVfxLoaded &&
+        impactVfxSpriteSheet.id != 0
+        )
+    {
+        if (!CanSpawnVfx(1))
+        {
+            return;
+        }
+
+        VfxParticle particle;
+
+        particle.type =
+            VfxType::ImpactSprite;
+
+        particle.pos =
+            pos;
+
+        particle.drawSize = {
+            136.0f,
+            118.0f
+        };
+
+        particle.visualHeight =
+            68.0f;
+
+        particle.anchorY =
+            0.5f;
+
+        particle.spriteFrame =
+            0;
+
+        particle.spriteFrameCount =
+            impactVfxFrameCount;
+
+        particle.spriteFrameTimer =
+            0.0f;
+
+        particle.spriteFrameDuration =
+            impactVfxFrameDuration;
+
+        particle.life =
+            static_cast<float>(
+                impactVfxFrameCount
+                ) *
+            impactVfxFrameDuration;
+
+        particle.maxLife =
+            particle.life;
+
+        particle.color =
+            WHITE;
+
+        particle.active =
+            true;
+
+        vfxParticles.push_back(
+            particle
+        );
+
+        return;
+    }
+
+    // Small 2D fallback if the texture cannot load.
+    if (!CanSpawnVfx(1))
+    {
+        return;
+    }
+
+    VfxParticle particle;
+
+    particle.type =
+        VfxType::HitSpark;
+
+    particle.pos =
+        pos;
+
+    particle.radius =
+        9.0f;
+
+    particle.life =
+        0.14f;
+
+    particle.maxLife =
+        particle.life;
+
+    particle.color = {
+        255,
+        230,
+        100,
+        255
+    };
+
+    particle.active =
+        true;
+
+    vfxParticles.push_back(
+        particle
+    );
+}
+
 
 void Game::SpawnDamageNumber(
     Vector2 pos,
@@ -20533,15 +20888,57 @@ void Game::UpdateVfx(
             continue;
         }
 
-        // Floating damage uses its lifetime to calculate
-        // vertical screen movement while drawing.
+        // --------------------------------------------------
+        // Sprite animation
+        // --------------------------------------------------
+
         if (
-            particle.type ==
-            VfxType::FloatingDamage
+            particle.spriteFrameCount >
+            1 &&
+            particle.spriteFrameDuration >
+            0.0f
             )
         {
-            continue;
+            particle.spriteFrameTimer +=
+                dt;
+
+            while (
+                particle.spriteFrameTimer >=
+                particle.spriteFrameDuration
+                )
+            {
+                particle.spriteFrameTimer -=
+                    particle.spriteFrameDuration;
+
+                particle.spriteFrame++;
+
+                if (
+                    particle.spriteFrame <
+                    particle.spriteFrameCount
+                    )
+                {
+                    continue;
+                }
+
+                if (particle.loopAnimation)
+                {
+                    particle.spriteFrame =
+                        0;
+                }
+                else
+                {
+                    particle.spriteFrame =
+                        particle.spriteFrameCount -
+                        1;
+
+                    break;
+                }
+            }
         }
+
+        // --------------------------------------------------
+        // Horizontal world movement
+        // --------------------------------------------------
 
         particle.pos =
             Vector2Add(
@@ -20552,12 +20949,143 @@ void Game::UpdateVfx(
                 )
             );
 
+        const float velocityDamping =
+            expf(
+                -5.0f *
+                dt
+            );
+
         particle.velocity =
             Vector2Scale(
                 particle.velocity,
-                0.92f
+                velocityDamping
             );
+
+        // --------------------------------------------------
+        // Vertical arc used by rock debris
+        // --------------------------------------------------
+
+        particle.visualHeight +=
+            particle.verticalVelocity *
+            dt;
+
+        particle.verticalVelocity -=
+            particle.gravity *
+            dt;
+
+        if (
+            particle.visualHeight <
+            0.0f
+            )
+        {
+            particle.visualHeight =
+                0.0f;
+
+            if (
+                particle.verticalVelocity <
+                0.0f
+                )
+            {
+                particle.verticalVelocity =
+                    0.0f;
+
+                particle.velocity =
+                    Vector2Scale(
+                        particle.velocity,
+                        0.35f
+                    );
+
+                particle.spinSpeedDegrees *=
+                    0.35f;
+            }
+        }
+
+        particle.rotationDegrees +=
+            particle.spinSpeedDegrees *
+            dt;
     }
+}
+
+void Game::LoadCombatVfxSpriteSheets()
+{
+    auto LoadSheet =
+        [](
+            const char* path,
+            Texture2D& texture,
+            bool& loaded
+            )
+        {
+            if (texture.id != 0)
+            {
+                UnloadTexture(
+                    texture
+                );
+
+                texture = {};
+            }
+
+            texture =
+                LoadTexture(
+                    path
+                );
+
+            loaded =
+                texture.id != 0;
+
+            if (!loaded)
+            {
+                TraceLog(
+                    LOG_WARNING,
+                    "[COMBAT VFX] Failed to load: %s",
+                    path
+                );
+
+                return;
+            }
+
+            SetTextureFilter(
+                texture,
+                TEXTURE_FILTER_POINT
+            );
+
+            TraceLog(
+                LOG_INFO,
+                "[COMBAT VFX] Loaded %s | %dx%d",
+                path,
+                texture.width,
+                texture.height
+            );
+        };
+
+    LoadSheet(
+        "Assets/vfx/slash_big.png",
+        slashVfxSpriteSheet,
+        slashVfxLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/impact_big.png",
+        impactVfxSpriteSheet,
+        impactVfxLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/smoke_medium.png",
+        smokeVfxSpriteSheet,
+        smokeVfxLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/fire_loop.png",
+        fireLoopVfxSpriteSheet,
+        fireLoopVfxLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/rock_gray.png",
+        rockDebrisVfxSpriteSheet,
+        rockDebrisVfxLoaded
+    );
 }
 
 void Game::UpdateSkillButtonRects()
@@ -21494,7 +22022,40 @@ void Game::ActivateSkill(SkillType type)
 
 void Game::ActivateFireball()
 {
-    SpawnWhirlwindBlades();
+    Vector2 direction =
+        GetPlayerFacingWorldDirection();
+
+    if (
+        Vector2Length(
+            direction
+        ) <=
+        0.001f
+        )
+    {
+        direction = {
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        direction =
+            Vector2Normalize(
+                direction
+            );
+    }
+
+    SpawnFireLoop(
+        Vector2Add(
+            playerPosition,
+            Vector2Scale(
+                direction,
+                80.0f
+            )
+        ),
+        3.0f,
+        72.0f
+    );
 }
 
 void Game::SpawnWhirlwindBlades()
@@ -24626,6 +25187,42 @@ void Game::UpdateMeleeAttack(
         playerAttackImpactPending =
             false;
 
+        Vector2 slashDirection =
+            GetPlayerFacingWorldDirection();
+
+        if (
+            Vector2Length(
+                slashDirection
+            ) <=
+            0.001f
+            )
+        {
+            slashDirection = {
+                1.0f,
+                0.0f
+            };
+        }
+        else
+        {
+            slashDirection =
+                Vector2Normalize(
+                    slashDirection
+                );
+        }
+
+        // The slash appears for every complete attack,
+        // including attacks that do not hit an enemy.
+        SpawnSlashEffect(
+            playerPosition,
+            Vector2Add(
+                playerPosition,
+                Vector2Scale(
+                    slashDirection,
+                    120.0f
+                )
+            )
+        );
+
         Enemy* impactTarget =
             FindEnemyById(
                 playerAttackTargetId
@@ -24658,7 +25255,8 @@ void Game::UpdateMeleeAttack(
             }
         }
 
-        playerAttackTargetId = 0;
+        playerAttackTargetId =
+            0;
     }
 
     // Dash movement owns the player while active.
@@ -24779,7 +25377,7 @@ void Game::DealMeleeHit(Enemy& targetEnemy)
             playerPosition
         );
 
-    SpawnSlashEffect(playerPosition, targetEnemy.pos);
+    //SpawnSlashEffect(playerPosition, targetEnemy.pos);
 
     for (Enemy& enemy : enemies)
     {
@@ -24925,25 +25523,7 @@ void Game::DealMeleeHit(Enemy& targetEnemy)
 
 }
 
-void Game::SpawnSlashEffect(Vector2 start, Vector2 end)
-{
-    if (vfxParticles.size() >= 400)
-    {
-        return;
-    }
 
-    VfxParticle p;
-    p.type = VfxType::SlashLine;
-    p.pos = start;
-    p.endPos = end;
-    p.radius = 18.0f;
-    p.life = 0.14f;
-    p.maxLife = 0.14f;
-    p.color = { 180, 230, 255, 255 };
-    p.active = true;
-
-    vfxParticles.push_back(p);
-}
 
 void Game::DrawAttackButton()
 {
@@ -29266,12 +29846,11 @@ bool Game::IsForegroundVfx(
     VfxType type
 ) const
 {
-    // Ground circles remain attached to the terrain.
-    // Everything else belongs to the post-actor VFX layer.
-    return
-        !IsGroundVfx(
-            type
-        );
+    // Only floor-attached effects remain inside
+    // the depth-tested 3D ground pass.
+    return !IsGroundVfx(
+        type
+    );
 }
 
 void Game::DrawVfxParticleVisual(
@@ -29280,6 +29859,21 @@ void Game::DrawVfxParticleVisual(
 {
     if (!particle.active)
     {
+        return;
+    }
+
+    if (
+        particle.type == VfxType::SlashSprite ||
+        particle.type == VfxType::ImpactSprite ||
+        particle.type == VfxType::SmokeSprite ||
+        particle.type == VfxType::FireLoopSprite ||
+        particle.type == VfxType::RockDebrisSprite
+        )
+    {
+        DrawSpriteVfxParticle(
+            particle
+        );
+
         return;
     }
 
@@ -29309,7 +29903,10 @@ void Game::DrawVfxParticleVisual(
             );
 
     Vector2 viewPosition =
-        WorldToViewElevated(particle.pos);
+        GetVfxDrawPosition(
+            particle.pos,
+            particle.visualHeight
+        );
 
     if (
         particle.type ==
@@ -29424,8 +30021,9 @@ void Game::DrawVfxParticleVisual(
     {
         DrawLineEx(
             viewPosition,
-            WorldToViewElevated(
-                particle.endPos
+            GetVfxDrawPosition(
+                particle.endPos,
+                particle.visualHeight
             ),
             std::max(
                 2.0f,
@@ -30900,15 +31498,15 @@ void Game::DrawWorldGroundEffects()
 
 void Game::DrawWorldForegroundEffects()
 {
-    DrawBossFallingRocks2D();
+    if (
+        rendererMode ==
+        WorldRendererMode::Legacy2D
+        )
+    {
+        DrawBossFallingRocks2D();
+    }
 
-    // --------------------------------------------------
-    // Combat VFX layer
-    //
-    // Player attack trails, hit sparks, lightning,
-    // death bursts and other non-ground effects.
-    // --------------------------------------------------
-
+    // Draw visual effects first.
     for (
         const VfxParticle& particle :
         vfxParticles
@@ -30931,12 +31529,7 @@ void Game::DrawWorldForegroundEffects()
         );
     }
 
-    // --------------------------------------------------
-    // Floating text layer
-    //
-    // Always draw damage numbers after combat VFX.
-    // --------------------------------------------------
-
+    // Draw damage numbers above every other VFX.
     for (
         const VfxParticle& particle :
         vfxParticles
@@ -38726,9 +39319,13 @@ void Game::DrawHybridVfx3D(
         return;
     }
 
-    float lifeRatio = 1.0f;
+    float lifeRatio =
+        1.0f;
 
-    if (particle.maxLife > 0.0f)
+    if (
+        particle.maxLife >
+        0.0f
+        )
     {
         lifeRatio =
             Clamp(
@@ -38739,66 +39336,69 @@ void Game::DrawHybridVfx3D(
             );
     }
 
-    Color color = particle.color;
+    Color color =
+        particle.color;
+
     color.a =
         static_cast<unsigned char>(
-            static_cast<float>(color.a) *
+            static_cast<float>(
+                color.a
+                ) *
             lifeRatio
             );
 
+    // Only actual ground-shaped effects should be handled here.
     if (
-        particle.type == VfxType::LightningLine ||
-        particle.type == VfxType::SlashLine
+        particle.type ==
+        VfxType::SkillCircle
         )
     {
-        DrawLine3D(
+        DrawCircle3D(
             WorldToHybrid3D(
                 particle.pos,
-                28.0f
+                1.0f
             ),
-            WorldToHybrid3D(
-                particle.endPos,
-                28.0f
+            PixelsToHybridUnits(
+                particle.radius
             ),
-            color
-        );
-
-        return;
-    }
-
-    if (particle.type == VfxType::FloatingDamage)
-    {
-        return;
-    }
-
-    Vector3 position =
-        WorldToHybrid3D(
-            particle.pos,
-            particle.type == VfxType::SkillCircle
-            ? 1.0f
-            : 18.0f
-        );
-
-    if (particle.type == VfxType::SkillCircle)
-    {
-        DrawCircle3D(
-            position,
-            PixelsToHybridUnits(particle.radius),
-            { 1.0f, 0.0f, 0.0f },
+            Vector3{
+                1.0f,
+                0.0f,
+                0.0f
+            },
             90.0f,
             color
         );
+
+        return;
     }
-    else
+
+    if (
+        particle.type ==
+        VfxType::Explosion
+        )
     {
-        DrawSphere(
-            position,
-            PixelsToHybridUnits(
-                std::max(2.0f, particle.radius)
+        DrawCircle3D(
+            WorldToHybrid3D(
+                particle.pos,
+                2.0f
             ),
+            PixelsToHybridUnits(
+                particle.radius
+            ),
+            Vector3{
+                1.0f,
+                0.0f,
+                0.0f
+            },
+            90.0f,
             color
         );
+
+        return;
     }
+
+    // Never draw an unknown VFX type as a sphere.
 }
 
 void Game::DrawHybridDongfeng3D()
@@ -39267,44 +39867,6 @@ void Game::DrawHybridActors3D()
     }
 
     DrawHybridDongfeng3D();
-
-    // --------------------------------------------------
-// Dedicated Hybrid combat VFX layer
-//
-// These effects are rendered after players and enemies,
-// but before foreground room decorations.
-// --------------------------------------------------
-
-    for (
-        const VfxParticle& particle :
-        vfxParticles
-        )
-    {
-        if (
-            !particle.active ||
-            IsGroundVfx(
-                particle.type
-            ) ||
-            particle.type ==
-            VfxType::FloatingDamage
-            )
-        {
-            continue;
-        }
-
-        if (
-            !IsWorldPositionInVisibleChamber(
-                particle.pos
-            )
-            )
-        {
-            continue;
-        }
-
-        DrawHybridVfx3D(
-            particle
-        );
-    }
 
     // Foreground ornaments intentionally ignore world depth. This supports
     // near-camera archways, pillars and silhouettes that frame a chamber.
@@ -40357,149 +40919,7 @@ void Game::DrawHybridScreenOverlays2D()
         }
     }
 
-    // --------------------------------------------------
-    // Damage-number overlay
-    //
-    // This is intentionally drawn after the health bars
-    // and after the 3D combat VFX.
-    // --------------------------------------------------
-
-    for (
-        const VfxParticle& particle :
-        vfxParticles
-        )
-    {
-        if (
-            !particle.active ||
-            particle.type !=
-            VfxType::FloatingDamage
-            )
-        {
-            continue;
-        }
-
-        float lifeRatio =
-            1.0f;
-
-        if (
-            particle.maxLife >
-            0.0f
-            )
-        {
-            lifeRatio =
-                Clamp(
-                    particle.life /
-                    particle.maxLife,
-                    0.0f,
-                    1.0f
-                );
-        }
-
-        const float progress =
-            1.0f -
-            lifeRatio;
-
-        Vector2 screen =
-            GetWorldToScreen(
-                WorldToHybrid3D(
-                    particle.pos,
-                    110.0f
-                ),
-                hybridCamera
-            );
-
-        screen.y -=
-            16.0f +
-            progress *
-            42.0f;
-
-        Color textColor =
-            particle.color;
-
-        textColor.a =
-            static_cast<unsigned char>(
-                static_cast<float>(
-                    particle.color.a
-                    ) *
-                lifeRatio
-                );
-
-        const char* text =
-            TextFormat(
-                "%d",
-                particle.value
-            );
-
-        constexpr int fontSize =
-            22;
-
-        const int textWidth =
-            MeasureText(
-                text,
-                fontSize
-            );
-
-        const int textX =
-            static_cast<int>(
-                screen.x -
-                static_cast<float>(
-                    textWidth
-                    ) *
-                0.5f
-                );
-
-        const int textY =
-            static_cast<int>(
-                screen.y
-                );
-
-        const Color outlineColor{
-            20,
-            8,
-            4,
-            textColor.a
-        };
-
-        DrawText(
-            text,
-            textX - 2,
-            textY,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX + 2,
-            textY,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY - 2,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY + 2,
-            fontSize,
-            outlineColor
-        );
-
-        DrawText(
-            text,
-            textX,
-            textY,
-            fontSize,
-            textColor
-        );
-    }
+    
 
     DrawSelectedObstacleScreenOutline();
 }
@@ -46097,6 +46517,10 @@ void Game::UpdateBossFallingRocks(
             impact
         );
 
+        SpawnRockImpactVfx(
+            rock.position
+        );
+
         rock.active =
             false;
     }
@@ -47777,4 +48201,535 @@ void Game::DrawSelectedObstacleScreenOutline() const
     );
 
 #endif
+}
+
+Vector2 Game::GetVfxDrawPosition(
+    Vector2 worldPosition,
+    float visualHeight
+) const
+{
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        return GetWorldToScreen(
+            WorldToHybrid3D(
+                worldPosition,
+                visualHeight
+            ),
+            hybridCamera
+        );
+    }
+
+    return WorldToViewElevated(
+        worldPosition,
+        visualHeight
+    );
+}
+void Game::SpawnRockImpactVfx(
+    Vector2 worldPosition
+)
+{
+    const int rockParticleCount =
+        rockDebrisVfxLoaded
+        ? 6
+        : 0;
+
+    const int smokeParticleCount =
+        smokeVfxLoaded
+        ? 1
+        : 0;
+
+    const int totalParticleCount =
+        rockParticleCount +
+        smokeParticleCount;
+
+    if (
+        totalParticleCount <= 0 ||
+        !CanSpawnVfx(
+            totalParticleCount
+        )
+        )
+    {
+        return;
+    }
+
+    if (smokeParticleCount > 0)
+    {
+        VfxParticle smoke;
+
+        smoke.type =
+            VfxType::SmokeSprite;
+
+        smoke.pos =
+            worldPosition;
+
+        smoke.drawSize = {
+            93.0f,
+            102.0f
+        };
+
+        smoke.visualHeight =
+            5.0f;
+
+        smoke.verticalVelocity =
+            32.0f;
+
+        smoke.anchorY =
+            1.0f;
+
+        smoke.spriteFrame =
+            0;
+
+        smoke.spriteFrameCount =
+            smokeVfxFrameCount;
+
+        smoke.spriteFrameDuration =
+            smokeVfxFrameDuration;
+
+        smoke.life =
+            static_cast<float>(
+                smokeVfxFrameCount
+                ) *
+            smokeVfxFrameDuration;
+
+        smoke.maxLife =
+            smoke.life;
+
+        smoke.color =
+            WHITE;
+
+        smoke.active =
+            true;
+
+        vfxParticles.push_back(
+            smoke
+        );
+    }
+
+    for (
+        int particleIndex = 0;
+        particleIndex < rockParticleCount;
+        ++particleIndex
+        )
+    {
+        const float angle =
+            static_cast<float>(
+                GetRandomValue(
+                    0,
+                    359
+                )
+                ) *
+            DEG2RAD;
+
+        const float horizontalSpeed =
+            static_cast<float>(
+                GetRandomValue(
+                    115,
+                    290
+                )
+                );
+
+        const float visualSize =
+            static_cast<float>(
+                GetRandomValue(
+                    22,
+                    42
+                )
+                );
+
+        VfxParticle rock;
+
+        rock.type =
+            VfxType::RockDebrisSprite;
+
+        rock.pos =
+            Vector2Add(
+                worldPosition,
+                Vector2{
+                    static_cast<float>(
+                        GetRandomValue(
+                            -16,
+                            16
+                        )
+                    ),
+
+                    static_cast<float>(
+                        GetRandomValue(
+                            -16,
+                            16
+                        )
+                    )
+                }
+            );
+
+        rock.velocity = {
+            cosf(angle) *
+                horizontalSpeed,
+
+            sinf(angle) *
+                horizontalSpeed
+        };
+
+        rock.drawSize = {
+            visualSize,
+            visualSize
+        };
+
+        rock.visualHeight =
+            static_cast<float>(
+                GetRandomValue(
+                    8,
+                    24
+                )
+                );
+
+        rock.verticalVelocity =
+            static_cast<float>(
+                GetRandomValue(
+                    160,
+                    310
+                )
+                );
+
+        rock.gravity =
+            720.0f;
+
+        rock.rotationDegrees =
+            static_cast<float>(
+                GetRandomValue(
+                    0,
+                    359
+                )
+                );
+
+        rock.spinSpeedDegrees =
+            static_cast<float>(
+                GetRandomValue(
+                    -540,
+                    540
+                )
+                );
+
+        rock.anchorY =
+            0.5f;
+
+        // rock_gray.png contains six different debris sizes.
+        // Each particle randomly selects one of them.
+        rock.spriteFrame =
+            GetRandomValue(
+                0,
+                rockDebrisVfxFrameCount - 1
+            );
+
+        rock.spriteFrameCount =
+            1;
+
+        rock.life =
+            static_cast<float>(
+                GetRandomValue(
+                    650,
+                    950
+                )
+                ) /
+            1000.0f;
+
+        rock.maxLife =
+            rock.life;
+
+        rock.color =
+            WHITE;
+
+        rock.active =
+            true;
+
+        vfxParticles.push_back(
+            rock
+        );
+    }
+}
+
+void Game::SpawnFireLoop(
+    Vector2 worldPosition,
+    float duration,
+    float visualSize
+)
+{
+    if (
+        !fireLoopVfxLoaded ||
+        fireLoopVfxSpriteSheet.id == 0 ||
+        duration <= 0.0f ||
+        !CanSpawnVfx(1)
+        )
+    {
+        return;
+    }
+
+    VfxParticle fire;
+
+    fire.type =
+        VfxType::FireLoopSprite;
+
+    fire.pos =
+        worldPosition;
+
+    fire.drawSize = {
+        visualSize,
+        visualSize
+    };
+
+    fire.visualHeight =
+        0.0f;
+
+    // Bottom of the flame stays attached to its position.
+    fire.anchorY =
+        1.0f;
+
+    fire.spriteFrame =
+        0;
+
+    fire.spriteFrameCount =
+        fireLoopVfxFrameCount;
+
+    fire.spriteFrameDuration =
+        fireLoopVfxFrameDuration;
+
+    fire.loopAnimation =
+        true;
+
+    fire.life =
+        duration;
+
+    fire.maxLife =
+        duration;
+
+    fire.color =
+        WHITE;
+
+    fire.active =
+        true;
+
+    vfxParticles.push_back(
+        fire
+    );
+}
+
+void Game::DrawSpriteVfxParticle(
+    const VfxParticle& particle
+)
+{
+    Texture2D texture{};
+
+    int sheetFrameCount =
+        1;
+
+    switch (particle.type)
+    {
+    case VfxType::SlashSprite:
+        texture =
+            slashVfxSpriteSheet;
+
+        sheetFrameCount =
+            slashVfxFrameCount;
+
+        break;
+
+    case VfxType::ImpactSprite:
+        texture =
+            impactVfxSpriteSheet;
+
+        sheetFrameCount =
+            impactVfxFrameCount;
+
+        break;
+
+    case VfxType::SmokeSprite:
+        texture =
+            smokeVfxSpriteSheet;
+
+        sheetFrameCount =
+            smokeVfxFrameCount;
+
+        break;
+
+    case VfxType::FireLoopSprite:
+        texture =
+            fireLoopVfxSpriteSheet;
+
+        sheetFrameCount =
+            fireLoopVfxFrameCount;
+
+        break;
+
+    case VfxType::RockDebrisSprite:
+        texture =
+            rockDebrisVfxSpriteSheet;
+
+        sheetFrameCount =
+            rockDebrisVfxFrameCount;
+
+        break;
+
+    default:
+        return;
+    }
+
+    if (texture.id == 0)
+    {
+        return;
+    }
+
+    const Rectangle source =
+        GetHorizontalVfxSourceRect(
+            texture,
+            sheetFrameCount,
+            particle.spriteFrame
+        );
+
+    Vector2 drawPosition =
+        GetVfxDrawPosition(
+            particle.pos,
+            particle.visualHeight
+        );
+
+    Vector2 drawSize =
+        particle.drawSize;
+
+    // Legacy mode already receives camera.zoom from BeginMode2D().
+    // Hybrid overlay sprites need an equivalent scale adjustment.
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        const float hybridScale =
+            Clamp(
+                camera.zoom /
+                1.50f,
+                0.55f,
+                1.80f
+            );
+
+        drawSize =
+            Vector2Scale(
+                drawSize,
+                hybridScale
+            );
+    }
+
+    float rotation =
+        particle.rotationDegrees;
+
+    if (
+        particle.type ==
+        VfxType::SlashSprite
+        )
+    {
+        const Vector2 directionEnd =
+            GetVfxDrawPosition(
+                particle.endPos,
+                particle.visualHeight
+            );
+
+        const Vector2 displayedDirection =
+            Vector2Subtract(
+                directionEnd,
+                drawPosition
+            );
+
+        if (
+            Vector2Length(
+                displayedDirection
+            ) >
+            0.001f
+            )
+        {
+            rotation =
+                atan2f(
+                    displayedDirection.y,
+                    displayedDirection.x
+                ) *
+                RAD2DEG +
+                slashVfxRotationOffsetDegrees;
+        }
+    }
+
+    float alphaMultiplier =
+        1.0f;
+
+    if (
+        particle.type ==
+        VfxType::SmokeSprite
+        )
+    {
+        alphaMultiplier =
+            Clamp(
+                particle.life /
+                0.14f,
+                0.0f,
+                1.0f
+            );
+    }
+    else if (
+        particle.type ==
+        VfxType::FireLoopSprite
+        )
+    {
+        alphaMultiplier =
+            Clamp(
+                particle.life /
+                0.18f,
+                0.0f,
+                1.0f
+            );
+    }
+    else if (
+        particle.type ==
+        VfxType::RockDebrisSprite
+        )
+    {
+        alphaMultiplier =
+            Clamp(
+                particle.life /
+                0.22f,
+                0.0f,
+                1.0f
+            );
+    }
+
+    Color tint =
+        particle.color;
+
+    tint.a =
+        static_cast<unsigned char>(
+            static_cast<float>(
+                tint.a
+                ) *
+            alphaMultiplier
+            );
+
+    DrawTexturePro(
+        texture,
+        source,
+        Rectangle{
+            drawPosition.x,
+            drawPosition.y,
+            drawSize.x,
+            drawSize.y
+        },
+        Vector2{
+            drawSize.x *
+                0.5f,
+
+            drawSize.y *
+                Clamp(
+                    particle.anchorY,
+                    0.0f,
+                    1.0f
+                )
+        },
+        rotation,
+        tint
+    );
 }
