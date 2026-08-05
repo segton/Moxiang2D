@@ -1839,12 +1839,48 @@ void Game::Shutdown()
     UnloadVfxSheet(
         rockDebrisVfxSpriteSheet
     );
+    UnloadVfxSheet(
+        dongfengChargeStarSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        dongfengSpiralSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        dongfengSparkSpriteSheet
+    );
+
+    if (dongfengCrescentSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            dongfengCrescentSpriteSheet
+        );
+
+        dongfengCrescentSpriteSheet = {};
+    }
+
+    dongfengCrescentLoaded =
+        false;
+
+    if (bossFallingRockSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossFallingRockSpriteSheet
+        );
+
+        bossFallingRockSpriteSheet = {};
+    }
+
+    bossFallingRockSpriteLoaded =
+        false;
 
     slashVfxLoaded = false;
     impactVfxLoaded = false;
     smokeVfxLoaded = false;
     fireLoopVfxLoaded = false;
     rockDebrisVfxLoaded = false;
+    dongfengChargeStarLoaded = false;
 
     bossPreHealSpriteLoaded =
         false;
@@ -7988,7 +8024,17 @@ void Game::Update(float dt)
         return;
     }
 #endif
+    const float realDt =
+        dt;
 
+    const float worldTimeScale =
+        dongfengCasting
+        ? dongfengCastingWorldTimeScale
+        : 1.0f;
+
+    const float worldDt =
+        realDt *
+        worldTimeScale;
     UpdateAttackButtonRect();
     UpdateDashButtonRect();
     UpdateSkillButtonRects();
@@ -8102,8 +8148,14 @@ void Game::Update(float dt)
         }
     }
 
-    UpdateCombat(dt);
-    UpdateCamera(dt);
+    UpdateCombat(
+        worldDt,
+        realDt
+    );
+
+    UpdateCamera(
+        realDt
+    );
 
 
     perfUpdateTotalMs = static_cast<float>((GetTime() - perfUpdateStartTime) * 1000.0);
@@ -8320,6 +8372,12 @@ void Game::Draw()
 
     // Full-screen Huashan flash is also unlit.
     DrawHuashanImpactFlash();
+
+    DrawDongfengSparkTrailUnlit();
+
+    DrawDongfengWaveUnlit();
+
+    //DrawDongfengWaveGlow();
 
     // --------------------------------------------------
     // PASS 4.5:
@@ -17880,82 +17938,130 @@ void Game::RestartGameplay()
     );
 }
 
-void Game::UpdateCombat(float dt)
+void Game::UpdateCombat(
+    float worldDt,
+    float realDt
+)
 {
-
     vfxSpawnedThisFrame = 0;
 
-    double combatStartTime = GetTime();
+    const double combatStartTime =
+        GetTime();
 
-    PERF_TIME_BLOCK(perfSkillsMs,
+    PERF_TIME_BLOCK(
+        perfSkillsMs,
         {
-            UpdateSkills(dt);
-        });
+            UpdateSkills(
+                worldDt
+            );
+        }
+    );
 
     PERF_TIME_BLOCK(
         perfHuashanMs,
         {
-            UpdateHuashan(dt);
-
-    // Must continue updating after huashanJumpActive becomes false.
-    //UpdateHuashanImpactAnimation(dt);
+            UpdateHuashan(
+                worldDt
+            );
         }
     );
 
-    PERF_TIME_BLOCK(perfDongfengMs,
+    PERF_TIME_BLOCK(
+        perfDongfengMs,
         {
-            UpdateDongfeng(dt);
-        });
-
-    PERF_TIME_BLOCK(perfWaveMs,
-        {
-            UpdateWave(dt);
-        });
-
-    PERF_TIME_BLOCK(perfEnemiesMs,
-        {
-            UpdateEnemies(dt);
-            UpdateBossFallingRocks(
-                dt
+            UpdateDongfeng(
+                worldDt,
+                realDt
             );
-        });
+        }
+    );
 
-    PERF_TIME_BLOCK(perfMeleeMs,
+    PERF_TIME_BLOCK(
+        perfWaveMs,
         {
-            UpdateMeleeAttack(dt);
-        });
+            UpdateWave(
+                worldDt
+            );
+        }
+    );
 
-    PERF_TIME_BLOCK(perfBladesMs,
+    PERF_TIME_BLOCK(
+        perfEnemiesMs,
         {
-            UpdateOrbitalBlades(dt);
-        });
+            UpdateEnemies(
+                worldDt
+            );
 
-    PERF_TIME_BLOCK(perfProjectilesMs,
+            UpdateBossFallingRocks(
+                worldDt
+            );
+        }
+    );
+
+    PERF_TIME_BLOCK(
+        perfMeleeMs,
         {
-            UpdateProjectiles(dt);
-        });
+            UpdateMeleeAttack(
+                worldDt
+            );
+        }
+    );
 
-    PERF_TIME_BLOCK(perfCollisionMs,
+    PERF_TIME_BLOCK(
+        perfBladesMs,
+        {
+            UpdateOrbitalBlades(
+                worldDt
+            );
+        }
+    );
+
+    PERF_TIME_BLOCK(
+        perfProjectilesMs,
+        {
+            UpdateProjectiles(
+                worldDt
+            );
+        }
+    );
+
+    PERF_TIME_BLOCK(
+        perfCollisionMs,
         {
             CheckProjectileEnemyCollisions();
-        });
+        }
+    );
 
-    PERF_TIME_BLOCK(perfVfxMs,
+    PERF_TIME_BLOCK(
+        perfVfxMs,
         {
-            UpdateVfx(dt);
-        });
+            UpdateVfx(
+                worldDt
+            );
+        }
+    );
 
-    PERF_TIME_BLOCK(perfCleanupMs,
+    PERF_TIME_BLOCK(
+        perfCleanupMs,
         {
             CleanupCombatObjects();
-        });
+        }
+    );
 
-    perfCombatMs = static_cast<float>((GetTime() - combatStartTime) * 1000.0);
+    perfCombatMs =
+        static_cast<float>(
+            (
+                GetTime() -
+                combatStartTime
+                ) *
+            1000.0
+            );
 
     if (player.hp <= 0)
     {
         player.hp = 0;
-        gameState = GameState::GameOver;
+        gameState =
+            GameState::GameOver;
     }
 }
 
@@ -20004,7 +20110,8 @@ void Game::SpawnEnemyProjectile(
     int damage,
     float speed,
     float radius,
-    float visualHeight
+    float visualHeight,
+    ProjectileVisualType visualType
 )
 {
     if (projectiles.size() >= 240)
@@ -20045,10 +20152,50 @@ void Game::SpawnEnemyProjectile(
     projectile.life = 3.2f;
     projectile.active = true;
 
+    projectile.visualType =
+        visualType;
+
+    projectile.visualFrame =
+        GetRandomValue(
+            0,
+            std::max(
+                0,
+                fireLoopVfxFrameCount -
+                1
+            )
+        );
+
+    projectile.visualFrameTimer =
+        0.0f;
+
+    projectile.visualFrameDuration =
+        std::max(
+            0.01f,
+            fireLoopVfxFrameDuration
+        );
+
+    projectile.visualSize =
+        visualType ==
+        ProjectileVisualType::FireLoop
+        ? std::max(
+            44.0f,
+            radius *
+            5.0f
+        )
+        : radius *
+        2.0f;
+
     projectiles.push_back(projectile);
 }
 
-void Game::SpawnRadialEnemyProjectiles(Vector2 center, int count, int damage, float speed, float radius)
+void Game::SpawnRadialEnemyProjectiles(
+    Vector2 center,
+    int count,
+    int damage,
+    float speed,
+    float radius,
+    ProjectileVisualType visualType
+)
 {
     if (count <= 0)
     {
@@ -20064,7 +20211,15 @@ void Game::SpawnRadialEnemyProjectiles(Vector2 center, int count, int damage, fl
             center.y + sinf(angle) * 100.0f
         };
 
-        SpawnEnemyProjectile(center, target, damage, speed, radius);
+        SpawnEnemyProjectile(
+            center,
+            target,
+            damage,
+            speed,
+            radius,
+            28.0f,
+            visualType
+        );
     }
 }
 
@@ -20279,6 +20434,34 @@ void Game::UpdateProjectiles(float dt)
             projectile.active =
                 false;
         }
+
+        if (
+            projectile.visualType ==
+            ProjectileVisualType::FireLoop &&
+            fireLoopVfxFrameCount >
+            0
+            )
+        {
+            projectile.visualFrameTimer +=
+                dt;
+
+            while (
+                projectile.visualFrameTimer >=
+                projectile.visualFrameDuration
+                )
+            {
+                projectile.visualFrameTimer -=
+                    projectile.visualFrameDuration;
+
+                projectile.visualFrame =
+                    (
+                        projectile.visualFrame +
+                        1
+                        ) %
+                    fireLoopVfxFrameCount;
+            }
+        }
+
     }
 }
 
@@ -20509,11 +20692,10 @@ void Game::SpawnSlashEffect(
                 start,
                 Vector2Scale(
                     direction,
-                    62.0f
+                    70.0f
                 )
             );
 
-        // Used to calculate the displayed rotation.
         particle.endPos =
             Vector2Add(
                 particle.pos,
@@ -20524,12 +20706,15 @@ void Game::SpawnSlashEffect(
             );
 
         particle.drawSize = {
-            170.0f,
-            170.0f
+            165.0f,
+            237.0f
         };
 
+        particle.endDrawSize =
+            particle.drawSize;
+
         particle.visualHeight =
-            72.0f;
+            78.0f;
 
         particle.anchorY =
             0.5f;
@@ -20540,11 +20725,51 @@ void Game::SpawnSlashEffect(
         particle.spriteFrameCount =
             slashVfxFrameCount;
 
+        particle.spriteFrameOffset =
+            0;
+
         particle.spriteFrameTimer =
             0.0f;
 
         particle.spriteFrameDuration =
             slashVfxFrameDuration;
+
+        particle.flipX =
+            false;
+
+        particle.flipY =
+            false;
+
+        switch (playerDirection)
+        {
+        case PlayerDirection::UpRight:
+        case PlayerDirection::Right:
+            // These two directions need the slash motion
+            // mirrored horizontally.
+
+            particle.flipY =
+                true;
+            break;
+
+        case PlayerDirection::DownRight:
+        case PlayerDirection::Down:
+  
+            // Southern directions use the vertically
+            // mirrored slash.
+            particle.flipY =
+                true;
+
+            break;
+
+        case PlayerDirection::Up:
+        case PlayerDirection::UpLeft:
+        case PlayerDirection::Left:
+        case PlayerDirection::DownLeft:
+        default:
+            // Rotation alone already produces the
+            // correct slash orientation.
+            break;
+        }
 
         particle.life =
             static_cast<float>(
@@ -20658,9 +20883,17 @@ Rectangle Game::GetHorizontalVfxSourceRect(
 }
 
 void Game::SpawnHitSpark(
-    Vector2 pos
+    Vector2 pos,
+    float visualScale,
+    float visualHeight
 )
 {
+    visualScale =
+        std::max(
+            0.10f,
+            visualScale
+        );
+
     if (
         impactVfxLoaded &&
         impactVfxSpriteSheet.id != 0
@@ -20680,12 +20913,15 @@ void Game::SpawnHitSpark(
             pos;
 
         particle.drawSize = {
-            136.0f,
-            118.0f
+            136.0f * visualScale,
+            118.0f * visualScale
         };
 
+        particle.endDrawSize =
+            particle.drawSize;
+
         particle.visualHeight =
-            68.0f;
+            visualHeight;
 
         particle.anchorY =
             0.5f;
@@ -20695,6 +20931,9 @@ void Game::SpawnHitSpark(
 
         particle.spriteFrameCount =
             impactVfxFrameCount;
+
+        particle.spriteFrameOffset =
+            0;
 
         particle.spriteFrameTimer =
             0.0f;
@@ -20724,7 +20963,6 @@ void Game::SpawnHitSpark(
         return;
     }
 
-    // Small 2D fallback if the texture cannot load.
     if (!CanSpawnVfx(1))
     {
         return;
@@ -20739,7 +20977,7 @@ void Game::SpawnHitSpark(
         pos;
 
     particle.radius =
-        9.0f;
+        9.0f * visualScale;
 
     particle.life =
         0.14f;
@@ -20873,6 +21111,13 @@ void Game::UpdateVfx(
         {
             continue;
         }
+
+        if (particle.followPlayer)
+        {
+            particle.pos =
+                playerPosition;
+        }
+
 
         particle.life -=
             dt;
@@ -21086,6 +21331,89 @@ void Game::LoadCombatVfxSpriteSheets()
         rockDebrisVfxSpriteSheet,
         rockDebrisVfxLoaded
     );
+    LoadSheet(
+        "Assets/vfx/spark_big.png",
+        dongfengChargeStarSpriteSheet,
+        dongfengChargeStarLoaded
+    );
+
+    bossFallingRockSpriteSheet =
+        LoadTexture(
+            "Assets/vfx/boss_falling_rocks.png"
+        );
+
+    bossFallingRockSpriteLoaded =
+        bossFallingRockSpriteSheet.id !=
+        0;
+
+    if (bossFallingRockSpriteLoaded)
+    {
+        SetTextureFilter(
+            bossFallingRockSpriteSheet,
+            TEXTURE_FILTER_BILINEAR
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[BOSS ROCK VFX] Loaded: %dx%d | variations=%d",
+            bossFallingRockSpriteSheet.width,
+            bossFallingRockSpriteSheet.height,
+            bossFallingRockVariationCount
+        );
+    }
+    else
+    {
+        TraceLog(
+            LOG_WARNING,
+            "[BOSS ROCK VFX] Failed to load "
+            "Assets/vfx/boss_falling_rocks.png"
+        );
+    }
+    dongfengCrescentSpriteSheet =
+        LoadTexture(
+            "Assets/vfx/dongfeng_crescent_sheet.png"
+        );
+
+    dongfengCrescentLoaded =
+        dongfengCrescentSpriteSheet.id !=
+        0;
+
+    if (dongfengCrescentLoaded)
+    {
+        SetTextureFilter(
+            dongfengCrescentSpriteSheet,
+            TEXTURE_FILTER_BILINEAR
+        );
+
+        TraceLog(
+            LOG_INFO,
+            "[DONGFENG CRESCENT] Loaded: %dx%d",
+            dongfengCrescentSpriteSheet.width,
+            dongfengCrescentSpriteSheet.height
+        );
+    }
+    else
+    {
+        TraceLog(
+            LOG_WARNING,
+            "[DONGFENG CRESCENT] Failed to load "
+            "Assets/vfx/dongfeng_crescent_sheet.png"
+        );
+    }
+
+    LoadSheet(
+        "Assets/vfx/spiral_03.png",
+        dongfengSpiralSpriteSheet,
+        dongfengSpiralLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/spark_03.png",
+        dongfengSparkSpriteSheet,
+        dongfengSparkLoaded
+    );
+
+
 }
 
 void Game::UpdateSkillButtonRects()
@@ -21574,12 +21902,8 @@ void Game::ActivateDongfeng()
     // Lv1 = 0.50s
     // Each level reduces cast by 0.025s
     // Minimum = 0.22s
-    dongfengCastDuration = 0.50f - static_cast<float>(level - 1) * 0.1f;
-
-    if (dongfengCastDuration < 0.18f)
-    {
-        dongfengCastDuration = 0.18f;
-    }
+    dongfengCastDuration =
+        dongfengFixedCastDuration;
 
     dongfengLockedTargetId =
         target != nullptr
@@ -21631,17 +21955,28 @@ void Game::ActivateDongfeng()
     hasPath = false;
     pendingNpc = -1;
 
-    SpawnHitSpark(playerPosition);
-
+    SpawnDongfengChargeStar(
+        dongfengCastDuration
+    );
+    /*
     VfxParticle castCircle;
-    castCircle.type = VfxType::SkillCircle;
-    castCircle.pos = playerPosition;
-    castCircle.radius = dongfengStartRadius + 18.0f;
-    castCircle.life = dongfengCastDuration;
-    castCircle.maxLife = dongfengCastDuration;
-    castCircle.color = { 255, 220, 40, 135 };
-    castCircle.active = true;
-    vfxParticles.push_back(castCircle);
+castCircle.type = VfxType::SkillCircle;
+castCircle.pos = playerPosition;
+castCircle.radius = dongfengStartRadius + 18.0f;
+castCircle.life = dongfengCastDuration;
+castCircle.maxLife = dongfengCastDuration;
+castCircle.color = { 255, 220, 40, 135 };
+castCircle.active = true;
+vfxParticles.push_back(castCircle);
+    */
+  
+    dongfengSpiralFrame = 0;
+
+    dongfengSparkTrail.clear();
+
+    dongfengSparkNextDistance =
+        0.0f;
+
 }
 
 float Game::GetDongfengWaveRadius() const
@@ -21666,19 +22001,44 @@ float Game::GetDongfengWaveRadius() const
     return dongfengStartRadius + (dongfengEndRadius - dongfengStartRadius) * t;
 }
 
-void Game::UpdateDongfeng(float dt)
+void Game::UpdateDongfeng(
+    float worldDt,
+    float realDt
+)
 {
     if (dongfengCasting)
     {
-        dongfengCastTimer += dt;
+        dongfengCastTimer +=
+            realDt;
 
-        if (dongfengCastTimer >= dongfengCastDuration)
+        if (
+            dongfengCastTimer >
+            dongfengCastDuration
+            )
         {
-            dongfengCasting = false;
-            dongfengCastTimer = 0.0f;
-
-            LaunchDongfengWave();
+            dongfengCastTimer =
+                dongfengCastDuration;
         }
+    }
+
+    // Spiral and preview sparkles always use real time.
+    UpdateDongfengCastVfx(
+        realDt
+    );
+
+    if (
+        dongfengCasting &&
+        dongfengCastTimer >=
+        dongfengCastDuration
+        )
+    {
+        dongfengCasting =
+            false;
+
+        dongfengCastTimer =
+            0.0f;
+
+        LaunchDongfengWave();
     }
 
     if (!dongfengWaveActive)
@@ -21686,23 +22046,39 @@ void Game::UpdateDongfeng(float dt)
         return;
     }
 
-    dongfengWavePrevPos = dongfengWavePos;
+    dongfengWavePrevPos =
+        dongfengWavePos;
 
-    float step = dongfengWaveSpeed * dt;
+    // The released crescent still uses world time.
+    float step =
+        dongfengWaveSpeed *
+        worldDt;
 
-    if (dongfengWaveTravelled + step > dongfengRange)
+    if (
+        dongfengWaveTravelled +
+        step >
+        dongfengRange
+        )
     {
-        step = dongfengRange - dongfengWaveTravelled;
+        step =
+            dongfengRange -
+            dongfengWaveTravelled;
     }
 
-    dongfengWaveTravelled += step;
+    dongfengWaveTravelled +=
+        step;
 
-    dongfengWavePos = Vector2Add(
-        dongfengWavePos,
-        Vector2Scale(dongfengWaveDirection, step)
-    );
+    dongfengWavePos =
+        Vector2Add(
+            dongfengWavePos,
+            Vector2Scale(
+                dongfengWaveDirection,
+                step
+            )
+        );
 
-    float radius = GetDongfengWaveRadius();
+    const float radius =
+        GetDongfengWaveRadius();
 
     DestroyEnemyProjectilesInDongfengPath(
         dongfengWavePrevPos,
@@ -21716,12 +22092,20 @@ void Game::UpdateDongfeng(float dt)
         radius
     );
 
-    if (dongfengWaveTravelled >= dongfengRange)
+    if (
+        dongfengWaveTravelled >=
+        dongfengRange
+        )
     {
-        dongfengWaveActive = false;
-        dongfengLockedTargetId = 0;
+        dongfengWaveActive =
+            false;
 
-        SpawnHitSpark(dongfengWavePos);
+        dongfengLockedTargetId =
+            0;
+
+        SpawnHitSpark(
+            dongfengWavePos
+        );
     }
 }
 
@@ -21736,9 +22120,89 @@ void Game::LaunchDongfengWave()
     dongfengWaveDirection = dongfengCastDirection;
     dongfengWaveTravelled = 0.0f;
 
+    // Lock the projectile's visual direction at launch.
+// Both projected points deliberately use the same fixed height,
+// so nearby elevated terrain cannot alter the result.
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
+    {
+        const Vector2 flatDirectionEnd =
+            Vector2Add(
+                dongfengWaveStart,
+                Vector2Scale(
+                    dongfengWaveDirection,
+                    100.0f
+                )
+            );
+
+        const float fixedHeight =
+            PixelsToHybridUnits(
+                dongfengCrescentVisualHeight
+            );
+
+        const Vector3 flatStart3D{
+            PixelsToHybridUnits(
+                dongfengWaveStart.x
+            ),
+            fixedHeight,
+            PixelsToHybridUnits(
+                dongfengWaveStart.y
+            )
+        };
+
+        const Vector3 flatEnd3D{
+            PixelsToHybridUnits(
+                flatDirectionEnd.x
+            ),
+            fixedHeight,
+            PixelsToHybridUnits(
+                flatDirectionEnd.y
+            )
+        };
+
+        Vector2 lockedScreenDirection =
+            Vector2Subtract(
+                GetWorldToScreen(
+                    flatEnd3D,
+                    hybridCamera
+                ),
+                GetWorldToScreen(
+                    flatStart3D,
+                    hybridCamera
+                )
+            );
+
+        if (
+            Vector2Length(
+                lockedScreenDirection
+            ) <= 0.001f
+            )
+        {
+            lockedScreenDirection = {
+                1.0f,
+                0.0f
+            };
+        }
+
+        dongfengLockedDirectionIndex =
+            GetDongfengCrescentDirectionIndex(
+                lockedScreenDirection
+            );
+    }
+    else
+    {
+        dongfengLockedDirectionIndex =
+            GetDongfengCrescentDirectionIndex(
+                dongfengWaveDirection
+            );
+    }
+
     SpawnHitSpark(dongfengWaveStart);
 
-    VfxParticle launchLine;
+    /*
+        VfxParticle launchLine;
     launchLine.type = VfxType::SlashLine;
     launchLine.pos = dongfengWaveStart;
     launchLine.endPos = Vector2Add(
@@ -21751,6 +22215,104 @@ void Game::LaunchDongfengWave()
     launchLine.color = { 255, 220, 40, 235 };
     launchLine.active = true;
     vfxParticles.push_back(launchLine);
+    */
+
+}
+
+void Game::DrawDongfengCastGround2D()
+{
+    if (
+        !dongfengCasting ||
+        !dongfengSpiralLoaded ||
+        dongfengSpiralSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
+
+    const Rectangle source =
+        GetHorizontalVfxSourceRect(
+            dongfengSpiralSpriteSheet,
+            dongfengSpiralFrameCount,
+            dongfengSpiralFrame
+        );
+
+    const float halfSize =
+        dongfengSpiralVisualSize *
+        0.5f;
+
+    const Vector2 northWestWorld{
+        playerPosition.x - halfSize,
+        playerPosition.y - halfSize
+    };
+
+    const Vector2 northEastWorld{
+        playerPosition.x + halfSize,
+        playerPosition.y - halfSize
+    };
+
+    const Vector2 southEastWorld{
+        playerPosition.x + halfSize,
+        playerPosition.y + halfSize
+    };
+
+    const Vector2 southWestWorld{
+        playerPosition.x - halfSize,
+        playerPosition.y + halfSize
+    };
+
+    BeginBlendMode(
+        BLEND_ALPHA
+    );
+
+    DrawTextureFrameOnQuad2D(
+        dongfengSpiralSpriteSheet,
+        source,
+        WorldToViewElevated(
+            northWestWorld,
+            2.5f
+        ),
+        WorldToViewElevated(
+            northEastWorld,
+            2.5f
+        ),
+        WorldToViewElevated(
+            southEastWorld,
+            2.5f
+        ),
+        WorldToViewElevated(
+            southWestWorld,
+            2.5f
+        ),
+        WHITE
+    );
+
+    EndBlendMode();
+}
+
+void Game::DrawDongfengCastGround3D()
+{
+    if (
+        !dongfengCasting ||
+        !dongfengSpiralLoaded ||
+        dongfengSpiralSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
+
+    DrawHybridGroundTextureFrame(
+        dongfengSpiralSpriteSheet,
+        GetHorizontalVfxSourceRect(
+            dongfengSpiralSpriteSheet,
+            dongfengSpiralFrameCount,
+            dongfengSpiralFrame
+        ),
+        playerPosition,
+        dongfengSpiralVisualSize,
+        6.0f,
+        WHITE
+    );
 }
 
 void Game::DestroyEnemyProjectilesInDongfengPath(
@@ -21837,65 +22399,78 @@ void Game::DrawDongfengWave()
         return;
     }
 
-    float radius = GetDongfengWaveRadius();
-    Vector2 viewPosition = WorldToViewElevated(dongfengWavePos);
-    Vector2 viewDirection = WorldVectorToView(dongfengWaveDirection);
-
-    if (Vector2Length(viewDirection) > 0.001f)
+    // If the sheet is not loaded, keep your old fallback.
+    if (
+        !dongfengCrescentLoaded ||
+        dongfengCrescentSpriteSheet.id == 0
+        )
     {
-        viewDirection = Vector2Normalize(viewDirection);
-    }
-    else
-    {
-        viewDirection = { 1.0f, 0.0f };
+        // Optional fallback:
+        // keep your previous DrawRing / DrawLineEx version here.
+        return;
     }
 
-    float angleDeg = atan2f(viewDirection.y, viewDirection.x) * RAD2DEG;
+    const int directionIndex =
+        dongfengLockedDirectionIndex;
 
-    float progress = 0.0f;
+    const Rectangle source =
+        GetDongfengCrescentSourceRect(
+            directionIndex
+        );
 
-    if (dongfengRange > 0.0f)
+    const float radius =
+        std::max(
+            1.0f,
+            GetDongfengWaveRadius()
+        );
+
+    // Scale the crescent according to the effective wave area.
+    const float drawSize =
+        radius *
+        dongfengCrescentSizeMultiplier;
+
+    if (
+        rendererMode ==
+        WorldRendererMode::Hybrid3D
+        )
     {
-        progress = dongfengWaveTravelled / dongfengRange;
+        DrawHybridBillboardFrame(
+            dongfengCrescentSpriteSheet,
+            source,
+            dongfengWavePos,
+            drawSize,
+            drawSize,
+            0.5f,
+            dongfengCrescentVisualHeight,
+            WHITE,
+            HybridBillboardOrientation::FaceCamera,
+            0.0f
+        );
+
+        return;
     }
 
-    progress = Clamp(progress, 0.0f, 1.0f);
+    const Vector2 screenPosition =
+        WorldToViewElevated(
+            dongfengWavePos,
+            dongfengCrescentVisualHeight
+        );
 
-    unsigned char alpha = static_cast<unsigned char>(215 + 30 * progress);
-
-    Color outerColor{ 255, 205, 35, alpha };
-    Color innerColor{ 255, 255, 220, 235 };
-
-    DrawRing(
-        viewPosition,
-        radius * 0.62f,
-        radius,
-        angleDeg - 70.0f,
-        angleDeg + 70.0f,
-        18,
-        outerColor
-    );
-
-    DrawRing(
-        viewPosition,
-        radius * 0.82f,
-        radius * 0.94f,
-        angleDeg - 48.0f,
-        angleDeg + 48.0f,
-        12,
-        innerColor
-    );
-
-    Vector2 tail = Vector2Subtract(
-        viewPosition,
-        Vector2Scale(viewDirection, radius * 1.10f)
-    );
-
-    DrawLineEx(
-        tail,
-        viewPosition,
-        radius * 0.14f,
-        Color{ 255, 210, 45, 115 }
+    DrawTexturePro(
+        dongfengCrescentSpriteSheet,
+        source,
+        Rectangle{
+            screenPosition.x,
+            screenPosition.y,
+            drawSize,
+            drawSize
+        },
+        Vector2{
+            drawSize * 0.5f,
+            drawSize * 0.5f
+        },
+        0.0f,
+        WHITE
     );
 }
 void Game::ResolveDongfengWaveHits(
@@ -22309,7 +22884,7 @@ void Game::DrawCombat()
 
     PERF_DRAW_BLOCK(perfDrawCombatDongfengTelegraphMs,
         {
-            DrawDongfengTelegraph();
+            //DrawDongfengTelegraph();
         });
 
     PERF_DRAW_BLOCK(perfDrawCombatDongfengWaveMs,
@@ -26543,8 +27118,18 @@ void Game::ApplyDamageToEnemy(
     enemy.damageFlashTimer =
         damageFlashDuration;
 
+    const bool hitBoss =
+        enemy.type ==
+        EnemyType::Boss;
+
     SpawnHitSpark(
-        hitPos
+        hitPos,
+        hitBoss
+        ? 1.75f
+        : 1.0f,
+        hitBoss
+        ? 155.0f
+        : 68.0f
     );
 
     SpawnDamageNumber(
@@ -27314,10 +27899,12 @@ void Game::ExecuteBossDash(
     SpawnRadialEnemyProjectiles(
         enemy.pos,
         28,
-        enemy.bulletDamage * 2,
+        enemy.bulletDamage *
+        2,
         340.0f *
         dashPowerMultiplier,
-        11.0f
+        11.0f,
+        ProjectileVisualType::FireLoop
     );
 }
 
@@ -29867,7 +30454,8 @@ void Game::DrawVfxParticleVisual(
         particle.type == VfxType::ImpactSprite ||
         particle.type == VfxType::SmokeSprite ||
         particle.type == VfxType::FireLoopSprite ||
-        particle.type == VfxType::RockDebrisSprite
+        particle.type == VfxType::RockDebrisSprite ||
+        particle.type == VfxType::DongfengChargeStarSprite
         )
     {
         DrawSpriteVfxParticle(
@@ -31474,8 +32062,10 @@ void Game::DrawWorldGroundEffects()
     }
 
     // Dongfeng aiming line
-    DrawDongfengTelegraph();
+    //DrawDongfengTelegraph();
 
+
+    DrawDongfengCastGround2D();
     // Ground-based VFX
     for (
         const VfxParticle& particle :
@@ -31918,6 +32508,8 @@ void Game::DrawLightMap()
             );
         }
     }
+
+    DrawDongfengShapeLights();
 
     EndBlendMode();
 
@@ -37005,6 +37597,10 @@ void Game::DrawHybridGroundEffects3D()
         }
     );
 
+    // Dongfeng casting animation lies on the terrain
+// underneath the player and other actors.
+    DrawDongfengCastGround3D();
+
     // --------------------------------------------------
     // Enemy shadows
     //
@@ -37345,7 +37941,8 @@ void Game::DrawHybridGroundEffects3D()
         );
     }
 
-    if (dongfengCasting)
+    /*
+        if (dongfengCasting)
     {
         Vector2 end =
             Vector2Add(
@@ -37373,6 +37970,8 @@ void Game::DrawHybridGroundEffects3D()
             }
         );
     }
+    */
+
 
     for (const VfxParticle& particle : vfxParticles)
     {
@@ -38375,7 +38974,7 @@ void Game::DrawHybridPlayer3D()
                 255,
                 255
             },
-            HybridBillboardOrientation::FaceCamera,
+            HybridBillboardOrientation::UprightWorld,
             playerWhiteFlash
         );
     }
@@ -39250,7 +39849,35 @@ void Game::DrawHybridProjectile3D(
         return;
     }
 
-    Vector3 position{
+    if (
+        projectile.visualType ==
+        ProjectileVisualType::FireLoop &&
+        fireLoopVfxLoaded &&
+        fireLoopVfxSpriteSheet.id !=
+        0
+        )
+    {
+        DrawHybridBillboardFrame(
+            fireLoopVfxSpriteSheet,
+            GetHorizontalVfxSourceRect(
+                fireLoopVfxSpriteSheet,
+                fireLoopVfxFrameCount,
+                projectile.visualFrame
+            ),
+            projectile.pos,
+            projectile.visualSize,
+            projectile.visualSize,
+            0.5f,
+            projectile.visualHeight,
+            WHITE,
+            HybridBillboardOrientation::FaceCamera,
+            0.0f
+        );
+
+        return;
+    }
+
+    const Vector3 position{
         projectile.pos.x *
             hybridUnitsPerPixel,
 
@@ -39270,9 +39897,17 @@ void Game::DrawHybridProjectile3D(
 
     DrawSphere(
         position,
-        PixelsToHybridUnits(projectile.radius),
-        projectile.owner == ProjectileOwner::Enemy
-        ? Color{ 255, 80, 60, 255 }
+        PixelsToHybridUnits(
+            projectile.radius
+        ),
+        projectile.owner ==
+        ProjectileOwner::Enemy
+        ? Color{
+            255,
+            80,
+            60,
+            255
+        }
         : YELLOW
     );
 }
@@ -39408,24 +40043,84 @@ void Game::DrawHybridDongfeng3D()
         return;
     }
 
-    const float radius =
-        GetDongfengWaveRadius();
+    if (
+        !dongfengCrescentLoaded ||
+        dongfengCrescentSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
 
-    Vector3 position =
-        WorldToHybrid3D(
-            dongfengWavePos,
-            20.0f
+    // The sheet directions are screen-facing directions,
+    // so convert the world movement direction into view space.
+    Vector2 displayedDirection =
+        WorldVectorToView(
+            dongfengWaveDirection
         );
 
-    DrawSphereWires(
-        position,
-        PixelsToHybridUnits(radius * 0.22f),
-        10,
-        10,
-        Color{ 140, 220, 255, 220 }
-    );
-}
+    if (
+        Vector2Length(
+            displayedDirection
+        ) <= 0.001f
+        )
+    {
+        displayedDirection = {
+            1.0f,
+            0.0f
+        };
+    }
+    else
+    {
+        displayedDirection =
+            Vector2Normalize(
+                displayedDirection
+            );
+    }
 
+    const int directionIndex =
+        GetDongfengCrescentDirectionIndex(
+            displayedDirection
+        );
+
+    const Rectangle source =
+        GetDongfengCrescentSourceRect(
+            directionIndex
+        );
+
+    const float radius =
+        std::max(
+            1.0f,
+            GetDongfengWaveRadius()
+        );
+
+    const float drawSize =
+        radius *
+        dongfengCrescentSizeMultiplier;
+
+    // Keep depth testing so terrain, walls and actors
+    // can correctly cover the crescent.
+    //
+    // Disable depth writing because the transparent
+    // parts of the PNG should not block later objects.
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+
+    DrawHybridBillboardFrame(
+        dongfengCrescentSpriteSheet,
+        source,
+        dongfengWavePos,
+        drawSize,
+        drawSize,
+        0.5f,
+        dongfengCrescentVisualHeight,
+        WHITE,
+        HybridBillboardOrientation::FaceCamera,
+        0.0f
+    );
+
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+}
 
 
 void Game::DrawHybridGroundDecals3D()
@@ -39834,6 +40529,8 @@ void Game::DrawHybridActors3D()
             EndShaderMode();
         }
 
+        DrawDongfengCastGround3D();
+
         EndBlendMode();
 
         rlEnableDepthMask();
@@ -39866,7 +40563,7 @@ void Game::DrawHybridActors3D()
         );
     }
 
-    DrawHybridDongfeng3D();
+    //DrawHybridDongfeng3D();
 
     // Foreground ornaments intentionally ignore world depth. This supports
     // near-camera archways, pillars and silhouettes that frame a chamber.
@@ -46358,6 +47055,16 @@ void Game::SpawnBossFallingRock(
 
     BossFallingRock rock;
 
+    rock.spriteVariation =
+        GetRandomValue(
+            0,
+            std::max(
+                0,
+                bossFallingRockVariationCount -
+                1
+            )
+        );
+
     rock.ownerBossId =
         enemy.id;
 
@@ -46518,7 +47225,8 @@ void Game::UpdateBossFallingRocks(
         );
 
         SpawnRockImpactVfx(
-            rock.position
+            rock.position,
+            rock.visualRadius
         );
 
         rock.active =
@@ -46828,20 +47536,51 @@ void Game::DrawBossFallingRocksHybrid3D() const
                 1.0f
             );
 
-        // Accelerating fall.
         const float curvedHeightRatio =
             heightRatio *
             heightRatio;
 
-        const float height =
+        const float visualSize =
+            rock.visualRadius *
+            2.35f;
+
+        // Keep the bottom of the sprite at the same
+        // position where the old sphere bottom was.
+        const float centerHeight =
             rock.startHeight *
             curvedHeightRatio +
-            rock.visualRadius;
+            visualSize *
+            0.5f;
 
+        if (
+            bossFallingRockSpriteLoaded &&
+            bossFallingRockSpriteSheet.id !=
+            0
+            )
+        {
+            DrawHybridBillboardFrame(
+                bossFallingRockSpriteSheet,
+                GetBossFallingRockSourceRect(
+                    rock.spriteVariation
+                ),
+                rock.position,
+                visualSize,
+                visualSize,
+                0.5f,
+                centerHeight,
+                WHITE,
+                HybridBillboardOrientation::FaceCamera,
+                0.0f
+            );
+
+            continue;
+        }
+
+        // Fallback when the image is missing.
         const Vector3 rockPosition =
             WorldToHybrid3D(
                 rock.position,
-                height
+                centerHeight
             );
 
         DrawSphere(
@@ -46853,39 +47592,6 @@ void Game::DrawBossFallingRocksHybrid3D() const
                 95,
                 82,
                 70,
-                255
-            }
-        );
-
-        // Smaller offset sphere makes the rock less perfectly round.
-        DrawSphere(
-            Vector3{
-                rockPosition.x +
-                    PixelsToHybridUnits(
-                        rock.visualRadius *
-                        0.28f
-                    ),
-
-                rockPosition.y +
-                    PixelsToHybridUnits(
-                        rock.visualRadius *
-                        0.14f
-                    ),
-
-                rockPosition.z -
-                    PixelsToHybridUnits(
-                        rock.visualRadius *
-                        0.18f
-                    )
-            },
-            PixelsToHybridUnits(
-                rock.visualRadius *
-                0.62f
-            ),
-            Color{
-                72,
-                62,
-                54,
                 255
             }
         );
@@ -46915,16 +47621,56 @@ void Game::DrawBossFallingRocks2D() const
                 1.0f
             );
 
-        const float height =
-            rock.startHeight *
+        const float curvedHeightRatio =
             heightRatio *
             heightRatio;
+
+        const float visualSize =
+            rock.visualRadius *
+            2.35f;
+
+        const float centerHeight =
+            rock.startHeight *
+            curvedHeightRatio +
+            visualSize *
+            0.5f;
 
         const Vector2 drawPosition =
             WorldToViewElevated(
                 rock.position,
-                height
+                centerHeight
             );
+
+        if (
+            bossFallingRockSpriteLoaded &&
+            bossFallingRockSpriteSheet.id !=
+            0
+            )
+        {
+            DrawTexturePro(
+                bossFallingRockSpriteSheet,
+                GetBossFallingRockSourceRect(
+                    rock.spriteVariation
+                ),
+                Rectangle{
+                    drawPosition.x,
+                    drawPosition.y,
+                    visualSize,
+                    visualSize
+                },
+                Vector2{
+                    visualSize *
+                    0.5f,
+
+                    visualSize *
+                    0.5f
+                },
+                0.0f,
+                WHITE
+            );
+
+            continue;
+        }
 
         DrawCircleV(
             drawPosition,
@@ -46933,27 +47679,6 @@ void Game::DrawBossFallingRocks2D() const
                 95,
                 82,
                 70,
-                255
-            }
-        );
-
-        DrawCircleV(
-            Vector2Add(
-                drawPosition,
-                {
-                    rock.visualRadius *
-                        0.25f,
-
-                    -rock.visualRadius *
-                        0.18f
-                }
-            ),
-            rock.visualRadius *
-            0.55f,
-            Color{
-                70,
-                60,
-                52,
                 255
             }
         );
@@ -48228,7 +48953,8 @@ Vector2 Game::GetVfxDrawPosition(
     );
 }
 void Game::SpawnRockImpactVfx(
-    Vector2 worldPosition
+    Vector2 worldPosition,
+    float rockVisualRadius
 )
 {
     const int rockParticleCount =
@@ -48254,9 +48980,25 @@ void Game::SpawnRockImpactVfx(
     {
         return;
     }
-
+    rockVisualRadius =
+        std::max(
+            1.0f,
+            rockVisualRadius
+        );
     if (smokeParticleCount > 0)
     {
+
+        const float smokeHeight =
+            Clamp(
+                rockVisualRadius * 6.0f,
+                180.0f,
+                320.0f
+            );
+
+        const float smokeWidth =
+            smokeHeight *
+            (31.0f / 34.0f);
+
         VfxParticle smoke;
 
         smoke.type =
@@ -48266,15 +49008,23 @@ void Game::SpawnRockImpactVfx(
             worldPosition;
 
         smoke.drawSize = {
-            93.0f,
-            102.0f
+     smokeWidth,
+     smokeHeight
         };
 
+        smoke.endDrawSize =
+            smoke.drawSize;
+
         smoke.visualHeight =
-            5.0f;
+            std::max(
+                5.0f,
+                rockVisualRadius * 0.18f
+            );
 
         smoke.verticalVelocity =
-            32.0f;
+            44.0f +
+            rockVisualRadius *
+            0.45f;
 
         smoke.anchorY =
             1.0f;
@@ -48284,6 +49034,9 @@ void Game::SpawnRockImpactVfx(
 
         smoke.spriteFrameCount =
             smokeVfxFrameCount;
+
+        smoke.spriteFrameOffset =
+            0;
 
         smoke.spriteFrameDuration =
             smokeVfxFrameDuration;
@@ -48331,13 +49084,24 @@ void Game::SpawnRockImpactVfx(
                 )
                 );
 
+        // Scale the debris sprite according to the size
+        // of the boss rock that created it.
+        const float sizeScale =
+            Clamp(
+                rockVisualRadius /
+                38.0f,
+                0.75f,
+                1.35f
+            );
+
         const float visualSize =
             static_cast<float>(
                 GetRandomValue(
                     22,
                     42
                 )
-                );
+                ) *
+            sizeScale;
 
         VfxParticle rock;
 
@@ -48376,6 +49140,9 @@ void Game::SpawnRockImpactVfx(
             visualSize,
             visualSize
         };
+
+        rock.endDrawSize =
+            rock.drawSize;
 
         rock.visualHeight =
             static_cast<float>(
@@ -48426,6 +49193,9 @@ void Game::SpawnRockImpactVfx(
         rock.spriteFrameCount =
             1;
 
+        rock.spriteFrameOffset =
+            0;
+
         rock.life =
             static_cast<float>(
                 GetRandomValue(
@@ -48446,8 +49216,96 @@ void Game::SpawnRockImpactVfx(
 
         vfxParticles.push_back(
             rock
+
+
         );
     }
+}
+
+void Game::SpawnDongfengChargeStar(
+    float duration
+)
+{
+    if (
+        !dongfengChargeStarLoaded ||
+        dongfengChargeStarSpriteSheet.id == 0 ||
+        duration <= 0.0f ||
+        !CanSpawnVfx(1)
+        )
+    {
+        return;
+    }
+
+    VfxParticle star;
+
+    star.type =
+        VfxType::DongfengChargeStarSprite;
+
+    star.pos =
+        playerPosition;
+
+    star.drawSize = {
+        dongfengChargeStarStartSize,
+        dongfengChargeStarStartSize
+    };
+
+    star.endDrawSize = {
+        dongfengChargeStarEndSize,
+        dongfengChargeStarEndSize
+    };
+
+    star.visualHeight =
+        dongfengChargeStarVisualHeight;
+
+    star.anchorY =
+        0.5f;
+
+    star.spriteFrame =
+        0;
+
+    // Uses frames 4 through 9 of spark_big.png.
+    star.spriteFrameOffset =
+        4;
+
+    star.spriteFrameCount =
+        6;
+
+    star.spriteFrameTimer =
+        0.0f;
+
+    star.spriteFrameDuration =
+        duration /
+        static_cast<float>(
+            star.spriteFrameCount
+            );
+
+    star.followPlayer =
+        true;
+
+    star.scaleOverLife =
+        true;
+
+    star.rotationDegrees =
+        0.0f;
+
+    star.spinSpeedDegrees =
+        120.0f;
+
+    star.life =
+        duration;
+
+    star.maxLife =
+        duration;
+
+    star.color =
+        WHITE;
+
+    star.active =
+        true;
+
+    vfxParticles.push_back(
+        star
+    );
 }
 
 void Game::SpawnFireLoop(
@@ -48571,6 +49429,15 @@ void Game::DrawSpriteVfxParticle(
 
         break;
 
+    case VfxType::DongfengChargeStarSprite:
+        texture =
+            dongfengChargeStarSpriteSheet;
+
+        sheetFrameCount =
+            dongfengChargeStarFrameCount;
+
+        break;
+
     default:
         return;
     }
@@ -48580,12 +49447,41 @@ void Game::DrawSpriteVfxParticle(
         return;
     }
 
-    const Rectangle source =
+    const int sourceFrame =
+        particle.spriteFrameOffset +
+        particle.spriteFrame;
+
+    Rectangle source =
         GetHorizontalVfxSourceRect(
             texture,
             sheetFrameCount,
-            particle.spriteFrame
+            sourceFrame
         );
+
+    // Always restore the normal source dimensions first.
+    source.width =
+        fabsf(
+            source.width
+        );
+
+    source.height =
+        fabsf(
+            source.height
+        );
+
+    // Negative width mirrors the selected frame horizontally.
+    if (particle.flipX)
+    {
+        source.width =
+            -source.width;
+    }
+
+    // Negative height mirrors the selected frame vertically.
+    if (particle.flipY)
+    {
+        source.height =
+            -source.height;
+    }
 
     Vector2 drawPosition =
         GetVfxDrawPosition(
@@ -48595,6 +49491,35 @@ void Game::DrawSpriteVfxParticle(
 
     Vector2 drawSize =
         particle.drawSize;
+
+    if (
+        particle.scaleOverLife &&
+        particle.maxLife > 0.0f
+        )
+    {
+        const float progress =
+            Clamp(
+                1.0f -
+                particle.life /
+                particle.maxLife,
+                0.0f,
+                1.0f
+            );
+
+        const float shrinkAmount =
+            1.0f -
+            powf(
+                1.0f - progress,
+                3.0f
+            );
+
+        drawSize =
+            Vector2Lerp(
+                particle.drawSize,
+                particle.endDrawSize,
+                shrinkAmount
+            );
+    }
 
     // Legacy mode already receives camera.zoom from BeginMode2D().
     // Hybrid overlay sprites need an equivalent scale adjustment.
@@ -48697,6 +49622,20 @@ void Game::DrawSpriteVfxParticle(
                 1.0f
             );
     }
+    else if (
+        particle.type ==
+        VfxType::DongfengChargeStarSprite
+        )
+    {
+        alphaMultiplier =
+            Clamp(
+                particle.life /
+                0.08f,
+                0.0f,
+                1.0f
+            );
+    }
+
 
     Color tint =
         particle.color;
@@ -48732,4 +49671,924 @@ void Game::DrawSpriteVfxParticle(
         rotation,
         tint
     );
+}
+
+Rectangle Game::GetBossFallingRockSourceRect(
+    int variation
+) const
+{
+    const int safeVariationCount =
+        std::max(
+            1,
+            bossFallingRockVariationCount
+        );
+
+    variation =
+        std::max(
+            0,
+            std::min(
+                variation,
+                safeVariationCount - 1
+            )
+        );
+
+    const int frameWidth =
+        bossFallingRockSpriteSheet.width /
+        safeVariationCount;
+
+    return Rectangle{
+        static_cast<float>(
+            variation *
+            frameWidth
+        ),
+        0.0f,
+        static_cast<float>(
+            frameWidth
+        ),
+        static_cast<float>(
+            bossFallingRockSpriteSheet.height
+        )
+    };
+}
+
+void Game::DrawDongfengWaveGlow()
+{
+    if (!dongfengWaveActive)
+    {
+        return;
+    }
+
+    auto GetScreenPosition =
+        [&](Vector2 worldPosition, float visualHeight) -> Vector2
+        {
+            if (
+                rendererMode ==
+                WorldRendererMode::Hybrid3D
+                )
+            {
+                const Vector3 worldPosition3D =
+                    WorldToHybrid3D(
+                        worldPosition,
+                        visualHeight
+                    );
+
+                return GetWorldToScreen(
+                    worldPosition3D,
+                    hybridCamera
+                );
+            }
+
+            return WorldToViewElevated(
+                worldPosition,
+                visualHeight
+            );
+        };
+
+    auto GetAlpha =
+        [](float value) -> unsigned char
+        {
+            return static_cast<unsigned char>(
+                Clamp(
+                    value,
+                    0.0f,
+                    255.0f
+                )
+                );
+        };
+
+    auto DrawGlowSample =
+        [&](Vector2 worldPosition, float alphaScale)
+        {
+            const Vector2 screenPosition =
+                GetScreenPosition(
+                    worldPosition,
+                    dongfengGlowHeight
+                );
+
+            const float baseRadius =
+                std::max(
+                    1.0f,
+                    GetDongfengWaveRadius()
+                );
+
+            const float pulse =
+                0.94f +
+                0.06f *
+                sinf(
+                    static_cast<float>(
+                        GetTime()
+                        ) *
+                    18.0f
+                );
+
+            const float outerRadius =
+                baseRadius *
+                dongfengGlowRadiusMultiplier *
+                pulse;
+
+            const float coreRadius =
+                baseRadius *
+                dongfengGlowCoreMultiplier *
+                pulse;
+
+            const Color outerInnerColor{
+                255,
+                225,
+                145,
+                GetAlpha(
+                    80.0f *
+                    alphaScale
+                )
+            };
+
+            const Color outerTransparentColor{
+                255,
+                225,
+                145,
+                0
+            };
+
+            const Color coreInnerColor{
+                255,
+                250,
+                220,
+                GetAlpha(
+                    170.0f *
+                    alphaScale
+                )
+            };
+
+            const Color coreTransparentColor{
+                255,
+                245,
+                200,
+                0
+            };
+
+            DrawCircleGradient(
+                screenPosition,
+                outerRadius,
+                outerInnerColor,
+                outerTransparentColor
+            );
+
+            DrawCircleGradient(
+                screenPosition,
+                coreRadius,
+                coreInnerColor,
+                coreTransparentColor
+            );
+        };
+
+    BeginBlendMode(
+        BLEND_ADDITIVE
+    );
+
+    // Main light surrounding the current crescent.
+    DrawGlowSample(
+        dongfengWavePos,
+        1.0f
+    );
+
+    const int safeTrailSamples =
+        std::max(
+            0,
+            dongfengGlowTrailSamples
+        );
+
+    for (
+        int sampleIndex = 1;
+        sampleIndex <= safeTrailSamples;
+        ++sampleIndex
+        )
+    {
+        const float interpolation =
+            static_cast<float>(
+                sampleIndex
+                ) /
+            static_cast<float>(
+                safeTrailSamples +
+                1
+                );
+
+        const Vector2 trailPosition =
+            Vector2Lerp(
+                dongfengWavePos,
+                dongfengWavePrevPos,
+                interpolation
+            );
+
+        const float trailAlpha =
+            0.55f *
+            (
+                1.0f -
+                interpolation
+                );
+
+        DrawGlowSample(
+            trailPosition,
+            trailAlpha
+        );
+    }
+
+    EndBlendMode();
+}
+
+Rectangle Game::GetDongfengCrescentSourceRect(
+    int directionIndex
+) const
+{
+    if (
+        dongfengCrescentSpriteSheet.id == 0 ||
+        dongfengCrescentSpriteSheet.width <= 0 ||
+        dongfengCrescentSpriteSheet.height <= 0
+        )
+    {
+        return {};
+    }
+
+    const int safeCount =
+        std::max(
+            1,
+            dongfengCrescentDirectionCount
+        );
+
+    directionIndex =
+        std::max(
+            0,
+            std::min(
+                directionIndex,
+                safeCount - 1
+            )
+        );
+
+    const int frameHeight =
+        dongfengCrescentSpriteSheet.height /
+        safeCount;
+
+    return Rectangle{
+        0.0f,
+        static_cast<float>(
+            directionIndex *
+            frameHeight
+        ),
+        static_cast<float>(
+            dongfengCrescentSpriteSheet.width
+        ),
+        static_cast<float>(
+            frameHeight
+        )
+    };
+}
+
+int Game::GetDongfengCrescentDirectionIndex(
+    Vector2 direction
+) const
+{
+    if (
+        Vector2Length(
+            direction
+        ) <=
+        0.001f
+        )
+    {
+        return 2;
+    }
+
+    direction =
+        Vector2Normalize(
+            direction
+        );
+
+    // Screen-space coordinates:
+    //
+    // Right = 0 degrees
+    // Down = 90 degrees
+    // Left = 180 degrees
+    // Up = 270 degrees
+    float angleDegrees =
+        atan2f(
+            direction.y,
+            direction.x
+        ) *
+        RAD2DEG;
+
+    if (angleDegrees < 0.0f)
+    {
+        angleDegrees +=
+            360.0f;
+    }
+
+    if (
+        angleDegrees >= 337.5f ||
+        angleDegrees < 22.5f
+        )
+    {
+        return 2; // Right
+    }
+
+    if (angleDegrees < 67.5f)
+    {
+        return 1; // DownRight
+    }
+
+    if (angleDegrees < 112.5f)
+    {
+        return 0; // Down
+    }
+
+    if (angleDegrees < 157.5f)
+    {
+        return 7; // DownLeft
+    }
+
+    if (angleDegrees < 202.5f)
+    {
+        return 6; // Left
+    }
+
+    if (angleDegrees < 247.5f)
+    {
+        return 5; // UpLeft
+    }
+
+    if (angleDegrees < 292.5f)
+    {
+        return 4; // Up
+    }
+
+    return 3; // UpRight
+}
+
+void Game::DrawDongfengWaveUnlit()
+{
+    if (
+        rendererMode !=
+        WorldRendererMode::Hybrid3D ||
+        !dongfengWaveActive ||
+        !dongfengCrescentLoaded ||
+        dongfengCrescentSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
+
+    const Vector2 screenPosition =
+        GetWorldToScreen(
+            WorldToHybrid3D(
+                dongfengWavePos,
+                dongfengCrescentVisualHeight
+            ),
+            hybridCamera
+        );
+
+    const Rectangle source =
+        GetDongfengCrescentSourceRect(
+            dongfengLockedDirectionIndex
+        );
+
+    const float radius =
+        std::max(
+            1.0f,
+            GetDongfengWaveRadius()
+        );
+
+    const float drawSize =
+        radius *
+        dongfengCrescentSizeMultiplier *
+        camera.zoom;
+
+    const Rectangle destination{
+        screenPosition.x,
+        screenPosition.y,
+        drawSize,
+        drawSize
+    };
+
+    const Vector2 origin{
+        drawSize * 0.5f,
+        drawSize * 0.5f
+    };
+
+    BeginBlendMode(
+        BLEND_ALPHA
+    );
+
+    DrawTexturePro(
+        dongfengCrescentSpriteSheet,
+        source,
+        destination,
+        origin,
+        0.0f,
+        WHITE
+    );
+
+    EndBlendMode();
+}
+
+void Game::UpdateDongfengCastVfx(
+    float realDt
+)
+{
+    // Existing spark animations continue to finish
+    // even after the crescent has been released.
+    for (
+        DongfengSparkTrailParticle& spark :
+        dongfengSparkTrail
+        )
+    {
+        spark.age += realDt;
+    }
+
+    dongfengSparkTrail.erase(
+        std::remove_if(
+            dongfengSparkTrail.begin(),
+            dongfengSparkTrail.end(),
+            [](
+                const DongfengSparkTrailParticle& spark
+                )
+            {
+                return
+                    spark.age >=
+                    spark.duration;
+            }
+        ),
+        dongfengSparkTrail.end()
+    );
+
+    if (!dongfengCasting)
+    {
+        return;
+    }
+
+    float castProgress = 0.0f;
+
+    if (dongfengCastDuration > 0.0f)
+    {
+        castProgress =
+            dongfengCastTimer /
+            dongfengCastDuration;
+    }
+
+    castProgress =
+        Clamp(
+            castProgress,
+            0.0f,
+            1.0f
+        );
+
+    // The complete spiral animation always finishes
+    // during the cast, regardless of world slowdown.
+    dongfengSpiralFrame =
+        std::min(
+            dongfengSpiralFrameCount - 1,
+            static_cast<int>(
+                castProgress *
+                static_cast<float>(
+                    dongfengSpiralFrameCount
+                    )
+                )
+        );
+
+    // Reveal the sparkle path progressively from
+    // the player toward the end position.
+    const float revealedDistance =
+        dongfengSparkPreviewLength *
+        castProgress;
+
+    const float safeSpacing =
+        std::max(
+            1.0f,
+            dongfengSparkSpacing
+        );
+
+    while (
+        dongfengSparkNextDistance <=
+        revealedDistance &&
+        dongfengSparkNextDistance <=
+        dongfengSparkPreviewLength
+        )
+    {
+        DongfengSparkTrailParticle spark;
+
+        spark.worldPosition =
+            Vector2Add(
+                dongfengCastStart,
+                Vector2Scale(
+                    dongfengCastDirection,
+                    dongfengSparkNextDistance
+                )
+            );
+
+        spark.age = 0.0f;
+
+        spark.duration =
+            static_cast<float>(
+                dongfengSparkFrameCount
+                ) *
+            dongfengSparkFrameDuration;
+
+        dongfengSparkTrail.push_back(
+            spark
+        );
+
+        dongfengSparkNextDistance +=
+            safeSpacing;
+    }
+}
+
+void Game::DrawDongfengSparkTrailUnlit()
+{
+    if (
+        !dongfengSparkLoaded ||
+        dongfengSparkSpriteSheet.id == 0 ||
+        dongfengSparkTrail.empty()
+        )
+    {
+        return;
+    }
+
+    BeginBlendMode(
+        BLEND_ADDITIVE
+    );
+
+    for (
+        const DongfengSparkTrailParticle& spark :
+        dongfengSparkTrail
+        )
+    {
+        if (
+            spark.duration <= 0.0f ||
+            spark.age >= spark.duration
+            )
+        {
+            continue;
+        }
+
+        int frame =
+            static_cast<int>(
+                spark.age /
+                dongfengSparkFrameDuration
+                );
+
+        frame =
+            std::max(
+                0,
+                std::min(
+                    frame,
+                    dongfengSparkFrameCount - 1
+                )
+            );
+
+        const float progress =
+            Clamp(
+                spark.age /
+                spark.duration,
+                0.0f,
+                1.0f
+            );
+
+        const float pulseScale =
+            0.82f +
+            sinf(
+                progress *
+                PI
+            ) *
+            0.24f;
+
+        const float drawSize =
+            dongfengSparkVisualSize *
+            pulseScale *
+            camera.zoom;
+
+        Vector2 screenPosition{};
+
+        if (
+            rendererMode ==
+            WorldRendererMode::Hybrid3D
+            )
+        {
+            screenPosition =
+                GetWorldToScreen(
+                    WorldToHybrid3D(
+                        spark.worldPosition,
+                        dongfengSparkVisualHeight
+                    ),
+                    hybridCamera
+                );
+        }
+        else
+        {
+            screenPosition =
+                GetWorldToScreen2D(
+                    WorldToViewElevated(
+                        spark.worldPosition,
+                        dongfengSparkVisualHeight
+                    ),
+                    camera
+                );
+        }
+
+        const unsigned char alpha =
+            static_cast<unsigned char>(
+                255.0f *
+                (
+                    1.0f -
+                    progress *
+                    0.35f
+                    )
+                );
+
+        DrawTexturePro(
+            dongfengSparkSpriteSheet,
+            GetHorizontalVfxSourceRect(
+                dongfengSparkSpriteSheet,
+                dongfengSparkFrameCount,
+                frame
+            ),
+            Rectangle{
+                screenPosition.x,
+                screenPosition.y,
+                drawSize,
+                drawSize *
+                    90.0f /
+                    106.0f
+            },
+            Vector2{
+                drawSize * 0.5f,
+                drawSize *
+                    90.0f /
+                    106.0f *
+                    0.5f
+            },
+            0.0f,
+            Color{
+                255,
+                255,
+                255,
+                alpha
+            }
+        );
+    }
+
+    EndBlendMode();
+}
+
+void Game::DrawDongfengShapeLights()
+{
+    // --------------------------------------------------
+    // Casting spiral light
+    // --------------------------------------------------
+
+    if (
+        dongfengCasting &&
+        dongfengSpiralLoaded &&
+        dongfengSpiralSpriteSheet.id != 0
+        )
+    {
+        const Rectangle source =
+            GetDongfengCrescentSourceRect(
+                dongfengLockedDirectionIndex
+            );
+
+        auto DrawSpiralLightLayer =
+            [this, source](
+                float sizeMultiplier,
+                unsigned char alpha
+                )
+            {
+                const float halfSize =
+                    dongfengSpiralVisualSize *
+                    sizeMultiplier *
+                    0.5f;
+
+                const Vector2 worldCorners[4] = {
+                    {
+                        playerPosition.x - halfSize,
+                        playerPosition.y - halfSize
+                    },
+                    {
+                        playerPosition.x + halfSize,
+                        playerPosition.y - halfSize
+                    },
+                    {
+                        playerPosition.x + halfSize,
+                        playerPosition.y + halfSize
+                    },
+                    {
+                        playerPosition.x - halfSize,
+                        playerPosition.y + halfSize
+                    }
+                };
+
+                Vector2 drawCorners[4]{};
+
+                if (
+                    rendererMode ==
+                    WorldRendererMode::Hybrid3D
+                    )
+                {
+                    for (
+                        int index = 0;
+                        index < 4;
+                        ++index
+                        )
+                    {
+                        drawCorners[index] =
+                            GetWorldToScreen(
+                                WorldToHybrid3D(
+                                    worldCorners[index],
+                                    2.5f
+                                ),
+                                hybridCamera
+                            );
+                    }
+                }
+                else
+                {
+                    for (
+                        int index = 0;
+                        index < 4;
+                        ++index
+                        )
+                    {
+                        drawCorners[index] =
+                            WorldToViewElevated(
+                                worldCorners[index],
+                                2.5f
+                            );
+                    }
+                }
+
+                DrawTextureFrameOnQuad2D(
+                    dongfengSpiralSpriteSheet,
+                    source,
+                    drawCorners[0],
+                    drawCorners[1],
+                    drawCorners[2],
+                    drawCorners[3],
+                    Color{
+                        255,
+                        205,
+                        135,
+                        alpha
+                    }
+                );
+            };
+
+        // Sharp inner illumination.
+        DrawSpiralLightLayer(
+            1.05f,
+            46
+        );
+
+        // Softer surrounding illumination while retaining
+        // the spiral's transparent shape.
+        DrawSpiralLightLayer(
+            1.28f,
+            18
+        );
+    }
+
+    // --------------------------------------------------
+    // Traveling crescent light
+    // --------------------------------------------------
+
+    if (
+        dongfengWaveActive &&
+        dongfengCrescentLoaded &&
+        dongfengCrescentSpriteSheet.id != 0
+        )
+    {
+        Vector2 drawPosition{};
+        Vector2 drawDirection{};
+
+        float drawSize =
+            GetDongfengWaveRadius() *
+            dongfengCrescentSizeMultiplier;
+
+        if (
+            rendererMode ==
+            WorldRendererMode::Hybrid3D
+            )
+        {
+            drawPosition =
+                GetWorldToScreen(
+                    WorldToHybrid3D(
+                        dongfengWavePos,
+                        dongfengCrescentVisualHeight
+                    ),
+                    hybridCamera
+                );
+
+            const Vector2 directionPoint =
+                Vector2Add(
+                    dongfengWavePos,
+                    Vector2Scale(
+                        dongfengWaveDirection,
+                        100.0f
+                    )
+                );
+
+            const Vector2 directionScreen =
+                GetWorldToScreen(
+                    WorldToHybrid3D(
+                        directionPoint,
+                        dongfengCrescentVisualHeight
+                    ),
+                    hybridCamera
+                );
+
+            drawDirection =
+                Vector2Subtract(
+                    directionScreen,
+                    drawPosition
+                );
+
+            drawSize *=
+                camera.zoom;
+        }
+        else
+        {
+            drawPosition =
+                WorldToViewElevated(
+                    dongfengWavePos,
+                    dongfengCrescentVisualHeight
+                );
+
+            drawDirection =
+                WorldVectorToView(
+                    dongfengWaveDirection
+                );
+        }
+
+        if (
+            Vector2Length(
+                drawDirection
+            ) <= 0.001f
+            )
+        {
+            drawDirection = {
+                1.0f,
+                0.0f
+            };
+        }
+        else
+        {
+            drawDirection =
+                Vector2Normalize(
+                    drawDirection
+                );
+        }
+
+        const Rectangle source =
+            GetDongfengCrescentSourceRect(
+                GetDongfengCrescentDirectionIndex(
+                    drawDirection
+                )
+            );
+
+        auto DrawCrescentLightLayer =
+            [this, source, drawPosition, drawSize](
+                float sizeMultiplier,
+                unsigned char alpha
+                )
+            {
+                const float layerSize =
+                    drawSize *
+                    sizeMultiplier;
+
+                DrawTexturePro(
+                    dongfengCrescentSpriteSheet,
+                    source,
+                    Rectangle{
+                        drawPosition.x,
+                        drawPosition.y,
+                        layerSize,
+                        layerSize
+                    },
+                    Vector2{
+                        layerSize * 0.5f,
+                        layerSize * 0.5f
+                    },
+                    0.0f,
+                    Color{
+                        255,
+                        205,
+                        115,
+                        alpha
+                    }
+                );
+            };
+
+        DrawCrescentLightLayer(
+            1.0f,
+            40
+        );
+
+        DrawCrescentLightLayer(
+            1.18f,
+            14
+        );
+    }
 }

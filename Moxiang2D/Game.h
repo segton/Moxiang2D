@@ -48,7 +48,8 @@ enum class VfxType
     ImpactSprite,
     SmokeSprite,
     FireLoopSprite,
-    RockDebrisSprite
+    RockDebrisSprite,
+    DongfengChargeStarSprite
 };
 
 enum class TerrainCliffFace
@@ -148,12 +149,15 @@ struct VfxParticle
     float life = 0.0f;
     float maxLife = 1.0f;
 
-    bool flipX = false;
-
     int value = 0;          // For damage numbers
     Vector2 endPos{};       // For lightning lines
 
     Vector2 drawSize{
+    32.0f,
+    32.0f
+    };
+
+    Vector2 endDrawSize{
     32.0f,
     32.0f
     };
@@ -169,11 +173,16 @@ struct VfxParticle
 
     int spriteFrame = 0;
     int spriteFrameCount = 1;
+    int spriteFrameOffset = 0;
 
     float spriteFrameTimer = 0.0f;
     float spriteFrameDuration = 0.08f;
 
     bool loopAnimation = false;
+    bool flipX = false;
+    bool flipY = false;
+    bool followPlayer = false;
+    bool scaleOverLife = false;
 
     Color color = WHITE;
     bool active = false;
@@ -326,7 +335,11 @@ enum class ProjectileOwner
     Enemy
 };
 
-
+enum class ProjectileVisualType
+{
+    DefaultSphere = 0,
+    FireLoop
+};
 
 
 
@@ -706,6 +719,14 @@ struct Player
     int projectileCount = 1; // keep for skills later if needed
 };
 
+struct DongfengSparkTrailParticle
+{
+    Vector2 worldPosition{};
+
+    float age = 0.0f;
+    float duration = 0.56f;
+};
+
 struct PerfSpikeRecord
 {
     int index = 0;
@@ -1017,6 +1038,9 @@ struct BossFallingRock
 
     int damage = 12;
 
+    // Static sprite selected when the rock is spawned.
+    int spriteVariation = 0;
+
     bool active = true;
 };
 
@@ -1025,17 +1049,30 @@ struct Projectile
     ProjectileOwner owner =
         ProjectileOwner::Player;
 
+    ProjectileVisualType visualType =
+        ProjectileVisualType::DefaultSphere;
+
     Vector2 pos{};
     Vector2 velocity{};
 
     int terrainElevation = 0;
 
-    // Visual height above the projectile's terrain plane.
-    // This does not affect its 2D gameplay collision.
     float visualHeight = 18.0f;
 
     float radius = 7.0f;
     int damage = 1;
+
+    // Animated projectile visual.
+    int visualFrame = 0;
+
+    float visualFrameTimer =
+        0.0f;
+
+    float visualFrameDuration =
+        0.08f;
+
+    float visualSize =
+        48.0f;
 
     float life = 2.0f;
     bool active = false;
@@ -1155,8 +1192,18 @@ private:
     void UpdateActiveChamber(bool forceUpdate = false);
     void UpdateChamberVisibility(float dt);
     void ResetChamberEncounterProgress();
-    void StartChamberEncounter(int chamberId);
-    void StartChamberWave(int chamberId, int chamberWave);
+    void StartChamberEncounter(
+        int chamberId
+    );
+
+    void StartChamberWave(
+        int chamberId,
+        int chamberWave
+    );
+
+    void UpdateWave(
+        float dt
+    );
 
     int FindChamberAtWorld(Vector2 worldPosition) const;
     float GetChamberVisibility(int chamberId) const;
@@ -1415,8 +1462,32 @@ private:
 
     void RestartGameplay();
 
-    void UpdateCombat(float dt);
-    void UpdateWave(float dt);
+    void UpdateCombat(
+        float worldDt,
+        float realDt
+    );
+
+    void UpdateDongfeng(
+        float worldDt,
+        float realDt
+    );
+
+    Rectangle GetDongfengCrescentSourceRect(
+        int directionIndex
+    ) const;
+
+    void UpdateDongfengCastVfx(float realDt);
+
+    void DrawDongfengCastGround2D();
+    void DrawDongfengCastGround3D();
+
+    void DrawDongfengSparkTrailUnlit();
+    void DrawDongfengShapeLights();
+
+    int GetDongfengCrescentDirectionIndex(
+        Vector2 direction
+    ) const;
+
     void UpdateEnemies(float dt);
     void ResolveEnemySeparation();
 
@@ -1439,8 +1510,17 @@ private:
     ) const;
 
     void SpawnRockImpactVfx(
-        Vector2 worldPosition
+        Vector2 worldPosition,
+        float rockVisualRadius
     );
+
+    void SpawnDongfengChargeStar(
+        float duration
+    );
+
+    void DrawDongfengWaveGlow();
+
+    void DrawDongfengWaveUnlit();
 
     void SpawnFireLoop(
         Vector2 worldPosition,
@@ -1524,7 +1604,6 @@ private:
     void ExecuteBossDash(Enemy& enemy);
 
     void ActivateDongfeng();
-    void UpdateDongfeng(float dt);
     void LaunchDongfengWave();
     void ResolveDongfengWaveHits(Vector2 previousPos, Vector2 currentPos, float radius);
     void DestroyEnemyProjectilesInDongfengPath(Vector2 previousPos, Vector2 currentPos, float radius);
@@ -1538,7 +1617,11 @@ private:
     void ActivateLightning();
     void ActivateIceField();
 
-    void SpawnHitSpark(Vector2 pos);
+    void SpawnHitSpark(
+        Vector2 pos,
+        float visualScale = 1.0f,
+        float visualHeight = 68.0f
+    );
     void SpawnDamageNumber(Vector2 pos, int value);
     void SpawnDeathBurst(Vector2 pos);
     void SpawnLightningLine(Vector2 start, Vector2 end);
@@ -1672,9 +1755,19 @@ private:
         int damage,
         float speed,
         float radius,
-        float visualHeight = 18.0f
+        float visualHeight,
+        ProjectileVisualType visualType =
+        ProjectileVisualType::DefaultSphere
     );
-    void SpawnRadialEnemyProjectiles(Vector2 center, int count, int damage, float speed, float radius);
+    void SpawnRadialEnemyProjectiles(
+        Vector2 center,
+        int count,
+        int damage,
+        float speed,
+        float radius,
+        ProjectileVisualType visualType =
+        ProjectileVisualType::DefaultSphere
+    );
 
     void UpdateEnemyShooter(Enemy& enemy, float dt, float distanceToPlayer);
     void StartBossDash(Enemy& enemy);
@@ -1992,7 +2085,7 @@ private:
         float additionalHeightPixels,
         Color tint,
         HybridBillboardOrientation orientation =
-        HybridBillboardOrientation::FaceCamera,
+        HybridBillboardOrientation::UprightWorld,
         float whiteFlashAmount = 0.0f
     ) const;
 
@@ -2210,18 +2303,86 @@ private:
     Texture2D smokeVfxSpriteSheet{};
     Texture2D fireLoopVfxSpriteSheet{};
     Texture2D rockDebrisVfxSpriteSheet{};
+    Texture2D dongfengChargeStarSpriteSheet{};
+    Texture2D bossFallingRockSpriteSheet{};
+
+    Texture2D dongfengCrescentSpriteSheet{};
+
+    bool dongfengCrescentLoaded =
+        false;
+
+    int dongfengCrescentDirectionCount =
+        8;
+
+    int dongfengLockedDirectionIndex = 2;
+
+    float dongfengCrescentVisualHeight =
+        86.0f;
+
+    // Overall scale based on Dongfeng wave radius.
+    float dongfengCrescentSizeMultiplier =
+        2.6f;
+
+    Texture2D dongfengSpiralSpriteSheet{};
+    bool dongfengSpiralLoaded = false;
+
+    int dongfengSpiralFrameCount = 24;
+    int dongfengSpiralFrame = 0;
+
+    float dongfengSpiralVisualSize = 300.0f;
+
+    Texture2D dongfengSparkSpriteSheet{};
+    bool dongfengSparkLoaded = false;
+
+    int dongfengSparkFrameCount = 16;
+    float dongfengSparkFrameDuration = 0.032f;
+
+    float dongfengSparkVisualSize = 62.0f;
+    float dongfengSparkVisualHeight = 52.0f;
+
+    std::vector<DongfengSparkTrailParticle>
+        dongfengSparkTrail;
+
+    float dongfengSparkNextDistance = 0.0f;
+    float dongfengSparkSpacing = 42.0f;
+    float dongfengSparkPreviewLength = 380.0f;
+
+    bool bossFallingRockSpriteLoaded =
+        false;
+
+    int bossFallingRockVariationCount =
+        3;
 
     bool slashVfxLoaded = false;
     bool impactVfxLoaded = false;
     bool smokeVfxLoaded = false;
     bool fireLoopVfxLoaded = false;
     bool rockDebrisVfxLoaded = false;
+    bool dongfengChargeStarLoaded = false;
 
     int slashVfxFrameCount = 10;
     int impactVfxFrameCount = 10;
     int smokeVfxFrameCount = 7;
     int fireLoopVfxFrameCount = 5;
     int rockDebrisVfxFrameCount = 6;
+    int dongfengChargeStarFrameCount = 10;
+
+    float dongfengChargeStarStartSize = 320.0f;
+    float dongfengChargeStarEndSize = 72.0f;
+    float dongfengChargeStarVisualHeight = 112.0f;
+
+    float dongfengFixedCastDuration =
+        1.0f;
+
+    // 0.10 means the world runs at 10% speed,
+    // which is a 90% slowdown.
+    float dongfengCastingWorldTimeScale =
+        0.10f;
+
+    float dongfengGlowHeight = 72.0f;
+    float dongfengGlowRadiusMultiplier = 2.8f;
+    float dongfengGlowCoreMultiplier = 1.15f;
+    int dongfengGlowTrailSamples = 3;
 
     float slashVfxFrameDuration = 0.030f;
     float impactVfxFrameDuration = 0.035f;
@@ -3430,5 +3591,9 @@ private:
     ) const;
 
     void DrawSelectedObstacleScreenOutline() const;
+
+    Rectangle GetBossFallingRockSourceRect(
+        int variation
+    ) const;
 
 };
