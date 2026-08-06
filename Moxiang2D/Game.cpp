@@ -1310,6 +1310,34 @@ namespace
         };
     }
 
+    static Color LerpColor(
+        Color from,
+        Color to,
+        float t
+    )
+    {
+        t = Clamp(
+            t,
+            0.0f,
+            1.0f
+        );
+
+        return Color{
+            static_cast<unsigned char>(
+                from.r + (to.r - from.r) * t
+            ),
+            static_cast<unsigned char>(
+                from.g + (to.g - from.g) * t
+            ),
+            static_cast<unsigned char>(
+                from.b + (to.b - from.b) * t
+            ),
+            static_cast<unsigned char>(
+                from.a + (to.a - from.a) * t
+            )
+        };
+    }
+
     static Texture2D CreateHybridCircleTexture(bool softShadow)
     {
         constexpr int size = 64;
@@ -1748,6 +1776,7 @@ void Game::Shutdown()
         bossStunnedSpriteSheet = {};
     }
 
+
     if (bossPreChargeSpriteSheet.id != 0)
     {
         UnloadTexture(
@@ -1803,6 +1832,16 @@ void Game::Shutdown()
         bossHealingLoopSpriteSheet = {};
     }
 
+    if (bossDeathSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossDeathSpriteSheet
+        );
+
+        bossDeathSpriteSheet = {};
+    }
+
+
     auto UnloadVfxSheet =
         [](
             Texture2D& texture
@@ -1822,6 +1861,14 @@ void Game::Shutdown()
 
     UnloadVfxSheet(
         slashVfxSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        windBladeGroundSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        windBladeSlashSpriteSheet
     );
 
     UnloadVfxSheet(
@@ -1851,6 +1898,18 @@ void Game::Shutdown()
         dongfengSparkSpriteSheet
     );
 
+    UnloadVfxSheet(
+        bossDeathExplosionSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        bossDeathGemShardSpriteSheet
+    );
+
+    UnloadVfxSheet(
+        bossDeathGlassShardSpriteSheet
+    );
+
     if (dongfengCrescentSpriteSheet.id != 0)
     {
         UnloadTexture(
@@ -1876,11 +1935,15 @@ void Game::Shutdown()
         false;
 
     slashVfxLoaded = false;
+    windBladeGroundSpriteLoaded = false;
+    windBladeSlashSpriteLoaded = false;
     impactVfxLoaded = false;
     smokeVfxLoaded = false;
     fireLoopVfxLoaded = false;
     rockDebrisVfxLoaded = false;
     dongfengChargeStarLoaded = false;
+    bossDeathGemShardSpriteLoaded = false;
+    bossDeathGlassShardSpriteLoaded = false;
 
     bossPreHealSpriteLoaded =
         false;
@@ -3124,6 +3187,20 @@ void Game::UpdateActiveChamber(
 
         dongfengCasting = false;
         dongfengWaveActive = false;
+
+        windBladeCasting = false;
+
+        if (
+            playerAnimationState ==
+            PlayerAnimationState::SkillSpinning
+            )
+        {
+            playerAnimationState =
+                PlayerAnimationState::Idle;
+
+            playerAnimFrame = 0;
+            playerAnimTimer = 0.0f;
+        }
     }
 
     InvalidateGroundCache();
@@ -17733,6 +17810,12 @@ void Game::InitCombat()
     vfxParticles.clear();
     orbitalBlades.clear();
 
+    windBladeCasting = false;
+    windBladeResolvedStrikeCount = 0;
+    windBladeCastTimer = 0.0f;
+    windBladeGroundFrame = 0;
+    windBladeSlashFrame = 0;
+
     huashanJumpActive = false;
     huashanJumpTimer = 0.0f;
     huashanJumpDuration = 0.24f;
@@ -17781,7 +17864,7 @@ void Game::InitCombat()
     nextAutomaticUpgradeKillCount = 12;
     automaticUpgradeCursor = 0;
 
-    skills[0].type = SkillType::SpinningBlade; // Wind Blades
+    skills[0].type = SkillType::SpinningBlade; // Reworked 360-degree Wind Blade
     skills[0].cooldown = 2.0f;
     skills[0].cooldownRemaining = 0.0f;
     skills[0].unlocked = false;
@@ -19220,7 +19303,7 @@ void Game::SpawnEnemyInChamber(
         enemy.speed = 72.0f;
 
         enemy.hp =
-            8000 +
+            50 +
             wave.wave * 80;
 
         enemy.maxHp =
@@ -19388,6 +19471,19 @@ void Game::UpdateEnemies(float dt)
             enemy.chamberId != activeChamberId
             )
         {
+            continue;
+        }
+
+        if (
+            enemy.type == EnemyType::Boss &&
+            enemy.bossActionState == BossActionState::Dying
+            )
+        {
+            UpdateBossDeath(
+                enemy,
+                dt
+            );
+
             continue;
         }
 
@@ -20753,7 +20849,7 @@ void Game::SpawnSlashEffect(
 
         case PlayerDirection::DownRight:
         case PlayerDirection::Down:
-  
+
             // Southern directions use the vertically
             // mirrored slash.
             particle.flipY =
@@ -21309,6 +21405,18 @@ void Game::LoadCombatVfxSpriteSheets()
     );
 
     LoadSheet(
+        "Assets/vfx/typhoon_02.png",
+        windBladeGroundSpriteSheet,
+        windBladeGroundSpriteLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/slash_03.png",
+        windBladeSlashSpriteSheet,
+        windBladeSlashSpriteLoaded
+    );
+
+    LoadSheet(
         "Assets/vfx/impact_big.png",
         impactVfxSpriteSheet,
         impactVfxLoaded
@@ -21371,7 +21479,7 @@ void Game::LoadCombatVfxSpriteSheets()
     }
     dongfengCrescentSpriteSheet =
         LoadTexture(
-            "Assets/vfx/dongfeng_crescent_sheet.png"
+            "Assets/vfx/dongfeng_crescent_sheet2.png"
         );
 
     dongfengCrescentLoaded =
@@ -21412,7 +21520,65 @@ void Game::LoadCombatVfxSpriteSheets()
         dongfengSparkSpriteSheet,
         dongfengSparkLoaded
     );
+    LoadSheet(
+        "Assets/vfx/boss_death_explosion.png",
+        bossDeathExplosionSpriteSheet,
+        bossDeathExplosionSpriteLoaded
+    );
 
+    LoadSheet(
+        "Assets/vfx/gem_broken_blue.png",
+        bossDeathGemShardSpriteSheet,
+        bossDeathGemShardSpriteLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/glass.png",
+        bossDeathGlassShardSpriteSheet,
+        bossDeathGlassShardSpriteLoaded
+    );
+
+    if (
+        bossDeathExplosionSpriteLoaded &&
+        bossDeathExplosionSpriteSheet.id != 0
+        )
+    {
+        bossDeathExplosionFrameCount =
+            24;
+
+        const int frameWidth =
+            bossDeathExplosionSpriteSheet.width /
+            bossDeathExplosionFrameCount;
+
+        TraceLog(
+            LOG_INFO,
+            "[BOSS DEATH EXPLOSION] Loaded: %dx%d | "
+            "frames=%d | frame=%dx%d | duration=%.2f seconds",
+            bossDeathExplosionSpriteSheet.width,
+            bossDeathExplosionSpriteSheet.height,
+            bossDeathExplosionFrameCount,
+            frameWidth,
+            bossDeathExplosionSpriteSheet.height,
+            static_cast<float>(
+                bossDeathExplosionFrameCount
+                ) *
+            bossDeathExplosionFrameDuration
+        );
+
+        if (
+            bossDeathExplosionSpriteSheet.width %
+            bossDeathExplosionFrameCount !=
+            0
+            )
+        {
+            TraceLog(
+                LOG_WARNING,
+                "[BOSS DEATH EXPLOSION] Sheet width %d is not "
+                "evenly divisible by 24 frames.",
+                bossDeathExplosionSpriteSheet.width
+            );
+        }
+    }
 
 }
 
@@ -21453,6 +21619,8 @@ void Game::UpdateSkills(float dt)
             }
         }
     }
+
+    UpdateWindBlade(dt);
 }
 
 bool Game::TryActivateSkillAtScreen(Vector2 screenPos)
@@ -21700,7 +21868,8 @@ bool Game::IsPlayerMovementLocked() const
 
     return
         huashanJumpActive ||
-        dongfengCasting;
+        dongfengCasting ||
+        windBladeCasting;
 }
 
 float Game::GetHuashanJumpHeight() const
@@ -21940,12 +22109,16 @@ void Game::ActivateDongfeng()
     }
 
     // Still grows as it travels.
-    dongfengEndRadius = dongfengStartRadius + 96.0f + static_cast<float>(level - 1) * 3.0f;
+    dongfengEndRadius =
+        dongfengStartRadius +
+        140.0f +
+        static_cast<float>(
+            level - 1
+            ) *
+        5.0f;
 
-    if (dongfengEndRadius > 220.0f)
-    {
-        dongfengEndRadius = 220.0f;
-    }
+
+
 
     dongfengMainDamage = 240 + level * 42;
     dongfengLineDamage = 135 + level * 24;
@@ -21969,7 +22142,7 @@ castCircle.color = { 255, 220, 40, 135 };
 castCircle.active = true;
 vfxParticles.push_back(castCircle);
     */
-  
+
     dongfengSpiralFrame = 0;
 
     dongfengSparkTrail.clear();
@@ -21986,19 +22159,33 @@ float Game::GetDongfengWaveRadius() const
         return dongfengStartRadius;
     }
 
-    float t = dongfengWaveTravelled / dongfengRange;
+    float t =
+        dongfengWaveTravelled /
+        dongfengRange;
 
-    if (t < 0.0f)
-    {
-        t = 0.0f;
-    }
+    t =
+        Clamp(
+            t,
+            0.0f,
+            1.0f
+        );
 
-    if (t > 1.0f)
-    {
-        t = 1.0f;
-    }
+    // Ease-out growth:
+    // expands quickly near the start, then slows near maximum size.
+    const float growthProgress =
+        1.0f -
+        powf(
+            1.0f - t,
+            3.0f
+        );
 
-    return dongfengStartRadius + (dongfengEndRadius - dongfengStartRadius) * t;
+    return
+        dongfengStartRadius +
+        (
+            dongfengEndRadius -
+            dongfengStartRadius
+            ) *
+        growthProgress;
 }
 
 void Game::UpdateDongfeng(
@@ -22567,7 +22754,7 @@ void Game::ActivateSkill(SkillType type)
 {
     if (type == SkillType::SpinningBlade)
     {
-        ActivateFireball(); // Current real Wind Blades implementation.
+        ActivateWindBlade();
     }
     else if (type == SkillType::Huashan)
     {
@@ -22592,8 +22779,6 @@ void Game::ActivateSkill(SkillType type)
         ActivateIceField();
     }
 }
-
-
 
 void Game::ActivateFireball()
 {
@@ -24392,7 +24577,7 @@ const char* Game::GetSkillDisplayName(SkillType type) const
 {
     switch (type)
     {
-    case SkillType::SpinningBlade: return "Spinning Blades";
+    case SkillType::SpinningBlade: return "Wind Blade";
     case SkillType::Huashan:       return "Huashan";
     case SkillType::Dongfeng:      return "Dongfeng";
 
@@ -24408,7 +24593,7 @@ const char* Game::GetSkillSubtitle(SkillType type) const
 {
     switch (type)
     {
-    case SkillType::SpinningBlade: return "Orbit Skill";
+    case SkillType::SpinningBlade: return "360 AoE Skill";
     case SkillType::Huashan:       return "Impact Skill";
     case SkillType::Dongfeng:      return "Piercing Skill";
 
@@ -24425,7 +24610,7 @@ const char* Game::GetSkillDescription(SkillType type) const
     switch (type)
     {
     case SkillType::SpinningBlade:
-        return "Summon spinning blades that orbit around the player.";
+        return "Spin through every direction, creating a ground vortex and a full-circle sword slash.";
     case SkillType::Huashan:
         return "Leap to the nearest enemy and crash down with a heavy area strike.";
     case SkillType::Dongfeng:
@@ -25254,7 +25439,8 @@ void Game::TryStartDash()
         gameState != GameState::Playing ||
         activeDialogueNpc != -1 ||
         huashanJumpActive ||
-        dongfengCasting
+        dongfengCasting ||
+        windBladeCasting
         )
     {
         return;
@@ -25803,9 +25989,20 @@ void Game::UpdateMeleeAttack(
                 playerAttackTargetId
             );
 
+        const bool targetIsDyingBoss =
+            impactTarget != nullptr &&
+            impactTarget->type ==
+            EnemyType::Boss &&
+            (
+                impactTarget->hp <= 0 ||
+                impactTarget->bossActionState ==
+                BossActionState::Dying
+                );
+
         if (
             impactTarget != nullptr &&
-            impactTarget->active
+            impactTarget->active &&
+            !targetIsDyingBoss
             )
         {
             const float distance =
@@ -27093,6 +27290,14 @@ void Game::ApplyDamageToEnemy(
 )
 {
     if (
+        enemy.type == EnemyType::Boss &&
+        enemy.bossActionState == BossActionState::Dying
+        )
+    {
+        return;
+    }
+
+    if (
         enemy.type ==
         EnemyType::Boss &&
         (
@@ -27142,13 +27347,25 @@ void Game::ApplyDamageToEnemy(
         )
     {
         enemy.hp = 0;
-        enemy.active = false;
 
-        SpawnDeathBurst(
-            enemy.pos
-        );
+        if (
+            enemy.type == EnemyType::Boss
+            )
+        {
+            StartBossDeath(
+                enemy
+            );
+        }
+        else
+        {
+            enemy.active = false;
 
-        RegisterEnemyDefeat();
+            SpawnDeathBurst(
+                enemy.pos
+            );
+
+            RegisterEnemyDefeat();
+        }
 
         return;
     }
@@ -27330,16 +27547,37 @@ Enemy* Game::FindEnemyById(
     return nullptr;
 }
 
-Enemy* Game::FindNearestEnemy(Vector2 fromPos, float range)
+Enemy* Game::FindNearestEnemy(
+    Vector2 fromPos,
+    float range
+)
 {
-    Enemy* nearest = nullptr;
-    float nearestDistSq = range * range;
+    Enemy* nearest =
+        nullptr;
 
-    for (Enemy& enemy : enemies)
+    float nearestDistSq =
+        range *
+        range;
+
+    for (
+        Enemy& enemy :
+        enemies
+        )
     {
+        const bool bossIsDying =
+            enemy.type ==
+            EnemyType::Boss &&
+            (
+                enemy.hp <= 0 ||
+                enemy.bossActionState ==
+                BossActionState::Dying
+                );
+
         if (
             !enemy.active ||
-            enemy.chamberId != activeChamberId ||
+            bossIsDying ||
+            enemy.chamberId !=
+            activeChamberId ||
             IsEnemySpawnProtected(
                 enemy
             )
@@ -27348,12 +27586,22 @@ Enemy* Game::FindNearestEnemy(Vector2 fromPos, float range)
             continue;
         }
 
-        float distSq = DistanceSquared(fromPos, enemy.pos);
+        const float distSq =
+            DistanceSquared(
+                fromPos,
+                enemy.pos
+            );
 
-        if (distSq < nearestDistSq)
+        if (
+            distSq <
+            nearestDistSq
+            )
         {
-            nearestDistSq = distSq;
-            nearest = &enemy;
+            nearestDistSq =
+                distSq;
+
+            nearest =
+                &enemy;
         }
     }
 
@@ -28025,6 +28273,16 @@ int Game::GetPlayerDirectionRow(PlayerDirection direction) const
 
 void Game::UpdatePlayerAnimation(float dt)
 {
+    // The Wind Blade runtime owns both the attack frame and the facing row.
+    // Do not let ordinary locomotion animation replace it mid-spin.
+    if (
+        playerAnimationState ==
+        PlayerAnimationState::SkillSpinning
+        )
+    {
+        return;
+    }
+
     // Attack animation has priority over walking and idle.
     if (
         playerAnimationState ==
@@ -28206,8 +28464,12 @@ void Game::DrawPlayerSprite(
         playerAnimFrame;
 
     bool isDrawingAttack =
-        playerAnimationState ==
-        PlayerAnimationState::Attacking &&
+        (
+            playerAnimationState ==
+            PlayerAnimationState::Attacking ||
+            playerAnimationState ==
+            PlayerAnimationState::SkillSpinning
+            ) &&
         playerAttackSpriteLoaded &&
         playerAttackSpriteSheet.id != 0;
 
@@ -28267,6 +28529,8 @@ void Game::DrawPlayerSprite(
         if (
             playerAnimationState ==
             PlayerAnimationState::Attacking ||
+            playerAnimationState ==
+            PlayerAnimationState::SkillSpinning ||
             playerAnimationState ==
             PlayerAnimationState::Idle
             )
@@ -29675,15 +29939,29 @@ void Game::DrawEnemyVisual(
         EnemyType::Boss
         )
     {
-        spriteTint =
-            GetBossTierTint(
-                enemy
-            );
+        if (
+            enemy.bossActionState ==
+            BossActionState::Dying
+            )
+        {
+            // Preserve the death sheet's original colours.
+            spriteTint =
+                WHITE;
 
-        fallbackColor =
-            spriteTint;
+            fallbackColor =
+                WHITE;
+        }
+        else
+        {
+            spriteTint =
+                GetBossTierTint(
+                    enemy
+                );
+
+            fallbackColor =
+                spriteTint;
+        }
     }
-
     // --------------------------------------------------
 // Charge warning blink
 //
@@ -29832,6 +30110,81 @@ void Game::DrawEnemyVisual(
         groundPosition.y -
             finalEnemyVisualHeight
     };
+
+    Vector2 finalBossDrawPosition =
+        bossDrawPosition;
+
+    float bossDeathWhiteAmount =
+        0.0f;
+
+    if (
+        enemy.type ==
+        EnemyType::Boss &&
+        enemy.bossActionState ==
+        BossActionState::Dying &&
+        enemy.bossDeathEnteredLastFrame
+        )
+    {
+        const float holdProgress =
+            bossDeathFinalHoldDuration >
+            0.0f
+            ? Clamp(
+                1.0f -
+                enemy.bossDeathFinalHoldTimer /
+                bossDeathFinalHoldDuration,
+                0.0f,
+                1.0f
+            )
+            : 1.0f;
+
+        const float delayedWhiteProgress =
+            Clamp(
+                (
+                    holdProgress -
+                    0.12f
+                    ) /
+                0.88f,
+                0.0f,
+                1.0f
+            );
+
+        bossDeathWhiteAmount =
+            delayedWhiteProgress *
+            delayedWhiteProgress *
+            (
+                3.0f -
+                2.0f *
+                delayedWhiteProgress
+                );
+
+
+
+        const float currentShakeStrength =
+            bossDeathShakeStrength *
+            (
+                0.35f +
+                0.65f *
+                holdProgress
+                );
+
+        const float shakePhase =
+            enemy.bossDeathShakeTimer *
+            70.0f;
+
+        finalBossDrawPosition.x +=
+            cosf(
+                shakePhase
+            ) *
+            currentShakeStrength;
+
+        finalBossDrawPosition.y +=
+            sinf(
+                shakePhase *
+                1.7f
+            ) *
+            currentShakeStrength *
+            0.35f;
+    }
 
     const Vector2 mediumDrawPosition{
         groundPosition.x,
@@ -30049,7 +30402,7 @@ void Game::DrawEnemyVisual(
             {
                 DrawBossEnemySprite(
                     enemy,
-                    bossDrawPosition,
+                    finalBossDrawPosition,
                     bodyTint
                 );
             }
@@ -30084,6 +30437,37 @@ void Game::DrawEnemyVisual(
         spriteTint,
         fallbackColor
     );
+
+    if (
+        usesBossEnemySprite &&
+        bossDeathWhiteAmount >
+        0.001f
+        )
+    {
+        const unsigned char overlayAlpha =
+            static_cast<unsigned char>(
+                255.0f *
+                bossDeathWhiteAmount
+                );
+
+        BeginBlendMode(
+            BLEND_ADDITIVE
+        );
+
+        DrawBossEnemySprite(
+            enemy,
+            finalBossDrawPosition,
+            Color{
+                255,
+                255,
+                255,
+                overlayAlpha
+            }
+        );
+
+        EndBlendMode();
+    }
+
 
     // Draw a second bright layer while the enemy emerges.
     if (
@@ -30455,7 +30839,10 @@ void Game::DrawVfxParticleVisual(
         particle.type == VfxType::SmokeSprite ||
         particle.type == VfxType::FireLoopSprite ||
         particle.type == VfxType::RockDebrisSprite ||
-        particle.type == VfxType::DongfengChargeStarSprite
+        particle.type == VfxType::DongfengChargeStarSprite ||
+        particle.type == VfxType::BossDeathGemShardSprite ||
+        particle.type == VfxType::BossDeathGlassShardSprite ||
+        particle.type == VfxType::BossDeathExplosionSprite
         )
     {
         DrawSpriteVfxParticle(
@@ -30464,6 +30851,7 @@ void Game::DrawVfxParticleVisual(
 
         return;
     }
+
 
     float t = 1.0f;
 
@@ -32066,6 +32454,8 @@ void Game::DrawWorldGroundEffects()
 
 
     DrawDongfengCastGround2D();
+    DrawWindBladeGround2D();
+
     // Ground-based VFX
     for (
         const VfxParticle& particle :
@@ -32088,6 +32478,14 @@ void Game::DrawWorldGroundEffects()
 
 void Game::DrawWorldForegroundEffects()
 {
+    if (
+        rendererMode ==
+        WorldRendererMode::Legacy2D
+        )
+    {
+        DrawWindBladeSlash2D();
+    }
+
     if (
         rendererMode ==
         WorldRendererMode::Legacy2D
@@ -37600,6 +37998,7 @@ void Game::DrawHybridGroundEffects3D()
     // Dongfeng casting animation lies on the terrain
 // underneath the player and other actors.
     DrawDongfengCastGround3D();
+    DrawWindBladeGround3D();
 
     // --------------------------------------------------
     // Enemy shadows
@@ -38775,8 +39174,12 @@ bool Game::GetActivePlayerFrame(
         playerAnimFrame;
 
     const bool drawAttack =
-        playerAnimationState ==
-        PlayerAnimationState::Attacking &&
+        (
+            playerAnimationState ==
+            PlayerAnimationState::Attacking ||
+            playerAnimationState ==
+            PlayerAnimationState::SkillSpinning
+            ) &&
         playerAttackSpriteLoaded &&
         playerAttackSpriteSheet.id !=
         0;
@@ -38829,7 +39232,9 @@ bool Game::GetActivePlayerFrame(
             playerAnimationState ==
             PlayerAnimationState::Idle ||
             playerAnimationState ==
-            PlayerAnimationState::Attacking
+            PlayerAnimationState::Attacking ||
+            playerAnimationState ==
+            PlayerAnimationState::SkillSpinning
             )
         {
             frame =
@@ -39320,13 +39725,29 @@ void Game::DrawHybridEnemy3D(
         EnemyType::Boss
         )
     {
-        spriteTint =
-            GetBossTierTint(
-                enemy
-            );
+        if (
+            enemy.bossActionState ==
+            BossActionState::Dying
+            )
+        {
+            // Display the death sprite sheet without
+            // the Boss health-phase color tint.
+            spriteTint =
+                WHITE;
 
-        fallbackTint =
-            spriteTint;
+            fallbackTint =
+                WHITE;
+        }
+        else
+        {
+            spriteTint =
+                GetBossTierTint(
+                    enemy
+                );
+
+            fallbackTint =
+                spriteTint;
+        }
     }
 
     // --------------------------------------------------
@@ -39503,8 +39924,8 @@ void Game::DrawHybridEnemy3D(
     }
 
     // --------------------------------------------------
-    // Dedicated Boss sprite
-    // --------------------------------------------------
+// Dedicated Boss sprite
+// --------------------------------------------------
 
     if (
         enemy.type ==
@@ -39534,17 +39955,94 @@ void Game::DrawHybridEnemy3D(
             )
             )
         {
+            Vector2 bossRenderPosition =
+                enemy.pos;
+
+            float bossWhiteFlashAmount =
+                enemy.bossActionState ==
+                BossActionState::Dying
+                ? 0.0f
+                : enemyWhiteFlash;
+
+            if (
+                enemy.bossActionState ==
+                BossActionState::Dying &&
+                enemy.bossDeathEnteredLastFrame
+                )
+            {
+                const float holdProgress =
+                    bossDeathFinalHoldDuration >
+                    0.0f
+                    ? Clamp(
+                        1.0f -
+                        enemy.bossDeathFinalHoldTimer /
+                        bossDeathFinalHoldDuration,
+                        0.0f,
+                        1.0f
+                    )
+                    : 1.0f;
+
+                const float delayedWhiteProgress =
+                    Clamp(
+                        (
+                            holdProgress -
+                            0.12f
+                            ) /
+                        0.88f,
+                        0.0f,
+                        1.0f
+                    );
+
+                const float whiteProgress =
+                    delayedWhiteProgress *
+                    delayedWhiteProgress *
+                    (
+                        3.0f -
+                        2.0f *
+                        delayedWhiteProgress
+                        );
+
+                const float currentShakeStrength =
+                    bossDeathShakeStrength *
+                    (
+                        0.35f +
+                        0.65f *
+                        holdProgress
+                        );
+
+                const float shakePhase =
+                    enemy.bossDeathShakeTimer *
+                    70.0f;
+
+                bossRenderPosition.x +=
+                    cosf(
+                        shakePhase
+                    ) *
+                    currentShakeStrength;
+
+                bossRenderPosition.y +=
+                    sinf(
+                        shakePhase *
+                        1.7f
+                    ) *
+                    currentShakeStrength *
+                    0.35f;
+
+                bossWhiteFlashAmount =
+                    whiteProgress;
+            }
+
             DrawHybridBillboardFrame(
                 bossTexture,
                 bossSource,
-                enemy.pos,
+                bossRenderPosition,
                 bossWidthPixels,
                 bossHeightPixels,
                 bossAnchorY,
                 finalEnemyVisualHeight,
                 spriteTint,
                 HybridBillboardOrientation::UprightWorld,
-                enemyWhiteFlash
+                bossWhiteFlashAmount
             );
 
             return;
@@ -40462,6 +40960,21 @@ void Game::DrawHybridActors3D()
     {
         EndShaderMode();
     }
+
+    if (windBladeCasting)
+    {
+        rlDisableDepthMask();
+
+        BeginBlendMode(
+            BLEND_ALPHA
+        );
+
+        DrawWindBladeSlash3D();
+
+        EndBlendMode();
+        rlEnableDepthMask();
+    }
+
     DrawBossFallingRocksHybrid3D();
     DrawBossLasersHybrid3D();
 
@@ -40572,6 +41085,7 @@ void Game::DrawHybridActors3D()
         true
     );
 }
+
 void Game::DrawObstacleColliderDebug3D(
     const Obstacle& obstacle,
     Color color
@@ -41616,7 +42130,7 @@ void Game::DrawHybridScreenOverlays2D()
         }
     }
 
-    
+
 
     DrawSelectedObstacleScreenOutline();
 }
@@ -42467,6 +42981,57 @@ void Game::LoadBossSpriteSheets()
         bossChargeDirectionRows
     );
 
+    if (bossDeathSpriteSheet.id != 0)
+    {
+        UnloadTexture(
+            bossDeathSpriteSheet
+        );
+
+        bossDeathSpriteSheet = {};
+    }
+
+    bossDeathSpriteLoaded = false;
+
+    bossDeathSpriteSheet =
+        LoadTexture(
+            "Assets/enemies/boss_death.png"
+        );
+
+    if (bossDeathSpriteSheet.id != 0)
+    {
+        SetTextureFilter(
+            bossDeathSpriteSheet,
+            TEXTURE_FILTER_POINT
+        );
+
+        bossDeathFrameColumns =
+            std::max(
+                1,
+                bossDeathSpriteSheet.width /
+                std::max(
+                    1,
+                    bossFrameWidth
+                )
+            );
+
+        bossDeathFrameRows =
+            std::max(
+                1,
+                bossDeathSpriteSheet.height /
+                std::max(
+                    1,
+                    bossFrameHeight
+                )
+            );
+
+        bossDeathFrameCount =
+            bossDeathFrameColumns *
+            bossDeathFrameRows;
+
+        bossDeathSpriteLoaded = true;
+    }
+
+
 }
 
 void Game::UpdateBossAnimation(
@@ -43005,6 +43570,36 @@ bool Game::GetBossAnimationFrame(
         )
     {
         return false;
+    }
+
+    if (
+        enemy.bossActionState == BossActionState::Dying &&
+        bossDeathSpriteLoaded &&
+        bossDeathSpriteSheet.id != 0
+        )
+    {
+        outTexture =
+            bossDeathSpriteSheet;
+
+        outSource =
+            GetBossDeathSourceRect(
+                enemy.bossDeathFrame
+            );
+
+        outWidthPixels =
+            static_cast<float>(
+                bossFrameWidth
+                ) *
+            bossVisualScale;
+
+        outHeightPixels =
+            outSource.height *
+            bossVisualScale;
+
+        outAnchorY =
+            0.98f;
+
+        return true;
     }
 
     int framesPerRow = 1;
@@ -49437,7 +50032,32 @@ void Game::DrawSpriteVfxParticle(
             dongfengChargeStarFrameCount;
 
         break;
+    case VfxType::BossDeathExplosionSprite:
+        texture =
+            bossDeathExplosionSpriteSheet;
 
+        sheetFrameCount =
+            bossDeathExplosionFrameCount;
+
+        break;
+
+    case VfxType::BossDeathGemShardSprite:
+        texture =
+            bossDeathGemShardSpriteSheet;
+
+        sheetFrameCount =
+            bossDeathGemShardFrameCount;
+
+        break;
+
+    case VfxType::BossDeathGlassShardSprite:
+        texture =
+            bossDeathGlassShardSpriteSheet;
+
+        sheetFrameCount =
+            bossDeathGlassShardFrameCount;
+
+        break;
     default:
         return;
     }
@@ -49618,6 +50238,21 @@ void Game::DrawSpriteVfxParticle(
             Clamp(
                 particle.life /
                 0.22f,
+                0.0f,
+                1.0f
+            );
+    }
+    else if (
+        particle.type ==
+        VfxType::BossDeathGemShardSprite ||
+        particle.type ==
+        VfxType::BossDeathGlassShardSprite
+        )
+    {
+        alphaMultiplier =
+            Clamp(
+                particle.life /
+                0.20f,
                 0.0f,
                 1.0f
             );
@@ -50592,3 +51227,1524 @@ void Game::DrawDongfengShapeLights()
         );
     }
 }
+
+Rectangle Game::GetBossDeathSourceRect(
+    int frame
+) const
+{
+    frame =
+        std::max(
+            0,
+            std::min(
+                frame,
+                bossDeathFrameCount - 1
+            )
+        );
+
+    const int column =
+        frame %
+        std::max(
+            1,
+            bossDeathFrameColumns
+        );
+
+    const int row =
+        frame /
+        std::max(
+            1,
+            bossDeathFrameColumns
+        );
+
+    Rectangle source{
+        static_cast<float>(
+            column *
+            bossFrameWidth
+        ),
+        static_cast<float>(
+            row *
+            bossFrameHeight
+        ),
+        static_cast<float>(
+            bossFrameWidth
+        ),
+        static_cast<float>(
+            bossFrameHeight
+        )
+    };
+
+    const float bottomTrim =
+        Clamp(
+            bossSpriteBottomTrim,
+            0.0f,
+            static_cast<float>(
+                bossFrameHeight - 1
+                )
+        );
+
+    source.height -=
+        bottomTrim;
+
+    return source;
+}
+
+void Game::StartBossDeath(
+    Enemy& enemy
+)
+{
+    if (
+        enemy.type != EnemyType::Boss ||
+        enemy.bossActionState == BossActionState::Dying
+        )
+    {
+        return;
+    }
+
+    enemy.hp = 0;
+
+
+    enemy.damageFlashTimer =
+        0.0f;
+
+    if (
+        playerAttackTargetId ==
+        enemy.id
+        )
+    {
+        playerAttackTargetId =
+            0;
+
+        playerAttackImpactPending =
+            false;
+
+        CancelPlayerAttackAnimation();
+    }
+
+    enemy.bossActionState =
+        BossActionState::Dying;
+
+    enemy.animationState =
+        EnemyAnimationState::Idle;
+
+    enemy.velocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.knockbackVelocity = {
+        0.0f,
+        0.0f
+    };
+
+    enemy.airborneTimer = 0.0f;
+    enemy.airborneMaxTimer = 0.0f;
+    enemy.landingStunTimer = 0.0f;
+    enemy.frozenTimer = 0.0f;
+    enemy.slowTimer = 0.0f;
+    enemy.stunTimer = 0.0f;
+
+    enemy.bossDashCharging = false;
+    enemy.bossDashChargeTimer = 0.0f;
+    enemy.bossDashTimer = 0.0f;
+
+    enemy.bossLaserWindupTimer = 0.0f;
+    enemy.bossLaserActiveTimer = 0.0f;
+    enemy.bossLaserDamageTimer = 0.0f;
+
+    enemy.bossBombardmentTimer = 0.0f;
+    enemy.bossBombardmentSpawnTimer = 0.0f;
+
+    enemy.bossChargeWindupTimer = 0.0f;
+    enemy.bossChargeRemainingTimer = 0.0f;
+
+    enemy.contactDamage = 0;
+    enemy.attackTimer = 0.0f;
+
+    enemy.path.clear();
+    enemy.pathIndex = 0;
+
+    enemy.bossAnimationFrame = 0;
+    enemy.bossAnimationTimer = 0.0f;
+
+    enemy.bossDeathFrame = 0;
+    enemy.bossDeathFrameTimer = 0.0f;
+    enemy.bossDeathFinalHoldTimer =
+        bossDeathFinalHoldDuration;
+    enemy.bossDeathShakeTimer = 0.0f;
+    enemy.bossDeathParticleTimer = 0.0f;
+    enemy.bossDeathEnteredLastFrame = false;
+    enemy.bossDeathExplosionTriggered = false;
+}
+
+void Game::SpawnBossDeathParticles(
+    Vector2 worldPosition
+)
+{
+    const bool canUseGem =
+        bossDeathGemShardSpriteLoaded &&
+        bossDeathGemShardSpriteSheet.id != 0;
+
+    const bool canUseGlass =
+        bossDeathGlassShardSpriteLoaded &&
+        bossDeathGlassShardSpriteSheet.id != 0;
+
+    if (
+        !canUseGem &&
+        !canUseGlass
+        )
+    {
+        return;
+    }
+
+    const int particleCount =
+        4;
+
+    if (
+        !CanSpawnVfx(
+            particleCount
+        )
+        )
+    {
+        return;
+    }
+
+    const float bossBodyHeight =
+        std::max(
+            120.0f,
+            static_cast<float>(
+                bossFrameHeight
+                ) *
+            bossVisualScale *
+            0.82f
+        );
+
+    for (
+        int particleIndex = 0;
+        particleIndex < particleCount;
+        ++particleIndex
+        )
+    {
+        bool useGem =
+            canUseGem &&
+            (
+                !canUseGlass ||
+                GetRandomValue(
+                    0,
+                    99
+                ) <
+                55
+                );
+
+        const int sheetFrameCount =
+            useGem
+            ? bossDeathGemShardFrameCount
+            : bossDeathGlassShardFrameCount;
+
+        const float sourceAspect =
+            useGem
+            ? 18.0f / 16.0f
+            : 24.0f / 18.0f;
+
+        const float angle =
+            static_cast<float>(
+                GetRandomValue(
+                    0,
+                    359
+                )
+                ) *
+            DEG2RAD;
+
+        const float horizontalSpeed =
+            static_cast<float>(
+                GetRandomValue(
+                    190,
+                    430
+                )
+                );
+
+        const float visualHeight =
+            static_cast<float>(
+                GetRandomValue(
+                    45,
+                    static_cast<int>(
+                        bossBodyHeight
+                        )
+                )
+                );
+
+        const float fragmentHeight =
+            static_cast<float>(
+                GetRandomValue(
+                    20,
+                    38
+                )
+                );
+
+        const float fragmentWidth =
+            fragmentHeight *
+            sourceAspect;
+
+        VfxParticle particle;
+
+        particle.type =
+            useGem
+            ? VfxType::BossDeathGemShardSprite
+            : VfxType::BossDeathGlassShardSprite;
+
+        // Begin from different parts of the Boss body,
+        // not only from its feet.
+        particle.pos =
+            Vector2Add(
+                worldPosition,
+                Vector2{
+                    static_cast<float>(
+                        GetRandomValue(
+                            -55,
+                            55
+                        )
+                    ),
+                    static_cast<float>(
+                        GetRandomValue(
+                            -35,
+                            35
+                        )
+                    )
+                }
+            );
+
+        particle.velocity = {
+            cosf(angle) *
+                horizontalSpeed,
+
+            sinf(angle) *
+                horizontalSpeed
+        };
+
+        particle.drawSize = {
+            fragmentWidth,
+            fragmentHeight
+        };
+
+        particle.endDrawSize =
+            particle.drawSize;
+
+        particle.visualHeight =
+            visualHeight;
+
+        // Initial upward movement followed by gravity.
+        particle.verticalVelocity =
+            static_cast<float>(
+                GetRandomValue(
+                    110,
+                    340
+                )
+                );
+
+        particle.gravity =
+            static_cast<float>(
+                GetRandomValue(
+                    420,
+                    650
+                )
+                );
+
+        particle.rotationDegrees =
+            static_cast<float>(
+                GetRandomValue(
+                    0,
+                    359
+                )
+                );
+
+        particle.spinSpeedDegrees =
+            static_cast<float>(
+                GetRandomValue(
+                    -720,
+                    720
+                )
+                );
+
+        particle.anchorY =
+            0.5f;
+
+        // These sheets contain six static variations.
+        // Select one variation but do not animate through them.
+        particle.spriteFrame =
+            0;
+
+        particle.spriteFrameCount =
+            1;
+
+        particle.spriteFrameOffset =
+            GetRandomValue(
+                0,
+                std::max(
+                    0,
+                    sheetFrameCount - 1
+                )
+            );
+
+        particle.spriteFrameTimer =
+            0.0f;
+
+        particle.loopAnimation =
+            false;
+
+        particle.life =
+            static_cast<float>(
+                GetRandomValue(
+                    850,
+                    1400
+                )
+                ) /
+            1000.0f;
+
+        particle.maxLife =
+            particle.life;
+
+        particle.color =
+            WHITE;
+
+        particle.active =
+            true;
+
+        vfxParticles.push_back(
+            particle
+        );
+    }
+}
+
+void Game::SpawnBossDeathExplosion(
+    Vector2 worldPosition
+)
+{
+    if (
+        !bossDeathExplosionSpriteLoaded ||
+        bossDeathExplosionSpriteSheet.id == 0 ||
+        bossDeathExplosionFrameCount <= 0 ||
+        !CanSpawnVfx(1)
+        )
+    {
+        return;
+    }
+
+    VfxParticle p;
+    p.type =
+        VfxType::BossDeathExplosionSprite;
+
+    p.pos =
+        worldPosition;
+
+    p.drawSize = {
+        bossDeathExplosionVisualSize,
+        bossDeathExplosionVisualSize
+    };
+
+    p.endDrawSize =
+        p.drawSize;
+
+    p.visualHeight =
+        bossDeathExplosionVisualHeight;
+
+    p.anchorY =
+        0.70f;
+
+    p.spriteFrame =
+        0;
+
+    p.spriteFrameCount =
+        bossDeathExplosionFrameCount;
+
+    p.spriteFrameDuration =
+        bossDeathExplosionFrameDuration;
+
+    p.life =
+        static_cast<float>(
+            bossDeathExplosionFrameCount
+            ) *
+        bossDeathExplosionFrameDuration;
+
+    p.maxLife =
+        p.life;
+
+    p.color =
+        WHITE;
+
+    p.active =
+        true;
+
+    vfxParticles.push_back(
+        p
+    );
+}
+
+void Game::UpdateBossDeath(
+    Enemy& enemy,
+    float dt
+)
+{
+    if (
+        enemy.type != EnemyType::Boss ||
+        enemy.bossActionState != BossActionState::Dying
+        )
+    {
+        return;
+    }
+
+    // ------------------------------------------
+    // Play the death sheet until the last frame
+    // ------------------------------------------
+    if (!enemy.bossDeathEnteredLastFrame)
+    {
+        enemy.bossDeathFrameTimer +=
+            dt;
+
+        while (
+            enemy.bossDeathFrameTimer >=
+            bossDeathFrameDuration
+            )
+        {
+            enemy.bossDeathFrameTimer -=
+                bossDeathFrameDuration;
+
+            enemy.bossDeathFrame++;
+
+            if (
+                enemy.bossDeathFrame >=
+                bossDeathFrameCount - 1
+                )
+            {
+                enemy.bossDeathFrame =
+                    bossDeathFrameCount - 1;
+
+                enemy.bossDeathEnteredLastFrame =
+                    true;
+
+                enemy.bossDeathFinalHoldTimer =
+                    bossDeathFinalHoldDuration;
+
+                enemy.bossDeathParticleTimer =
+                    0.0f;
+
+                break;
+            }
+        }
+
+        return;
+    }
+
+    // ------------------------------------------
+    // Hold on the last frame, shake, whiten,
+    // and emit particles
+    // ------------------------------------------
+    enemy.bossDeathShakeTimer +=
+        dt;
+
+    enemy.bossDeathFinalHoldTimer =
+        std::max(
+            0.0f,
+            enemy.bossDeathFinalHoldTimer - dt
+        );
+
+    enemy.bossDeathParticleTimer -=
+        dt;
+
+    while (
+        enemy.bossDeathParticleTimer <=
+        0.0f
+        )
+    {
+        SpawnBossDeathParticles(
+            enemy.pos
+        );
+
+        enemy.bossDeathParticleTimer +=
+            bossDeathParticleInterval;
+    }
+
+    // ------------------------------------------
+    // At the end of the hold, trigger explosion
+    // and remove the boss
+    // ------------------------------------------
+    if (
+        enemy.bossDeathFinalHoldTimer <= 0.0f &&
+        !enemy.bossDeathExplosionTriggered
+        )
+    {
+        enemy.bossDeathExplosionTriggered =
+            true;
+
+        SpawnBossDeathExplosion(
+            enemy.pos
+        );
+
+        SpawnDeathBurst(
+            enemy.pos
+        );
+
+        enemy.active = false;
+
+        RegisterEnemyDefeat();
+    }
+}
+
+void Game::ActivateWindBlade()
+{
+    if (
+        windBladeCasting ||
+        huashanJumpActive ||
+        dongfengCasting ||
+        playerKnockbackActive
+        )
+    {
+        return;
+    }
+
+    CancelPlayerAttackAnimation();
+
+    windBladeCasting = true;
+    windBladeResolvedStrikeCount = 0;
+    windBladeCastTimer = 0.0f;
+    windBladeGroundFrame = 0;
+    windBladeSlashFrame = 0;
+
+    windBladeStartDirection =
+        lastPlayerDirection;
+
+    playerAnimationState =
+        PlayerAnimationState::SkillSpinning;
+
+    playerAnimFrame = 0;
+    playerAnimTimer = 0.0f;
+
+    playerAttackImpactTriggered = false;
+    playerAttackImpactPending = false;
+    playerAttackTargetId = 0;
+
+    currentPath.clear();
+    pathIndex = 0;
+    hasPath = false;
+    pendingNpc = -1;
+
+    SpawnHitSpark(
+        playerPosition,
+        1.25f,
+        windBladeSlashSwordHeight
+    );
+}
+
+
+
+void Game::UpdateWindBlade(float dt)
+{
+    if (!windBladeCasting)
+    {
+        return;
+    }
+
+    windBladeCastTimer +=
+        std::max(
+            0.0f,
+            dt
+        );
+
+    const float safeDuration =
+        std::max(
+            0.01f,
+            windBladeCastDuration
+        );
+
+    const float progress =
+        Clamp(
+            windBladeCastTimer /
+            safeDuration,
+            0.0f,
+            1.0f
+        );
+
+    // Wind Blade continuously clears hostile projectiles throughout the
+    // complete cast, not only on the three damage-strike frames.
+    const int windBladeSlotIndex =
+        FindSkillSlotIndex(
+            SkillType::SpinningBlade
+        );
+
+    const int windBladeLevel =
+        windBladeSlotIndex >= 0
+        ? skills[windBladeSlotIndex].level
+        : 1;
+
+    const float projectileClearRadius =
+        windBladeDamageRadius +
+        static_cast<float>(
+            std::max(
+                0,
+                windBladeLevel - 1
+            )
+            ) *
+        4.0f;
+
+    const int playerElevation =
+        GetTerrainElevationAtWorld(
+            playerPosition
+        );
+
+    for (Projectile& projectile : projectiles)
+    {
+        if (
+            !projectile.active ||
+            projectile.owner !=
+            ProjectileOwner::Enemy ||
+            projectile.terrainElevation !=
+            playerElevation
+            )
+        {
+            continue;
+        }
+
+        const float clearDistance =
+            Vector2Distance(
+                playerPosition,
+                projectile.pos
+            );
+
+        if (
+            clearDistance >
+            projectileClearRadius +
+            projectile.radius
+            )
+        {
+            continue;
+        }
+
+        projectile.active = false;
+
+        SpawnHitSpark(
+            projectile.pos,
+            0.65f,
+            projectile.visualHeight
+        );
+    }
+
+    // Reuse the attack animation frames, but cycle through every directional
+    // row to create an actual character spin rather than rotating the flat
+    // character billboard like a card.
+    const int safeAttackFrameCount =
+        std::max(
+            1,
+            playerAttackFramesPerRow
+        );
+
+    playerAnimFrame =
+        static_cast<int>(
+            windBladeCastTimer /
+            std::max(
+                0.01f,
+                windBladePlayerFrameDuration
+            )
+            ) %
+        safeAttackFrameCount;
+
+    const int startingDirection =
+        static_cast<int>(
+            windBladeStartDirection
+            );
+
+    const int directionStep =
+        static_cast<int>(
+            std::floor(
+                progress *
+                8.0f *
+                std::max(
+                    0.25f,
+                    windBladeSpinTurns
+                )
+            )
+            );
+
+    playerDirection =
+        static_cast<PlayerDirection>(
+            (
+                startingDirection +
+                directionStep
+                ) %
+            8
+            );
+
+    const float groundProgress =
+        Clamp(
+            windBladeCastTimer /
+            safeDuration,
+            0.0f,
+            0.99999f
+        );
+
+    windBladeGroundFrame =
+        std::min(
+            std::max(
+                0,
+                windBladeGroundFrameCount - 1
+            ),
+            static_cast<int>(
+                groundProgress *
+                static_cast<float>(
+                    std::max(
+                        1,
+                        windBladeGroundFrameCount
+                    )
+                    )
+                )
+        );
+
+    if (
+        windBladeCastTimer >=
+        windBladeSlashStartTime
+        )
+    {
+        const float slashDuration =
+            std::max(
+                0.01f,
+                safeDuration -
+                windBladeSlashStartTime
+            );
+
+        const float slashProgress =
+            Clamp(
+                (
+                    windBladeCastTimer -
+                    windBladeSlashStartTime
+                    ) /
+                slashDuration,
+                0.0f,
+                0.99999f
+            );
+
+        windBladeSlashFrame =
+            std::min(
+                std::max(
+                    0,
+                    windBladeSlashFrameCount - 1
+                ),
+                static_cast<int>(
+                    slashProgress *
+                    static_cast<float>(
+                        std::max(
+                            1,
+                            windBladeSlashFrameCount
+                        )
+                        )
+                    )
+            );
+    }
+
+    while (
+        windBladeResolvedStrikeCount <
+        std::max(
+            1,
+            windBladeStrikeCount
+        ) &&
+        windBladeCastTimer >=
+        windBladeFirstStrikeTime +
+        static_cast<float>(
+            windBladeResolvedStrikeCount
+            ) *
+        windBladeStrikeInterval
+        )
+    {
+        ResolveWindBladeImpact();
+        ++windBladeResolvedStrikeCount;
+
+        SpawnHitSpark(
+            playerPosition,
+            1.20f,
+            windBladeSlashSwordHeight
+        );
+    }
+
+    if (
+        windBladeCastTimer <
+        safeDuration
+        )
+    {
+        return;
+    }
+
+    windBladeCasting = false;
+    windBladeCastTimer = safeDuration;
+
+    playerDirection =
+        windBladeStartDirection;
+
+    lastPlayerDirection =
+        windBladeStartDirection;
+
+    playerAnimationState =
+        PlayerAnimationState::Idle;
+
+    playerAnimFrame = 0;
+    playerAnimTimer = 0.0f;
+}
+
+
+
+void Game::ResolveWindBladeImpact()
+{
+    const int slotIndex =
+        FindSkillSlotIndex(
+            SkillType::SpinningBlade
+        );
+
+    const int level =
+        slotIndex >= 0
+        ? skills[slotIndex].level
+        : 1;
+
+    const int damage =
+        windBladeBaseDamage +
+        std::max(
+            0,
+            level - 1
+        ) *
+        windBladeDamagePerLevel;
+
+    const float damageRadius =
+        windBladeDamageRadius +
+        static_cast<float>(
+            std::max(
+                0,
+                level - 1
+            )
+            ) *
+        4.0f;
+
+    const int playerElevation =
+        GetTerrainElevationAtWorld(
+            playerPosition
+        );
+
+    for (Enemy& enemy : enemies)
+    {
+        if (
+            !enemy.active ||
+            IsEnemySpawnProtected(
+                enemy
+            ) ||
+            GetTerrainElevationAtWorld(
+                enemy.pos
+            ) !=
+            playerElevation
+            )
+        {
+            continue;
+        }
+
+        if (
+            Vector2Distance(
+                playerPosition,
+                enemy.pos
+            ) >
+            damageRadius +
+            enemy.radius
+            )
+        {
+            continue;
+        }
+
+        ApplySkillDamageToEnemy(
+            enemy,
+            SkillType::SpinningBlade,
+            damage,
+            enemy.pos
+        );
+
+        if (
+            !enemy.active ||
+            enemy.type ==
+            EnemyType::Boss
+            )
+        {
+            continue;
+        }
+
+        Vector2 pushDirection =
+            Vector2Subtract(
+                enemy.pos,
+                playerPosition
+            );
+
+        if (
+            Vector2Length(
+                pushDirection
+            ) <=
+            0.001f
+            )
+        {
+            pushDirection = {
+                1.0f,
+                0.0f
+            };
+        }
+        else
+        {
+            pushDirection =
+                Vector2Normalize(
+                    pushDirection
+                );
+        }
+
+        constexpr float maximumPushStep =
+            3.0f;
+
+        const int pushStepCount =
+            std::max(
+                1,
+                static_cast<int>(
+                    std::ceil(
+                        windBladeKnockbackDistance /
+                        maximumPushStep
+                    )
+                    )
+            );
+
+        const Vector2 pushStep =
+            Vector2Scale(
+                pushDirection,
+                windBladeKnockbackDistance /
+                static_cast<float>(
+                    pushStepCount
+                    )
+            );
+
+        for (
+            int pushIndex = 0;
+            pushIndex < pushStepCount;
+            ++pushIndex
+            )
+        {
+            const Vector2 candidate =
+                Vector2Add(
+                    enemy.pos,
+                    pushStep
+                );
+
+            if (
+                !CanEnemyStandAt(
+                    enemy.pos,
+                    candidate,
+                    std::max(
+                        6.0f,
+                        enemy.radius *
+                        0.55f
+                    )
+                )
+                )
+            {
+                break;
+            }
+
+            enemy.pos =
+                candidate;
+        }
+
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+        enemy.pathRefreshTimer =
+            enemy.pathRefreshInterval;
+    }
+}
+
+
+
+void Game::DrawWindBladeGround2D()
+{
+    if (
+        !windBladeCasting ||
+        !windBladeGroundSpriteLoaded ||
+        windBladeGroundSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
+
+    const float halfSize =
+        windBladeGroundVisualSize *
+        0.5f;
+
+    const Vector2 northWest{
+        playerPosition.x - halfSize,
+        playerPosition.y - halfSize
+    };
+
+    const Vector2 northEast{
+        playerPosition.x + halfSize,
+        playerPosition.y - halfSize
+    };
+
+    const Vector2 southEast{
+        playerPosition.x + halfSize,
+        playerPosition.y + halfSize
+    };
+
+    const Vector2 southWest{
+        playerPosition.x - halfSize,
+        playerPosition.y + halfSize
+    };
+
+    BeginBlendMode(
+        BLEND_ALPHA
+    );
+
+    DrawTextureFrameOnQuad2D(
+        windBladeGroundSpriteSheet,
+        GetHorizontalVfxSourceRect(
+            windBladeGroundSpriteSheet,
+            windBladeGroundFrameCount,
+            windBladeGroundFrame
+        ),
+        WorldToViewElevated(
+            northWest,
+            windBladeGroundHeightBias
+        ),
+        WorldToViewElevated(
+            northEast,
+            windBladeGroundHeightBias
+        ),
+        WorldToViewElevated(
+            southEast,
+            windBladeGroundHeightBias
+        ),
+        WorldToViewElevated(
+            southWest,
+            windBladeGroundHeightBias
+        ),
+        WHITE
+    );
+
+    EndBlendMode();
+}
+
+
+
+void Game::DrawWindBladeGround3D()
+{
+    if (
+        !windBladeCasting ||
+        !windBladeGroundSpriteLoaded ||
+        windBladeGroundSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
+
+    DrawHybridGroundTextureFrame(
+        windBladeGroundSpriteSheet,
+        GetHorizontalVfxSourceRect(
+            windBladeGroundSpriteSheet,
+            windBladeGroundFrameCount,
+            windBladeGroundFrame
+        ),
+        playerPosition,
+        windBladeGroundVisualSize,
+        windBladeGroundHeightBias,
+        WHITE
+    );
+}
+
+
+
+void Game::DrawWindBladeSlash2D()
+{
+    if (
+        !windBladeCasting ||
+        windBladeCastTimer <
+        windBladeSlashStartTime ||
+        !windBladeSlashSpriteLoaded ||
+        windBladeSlashSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
+
+    Rectangle source =
+        GetHorizontalVfxSourceRect(
+            windBladeSlashSpriteSheet,
+            windBladeSlashFrameCount,
+            windBladeSlashFrame
+        );
+
+    const Vector2 drawPosition =
+        WorldToViewElevated(
+            playerPosition,
+            windBladeSlashSwordHeight
+        );
+
+    const Rectangle destination{
+        drawPosition.x,
+        drawPosition.y,
+        windBladeSlashVisualWidth,
+        windBladeSlashVisualHeight
+    };
+
+    const Vector2 origin{
+        windBladeSlashVisualWidth *
+        0.5f,
+        windBladeSlashVisualHeight *
+        0.5f
+    };
+
+    BeginBlendMode(
+        BLEND_ALPHA
+    );
+
+    DrawTexturePro(
+        windBladeSlashSpriteSheet,
+        source,
+        destination,
+        origin,
+        windBladeSlashRotationOffsetDegrees,
+        WHITE
+    );
+
+    source.width =
+        -fabsf(
+            source.width
+        );
+
+    source.height =
+        -fabsf(
+            source.height
+        );
+
+    DrawTexturePro(
+        windBladeSlashSpriteSheet,
+        source,
+        destination,
+        origin,
+        windBladeSlashRotationOffsetDegrees,
+        WHITE
+    );
+
+    EndBlendMode();
+}
+
+
+
+void Game::DrawWindBladeSlash3D()
+{
+    if (
+        !windBladeCasting ||
+        windBladeCastTimer <
+        windBladeSlashStartTime ||
+        !windBladeSlashSpriteLoaded ||
+        windBladeSlashSpriteSheet.id == 0
+        )
+    {
+        return;
+    }
+
+    const Rectangle source =
+        GetHorizontalVfxSourceRect(
+            windBladeSlashSpriteSheet,
+            windBladeSlashFrameCount,
+            windBladeSlashFrame
+        );
+
+    DrawHybridBillboardFrameRotated(
+        windBladeSlashSpriteSheet,
+        source,
+        playerPosition,
+        windBladeSlashVisualWidth,
+        windBladeSlashVisualHeight,
+        windBladeSlashSwordHeight,
+        windBladeSlashRotationOffsetDegrees,
+        false,
+        false,
+        WHITE
+    );
+
+    DrawHybridBillboardFrameRotated(
+        windBladeSlashSpriteSheet,
+        source,
+        playerPosition,
+        windBladeSlashVisualWidth,
+        windBladeSlashVisualHeight,
+        windBladeSlashSwordHeight,
+        windBladeSlashRotationOffsetDegrees,
+        true,
+        true,
+        WHITE
+    );
+}
+
+
+
+void Game::DrawHybridBillboardFrameRotated(
+    Texture2D texture,
+    Rectangle source,
+    Vector2 worldPosition,
+    float widthPixels,
+    float heightPixels,
+    float additionalHeightPixels,
+    float rotationDegrees,
+    bool flipX,
+    bool flipY,
+    Color tint
+) const
+{
+    if (
+        texture.id == 0 ||
+        texture.width <= 0 ||
+        texture.height <= 0 ||
+        widthPixels <= 0.0f ||
+        heightPixels <= 0.0f
+        )
+    {
+        return;
+    }
+
+    Vector3 cameraForward =
+        Vector3Normalize(
+            Vector3Subtract(
+                hybridCamera.target,
+                hybridCamera.position
+            )
+        );
+
+    Vector3 screenRight =
+        Vector3Normalize(
+            Vector3CrossProduct(
+                cameraForward,
+                hybridCamera.up
+            )
+        );
+
+    if (
+        Vector3Length(
+            screenRight
+        ) <=
+        0.0001f
+        )
+    {
+        screenRight = {
+            1.0f,
+            0.0f,
+            0.0f
+        };
+    }
+
+    Vector3 screenUp =
+        Vector3Normalize(
+            Vector3CrossProduct(
+                screenRight,
+                cameraForward
+            )
+        );
+
+    const float radians =
+        rotationDegrees *
+        DEG2RAD;
+
+    const float cosine =
+        cosf(
+            radians
+        );
+
+    const float sine =
+        sinf(
+            radians
+        );
+
+    const Vector3 rotatedRight =
+        Vector3Add(
+            Vector3Scale(
+                screenRight,
+                cosine
+            ),
+            Vector3Scale(
+                screenUp,
+                sine
+            )
+        );
+
+    const Vector3 rotatedUp =
+        Vector3Add(
+            Vector3Scale(
+                screenUp,
+                cosine
+            ),
+            Vector3Scale(
+                screenRight,
+                -sine
+            )
+        );
+
+    const Vector3 center =
+        WorldToHybrid3D(
+            worldPosition,
+            additionalHeightPixels
+        );
+
+    const Vector3 halfRight =
+        Vector3Scale(
+            rotatedRight,
+            PixelsToHybridUnits(
+                widthPixels *
+                0.5f
+            )
+        );
+
+    const Vector3 halfUp =
+        Vector3Scale(
+            rotatedUp,
+            PixelsToHybridUnits(
+                heightPixels *
+                0.5f
+            )
+        );
+
+    const Vector3 topLeft =
+        Vector3Add(
+            Vector3Subtract(
+                center,
+                halfRight
+            ),
+            halfUp
+        );
+
+    const Vector3 topRight =
+        Vector3Add(
+            Vector3Add(
+                center,
+                halfRight
+            ),
+            halfUp
+        );
+
+    const Vector3 bottomLeft =
+        Vector3Subtract(
+            Vector3Subtract(
+                center,
+                halfRight
+            ),
+            halfUp
+        );
+
+    const Vector3 bottomRight =
+        Vector3Subtract(
+            Vector3Add(
+                center,
+                halfRight
+            ),
+            halfUp
+        );
+
+    const float inverseTextureWidth =
+        1.0f /
+        static_cast<float>(
+            texture.width
+            );
+
+    const float inverseTextureHeight =
+        1.0f /
+        static_cast<float>(
+            texture.height
+            );
+
+    float u0 =
+        source.x *
+        inverseTextureWidth;
+
+    float u1 =
+        (
+            source.x +
+            source.width
+            ) *
+        inverseTextureWidth;
+
+    float v0 =
+        source.y *
+        inverseTextureHeight;
+
+    float v1 =
+        (
+            source.y +
+            source.height
+            ) *
+        inverseTextureHeight;
+
+    if (flipX)
+    {
+        std::swap(
+            u0,
+            u1
+        );
+    }
+
+    if (flipY)
+    {
+        std::swap(
+            v0,
+            v1
+        );
+    }
+
+    rlSetTexture(
+        texture.id
+    );
+
+    rlBegin(
+        RL_TRIANGLES
+    );
+
+    rlColor4ub(
+        tint.r,
+        tint.g,
+        tint.b,
+        tint.a
+    );
+
+    rlTexCoord2f(u0, v0);
+    rlVertex3f(
+        topLeft.x,
+        topLeft.y,
+        topLeft.z
+    );
+
+    rlTexCoord2f(u0, v1);
+    rlVertex3f(
+        bottomLeft.x,
+        bottomLeft.y,
+        bottomLeft.z
+    );
+
+    rlTexCoord2f(u1, v1);
+    rlVertex3f(
+        bottomRight.x,
+        bottomRight.y,
+        bottomRight.z
+    );
+
+    rlTexCoord2f(u0, v0);
+    rlVertex3f(
+        topLeft.x,
+        topLeft.y,
+        topLeft.z
+    );
+
+    rlTexCoord2f(u1, v1);
+    rlVertex3f(
+        bottomRight.x,
+        bottomRight.y,
+        bottomRight.z
+    );
+
+    rlTexCoord2f(u1, v0);
+    rlVertex3f(
+        topRight.x,
+        topRight.y,
+        topRight.z
+    );
+
+    rlEnd();
+    rlSetTexture(0);
+}
+

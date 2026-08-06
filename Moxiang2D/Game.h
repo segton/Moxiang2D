@@ -24,7 +24,12 @@ enum class PlayerAnimationState
 {
     Idle,
     Walking,
-    Attacking
+    Attacking,
+
+    // Dedicated animation state used by the reworked 360-degree
+    // Wind Blade skill. It reuses the directional attack sheet while
+    // rapidly cycling through all eight facing rows.
+    SkillSpinning
 };
 
 enum class GameState
@@ -49,7 +54,11 @@ enum class VfxType
     SmokeSprite,
     FireLoopSprite,
     RockDebrisSprite,
-    DongfengChargeStarSprite
+    DongfengChargeStarSprite,
+    BossDeathExplosionSprite,
+    BossDeathGemShardSprite,
+    BossDeathGlassShardSprite,
+
 };
 
 enum class TerrainCliffFace
@@ -307,7 +316,8 @@ enum class BossActionState
     ChargeWindup,
     ChargeActive,
 
-    Stunned
+    Stunned,
+    Dying
 };
 
 enum class BossDashPurpose
@@ -868,6 +878,15 @@ struct Enemy
 
     int bossHealingSummonWave =
         0;
+
+    int bossDeathFrame = 0;
+    float bossDeathFrameTimer = 0.0f;
+    float bossDeathFinalHoldTimer = 0.0f;
+    float bossDeathShakeTimer = 0.0f;
+    float bossDeathParticleTimer = 0.0f;
+
+    bool bossDeathEnteredLastFrame = false;
+    bool bossDeathExplosionTriggered = false;
 
     // --------------------------------------------------
 // Enemy spawning sequence
@@ -1587,6 +1606,14 @@ private:
     bool TryActivateSkillAtScreen(Vector2 screenPos);
     void ActivateSkill(SkillType type);
 
+    void ActivateWindBlade();
+    void UpdateWindBlade(float dt);
+    void ResolveWindBladeImpact();
+    void DrawWindBladeGround2D();
+    void DrawWindBladeGround3D();
+    void DrawWindBladeSlash2D();
+    void DrawWindBladeSlash3D();
+
     void ActivateHuashan();
     void UpdateHuashan(float dt);
     void ResolveHuashanImpact();
@@ -2089,6 +2116,22 @@ private:
         float whiteFlashAmount = 0.0f
     ) const;
 
+    // Camera-facing VFX billboard with screen-plane rotation and optional
+    // mirroring. This is separate from actor billboards so existing player,
+    // enemy and obstacle rendering remains untouched.
+    void DrawHybridBillboardFrameRotated(
+        Texture2D texture,
+        Rectangle source,
+        Vector2 worldPosition,
+        float widthPixels,
+        float heightPixels,
+        float additionalHeightPixels,
+        float rotationDegrees,
+        bool flipX,
+        bool flipY,
+        Color tint
+    ) const;
+
     void DrawHybridGroundDisc(
         Vector2 worldPosition,
         float radiusPixels,
@@ -2163,6 +2206,13 @@ private:
         Vector2 drawPosition,
         Color tint
     );
+
+    void StartBossDeath(Enemy& enemy);
+    void UpdateBossDeath(Enemy& enemy, float dt);
+    void SpawnBossDeathParticles(Vector2 worldPosition);
+    void SpawnBossDeathExplosion(Vector2 worldPosition);
+    Rectangle GetBossDeathSourceRect(int frame) const;
+
 
 private:
     std::vector<int> tiles;
@@ -2299,6 +2349,13 @@ private:
     bool groundCacheDirty = true;
 
     Texture2D slashVfxSpriteSheet{};
+
+    // Reworked Wind Blade assets.
+    // typhoon_02.png: 32 horizontal frames, 64 x 84 each.
+    // slash_03.png:   16 horizontal frames, 84 x 102 each.
+    Texture2D windBladeGroundSpriteSheet{};
+    Texture2D windBladeSlashSpriteSheet{};
+
     Texture2D impactVfxSpriteSheet{};
     Texture2D smokeVfxSpriteSheet{};
     Texture2D fireLoopVfxSpriteSheet{};
@@ -2354,6 +2411,8 @@ private:
         3;
 
     bool slashVfxLoaded = false;
+    bool windBladeGroundSpriteLoaded = false;
+    bool windBladeSlashSpriteLoaded = false;
     bool impactVfxLoaded = false;
     bool smokeVfxLoaded = false;
     bool fireLoopVfxLoaded = false;
@@ -2361,6 +2420,13 @@ private:
     bool dongfengChargeStarLoaded = false;
 
     int slashVfxFrameCount = 10;
+
+    int windBladeGroundFrameCount = 24;
+    int windBladeSlashFrameCount = 16;
+
+    int windBladeGroundFrame = 0;
+    int windBladeSlashFrame = 0;
+
     int impactVfxFrameCount = 10;
     int smokeVfxFrameCount = 7;
     int fireLoopVfxFrameCount = 5;
@@ -2823,6 +2889,43 @@ private:
 
     float attackAssistPathTimer = 0.0f;
 
+    // --------------------------------------------------
+    // Reworked Wind Blade skill
+    // --------------------------------------------------
+
+    bool windBladeCasting = false;
+    int windBladeResolvedStrikeCount = 0;
+
+    float windBladeCastTimer = 0.0f;
+    float windBladeCastDuration = 1.4f;
+    float windBladeFirstStrikeTime = 0.20f;
+    float windBladeStrikeInterval = 0.3f;
+    int windBladeStrikeCount = 3;
+    float windBladeSlashStartTime = 0.08f;
+
+    PlayerDirection windBladeStartDirection =
+        PlayerDirection::Down;
+
+    // One complete direction-row revolution while the attack frames loop.
+    float windBladeSpinTurns = 2.0f;
+    float windBladePlayerFrameDuration = 0.08f;
+
+    float windBladeGroundVisualSize = 600.0f;
+    float windBladeGroundHeightBias = 4.0f;
+
+    // The slash sheet is intentionally stretched into a broad horizontal
+    // arc. A second mirrored copy is rotated by 180 degrees to close the
+    // circle around the player.
+    float windBladeSlashVisualWidth = 280.0f;
+    float windBladeSlashVisualHeight = 280.0f;
+    float windBladeSlashSwordHeight = 82.0f;
+    float windBladeSlashRotationOffsetDegrees = -8.0f;
+
+    float windBladeDamageRadius = 300.0f;
+    int windBladeBaseDamage = 82;
+    int windBladeDamagePerLevel = 20;
+    float windBladeKnockbackDistance = 100.0f;
+
     std::vector<OrbitalBlade> orbitalBlades;
 
     bool huashanJumpActive = false;
@@ -2930,9 +3033,9 @@ private:
     float dongfengWaveSpeed = 700.0f;
 
     float dongfengStartRadius = 60.0f;
-    float dongfengEndRadius = 140.0f;
+    float dongfengEndRadius = 1400.0f;
 
-    int dongfengMainDamage = 240;
+    int dongfengMainDamage = 400;
     int dongfengLineDamage = 135;
 
     float dongfengKnockback = 3200.0f;
@@ -3431,6 +3534,25 @@ private:
     Texture2D bossPreHealSpriteSheet{};
     Texture2D bossHealingLoopSpriteSheet{};
 
+    Texture2D bossDeathSpriteSheet{};
+    bool bossDeathSpriteLoaded = false;
+    int bossDeathFrameColumns = 4;
+    int bossDeathFrameRows = 4;
+    int bossDeathFrameCount = 16;
+    float bossDeathFrameDuration =
+        0.15f;
+    float bossDeathFinalHoldDuration =
+        2.00f;
+    float bossDeathParticleInterval = 0.045f;
+    float bossDeathShakeStrength = 8.0f;
+
+    Texture2D bossDeathExplosionSpriteSheet{};
+    bool bossDeathExplosionSpriteLoaded = false;
+    int bossDeathExplosionFrameCount = 24;
+    float bossDeathExplosionFrameDuration = 0.050f;
+    float bossDeathExplosionVisualSize = 420.0f;
+    float bossDeathExplosionVisualHeight = 90.0f;
+
     bool bossPreHealSpriteLoaded = false;
     bool bossHealingLoopSpriteLoaded = false;
 
@@ -3478,6 +3600,14 @@ private:
     float bossPreChargeFrameDuration = 0.09f;
     float bossChargeFrameDuration = 0.075f;
 
+    Texture2D bossDeathGemShardSpriteSheet{};
+    Texture2D bossDeathGlassShardSpriteSheet{};
+
+    bool bossDeathGemShardSpriteLoaded = false;
+    bool bossDeathGlassShardSpriteLoaded = false;
+
+    int bossDeathGemShardFrameCount = 6;
+    int bossDeathGlassShardFrameCount = 6;
 
     // --------------------------------------------------
 // Boss healing ability
