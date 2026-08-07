@@ -26,10 +26,11 @@ enum class PlayerAnimationState
     Walking,
     Attacking,
 
-    // Dedicated animation state used by the reworked 360-degree
-    // Wind Blade skill. It reuses the directional attack sheet while
-    // rapidly cycling through all eight facing rows.
-    SkillSpinning
+    SkillSpinning,
+
+    // Uses the normal directional attack artwork,
+    // but timing is controlled by Dongfeng itself.
+    DongfengCasting
 };
 
 enum class GameState
@@ -54,11 +55,11 @@ enum class VfxType
     SmokeSprite,
     FireLoopSprite,
     RockDebrisSprite,
+    ArcherArrowTrailSprite,
     DongfengChargeStarSprite,
     BossDeathExplosionSprite,
     BossDeathGemShardSprite,
     BossDeathGlassShardSprite,
-
 };
 
 enum class TerrainCliffFace
@@ -348,7 +349,8 @@ enum class ProjectileOwner
 enum class ProjectileVisualType
 {
     DefaultSphere = 0,
-    FireLoop
+    FireLoop,
+    ArcherArrow
 };
 
 
@@ -867,6 +869,16 @@ struct Enemy
     EnemyAnimationState animationState =
         EnemyAnimationState::Idle;
 
+    // Final-arena Boss activation state.
+    bool bossActivationRequired = false;
+    bool bossActivated = true;
+
+    // Position where the Boss remains before activation.
+    Vector2 bossDormantPosition{
+        0.0f,
+        0.0f
+    };
+
     // --------------------------------------------------
 // Boss healing-wave ownership
 //
@@ -1092,6 +1104,12 @@ struct Projectile
 
     float visualSize =
         48.0f;
+
+    float rotationDegrees =
+        0.0f;
+
+    float trailSpawnTimer =
+        0.0f;
 
     float life = 2.0f;
     bool active = false;
@@ -1531,6 +1549,17 @@ private:
     void SpawnRockImpactVfx(
         Vector2 worldPosition,
         float rockVisualRadius
+    );
+
+    void SpawnArcherArrowTrail(
+        Vector2 worldPosition,
+        float visualHeight,
+        float rotationDegrees
+    );
+
+    void AddScreenShake(
+        float duration,
+        float strength
     );
 
     void SpawnDongfengChargeStar(
@@ -2113,7 +2142,8 @@ private:
         Color tint,
         HybridBillboardOrientation orientation =
         HybridBillboardOrientation::UprightWorld,
-        float whiteFlashAmount = 0.0f
+        float whiteFlashAmount = 0.0f,
+        float localRotationDegrees = 0.0f
     ) const;
 
     // Camera-facing VFX billboard with screen-plane rotation and optional
@@ -2127,6 +2157,7 @@ private:
         float heightPixels,
         float additionalHeightPixels,
         float rotationDegrees,
+        float groundTiltDegrees,
         bool flipX,
         bool flipY,
         Color tint
@@ -2363,6 +2394,9 @@ private:
     Texture2D dongfengChargeStarSpriteSheet{};
     Texture2D bossFallingRockSpriteSheet{};
 
+    Texture2D archerArrowTexture{};
+    Texture2D archerArrowTrailSpriteSheet{};
+
     Texture2D dongfengCrescentSpriteSheet{};
 
     bool dongfengCrescentLoaded =
@@ -2404,6 +2438,19 @@ private:
     float dongfengSparkSpacing = 42.0f;
     float dongfengSparkPreviewLength = 380.0f;
 
+    // The final attack frame should appear only shortly
+// before the Dongfeng projectile is released.
+    float dongfengAttackFinalFrameLeadTime =
+        0.07f;
+
+    // Keep the release pose very briefly AFTER the projectile
+    // appears so the final attack frame is actually visible.
+    float dongfengAttackReleaseHoldDuration =
+        0.08f;
+
+    float dongfengAttackReleasePoseTimer =
+        0.0f;
+
     bool bossFallingRockSpriteLoaded =
         false;
 
@@ -2417,6 +2464,8 @@ private:
     bool smokeVfxLoaded = false;
     bool fireLoopVfxLoaded = false;
     bool rockDebrisVfxLoaded = false;
+    bool archerArrowTextureLoaded = false;
+    bool archerArrowTrailLoaded = false;
     bool dongfengChargeStarLoaded = false;
 
     int slashVfxFrameCount = 10;
@@ -2431,6 +2480,7 @@ private:
     int smokeVfxFrameCount = 7;
     int fireLoopVfxFrameCount = 5;
     int rockDebrisVfxFrameCount = 6;
+    int archerArrowTrailFrameCount = 7;
     int dongfengChargeStarFrameCount = 10;
 
     float dongfengChargeStarStartSize = 320.0f;
@@ -2454,6 +2504,28 @@ private:
     float impactVfxFrameDuration = 0.035f;
     float smokeVfxFrameDuration = 0.055f;
     float fireLoopVfxFrameDuration = 0.080f;
+    float archerArrowTrailFrameDuration = 0.082f;
+    float archerArrowTrailSpawnInterval = 0.045f;
+
+    Rectangle archerArrowSourceRect{
+        18.0f,
+        110.0f,
+        220.0f,
+        36.0f
+    };
+
+    float archerArrowDrawWidth =
+        125.0f;
+
+    float archerArrowDrawHeight =
+        20.5f;
+    float archerArrowTrailDrawWidth = 28.0f;
+    float archerArrowTrailDrawHeight = 28.0f;
+
+    float bossSlamShakeDuration = 0.18f;
+    float bossSlamShakeStrength = 12.0f;
+    float bossRoarShakeDuration = 0.08f;
+    float bossRoarShakeStrength = 4.5f;
 
     // Change this if the slash faces 90 degrees away
     // from the player's actual attack direction.
@@ -2558,6 +2630,17 @@ private:
     // Attack sprite sheet.
     Texture2D playerAttackSpriteSheet{};
     bool playerAttackSpriteLoaded = false;
+
+    Texture2D playerWindBladeSpriteSheet{};
+    bool playerWindBladeSpriteLoaded = false;
+
+    int playerWindBladeColumns = 5;
+    int playerWindBladeRows = 5;
+
+    int playerWindBladeFrameWidth = 256;
+    int playerWindBladeFrameHeight = 256;
+
+    int playerWindBladeFrameCount = 21;
 
     Texture2D playerIdleSpriteSheet{};
     bool playerIdleSpriteLoaded = false;
@@ -2897,7 +2980,7 @@ private:
     int windBladeResolvedStrikeCount = 0;
 
     float windBladeCastTimer = 0.0f;
-    float windBladeCastDuration = 1.4f;
+    float windBladeCastDuration = 1.8f;
     float windBladeFirstStrikeTime = 0.20f;
     float windBladeStrikeInterval = 0.3f;
     int windBladeStrikeCount = 3;
@@ -2906,9 +2989,18 @@ private:
     PlayerDirection windBladeStartDirection =
         PlayerDirection::Down;
 
-    // One complete direction-row revolution while the attack frames loop.
-    float windBladeSpinTurns = 2.0f;
-    float windBladePlayerFrameDuration = 0.08f;
+    // Wind Blade dedicated animation.
+    //
+    // These are ZERO-BASED frame indices.
+    // Human frames 10-17 therefore become 9-16.
+    int windBladeSpinLoopStartFrame = 9;
+    int windBladeSpinLoopEndFrame = 16;
+
+    // The complete frame 10-17 section plays three times.
+    int windBladeSpinLoopCount = 2;
+
+    // Speed of the dedicated character animation.
+    float windBladePlayerFrameDuration = 0.055f;
 
     float windBladeGroundVisualSize = 600.0f;
     float windBladeGroundHeightBias = 4.0f;
@@ -2916,11 +3008,14 @@ private:
     // The slash sheet is intentionally stretched into a broad horizontal
     // arc. A second mirrored copy is rotated by 180 degrees to close the
     // circle around the player.
-    float windBladeSlashVisualWidth = 280.0f;
-    float windBladeSlashVisualHeight = 280.0f;
-    float windBladeSlashSwordHeight = 82.0f;
+    float windBladeSlashVisualWidth = 340.0f;
+    float windBladeSlashVisualHeight = 220.0f;
+
+    float windBladeSlashSwordHeight = 50.0f;
+
     float windBladeSlashRotationOffsetDegrees = -8.0f;
 
+    float windBladeSlashGroundTiltDegrees = 30.0f;
     float windBladeDamageRadius = 300.0f;
     int windBladeBaseDamage = 82;
     int windBladeDamagePerLevel = 20;
@@ -3390,6 +3485,10 @@ private:
 
     void ProcessPendingEnemySpawns();
 
+    Vector2 GetBossChamberCenterPosition(
+        int chamberId
+    ) const;
+
 
     // --------------------------------------------------
 // Boss bombardment
@@ -3609,6 +3708,15 @@ private:
     int bossDeathGemShardFrameCount = 6;
     int bossDeathGlassShardFrameCount = 6;
 
+    // Player distance required to awaken the final Boss.
+    float bossActivationRadius =
+        430.0f;
+
+    // Small delay before the awakened Boss can begin
+    // its more aggressive movement and special attacks.
+    float bossActivationGraceDuration =
+        0.65f;
+
     // --------------------------------------------------
 // Boss healing ability
 // --------------------------------------------------
@@ -3725,5 +3833,50 @@ private:
     Rectangle GetBossFallingRockSourceRect(
         int variation
     ) const;
+
+    Font uiFont{};
+    bool uiFontLoaded = false;
+
+    Font damageFont{};
+    bool damageFontLoaded = false;
+
+    float damageNumberFontSize = 30.0f;
+    float damageNumberFontSpacing = 0.0f;
+    float damageNumberOutlineSize = 2.0f;
+
+    Texture2D upgradeCardFrameTexture{};
+    bool upgradeCardFrameLoaded = false;
+
+    Texture2D skillIconWindBlade{};
+    bool skillIconWindBladeLoaded = false;
+
+    Texture2D skillIconHuashan{};
+    bool skillIconHuashanLoaded = false;
+
+    Texture2D skillIconDongfeng{};
+    bool skillIconDongfengLoaded = false;
+
+    float upgradeChoicePopupTimer = 0.0f;
+    float upgradeChoicePopupDuration = 0.5f;
+    float upgradeChoicePopupStagger = 0.2f;
+
+    void LoadSkillUiAssets();
+    void UnloadSkillUiAssets();
+
+    Texture2D* GetSkillIconTexture(SkillType type);
+
+    float MeasureUiTextWidth(const std::string& text, float fontSize, float spacing = 1.0f) const;
+    void DrawUiText(const std::string& text, Vector2 pos, float fontSize, Color color, float spacing = 1.0f) const;
+    void DrawWrappedUiText(
+        const std::string& text,
+        Rectangle bounds,
+        float fontSize,
+        float lineGap,
+        Color color,
+        int maxLines,
+        float spacing = 1.0f
+    ) const;
+
+    Rectangle FitTextureInRect(const Texture2D& texture, Rectangle bounds, float padding = 0.0f) const;
 
 };

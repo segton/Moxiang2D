@@ -99,6 +99,18 @@ namespace
         return output;
     }
 
+    static float EaseOutBack(float t)
+    {
+        t = Clamp(t, 0.0f, 1.0f);
+
+        const float c1 = 1.70158f;
+        const float c3 = c1 + 1.0f;
+
+        const float x = t - 1.0f;
+
+        return 1.0f + c3 * x * x * x + c1 * x * x;
+    }
+
     std::vector<DecalClipVertex> ClipDecalPolygonToRectangle(
         std::vector<DecalClipVertex> polygon,
         float minimumX,
@@ -1541,7 +1553,11 @@ void Game::Init()
     LoadCombatVfxSpriteSheets();
 
     InitCombat();
+
     LoadPlayerSpriteSheet();
+
+    // Load fonts, skill icons and upgrade-card UI.
+    LoadSkillUiAssets();
 
     // The window/OpenGL context already exists when Game::Init() runs.
     LoadIsoGroundShader();
@@ -1575,6 +1591,8 @@ void Game::Init()
 void Game::Shutdown()
 {
     ShutdownHybrid3D();
+
+    UnloadSkillUiAssets();
 
     if (groundCache.id != 0)
     {
@@ -1635,6 +1653,20 @@ void Game::Shutdown()
         UnloadTexture(playerAttackSpriteSheet);
         playerAttackSpriteSheet = {};
     }
+
+    if (
+        playerWindBladeSpriteSheet.id != 0
+        )
+    {
+        UnloadTexture(
+            playerWindBladeSpriteSheet
+        );
+
+        playerWindBladeSpriteSheet = {};
+    }
+
+    playerWindBladeSpriteLoaded =
+        false;
 
     if (playerIdleSpriteSheet.id != 0)
     {
@@ -3979,6 +4011,64 @@ void Game::LoadPlayerSpriteSheet()
             "[PLAYER SPRITE] Idle sheet not found. "
             "Falling back to walking frame 0: "
             "Assets/player/player_idle.png"
+        );
+    }
+
+    // --------------------------------------------------
+// Dedicated Wind Blade animation
+// --------------------------------------------------
+
+    playerWindBladeSpriteSheet =
+        LoadTexture(
+            "Assets/player/player_windblade.png"
+        );
+
+    if (
+        playerWindBladeSpriteSheet.id != 0
+        )
+    {
+        playerWindBladeSpriteLoaded =
+            true;
+
+        SetTextureFilter(
+            playerWindBladeSpriteSheet,
+            TEXTURE_FILTER_POINT
+        );
+
+        playerWindBladeFrameWidth =
+            playerWindBladeSpriteSheet.width /
+            std::max(
+                1,
+                playerWindBladeColumns
+            );
+
+        playerWindBladeFrameHeight =
+            playerWindBladeSpriteSheet.height /
+            std::max(
+                1,
+                playerWindBladeRows
+            );
+
+        TraceLog(
+            LOG_INFO,
+            "[PLAYER WINDBLADE] Loaded: %dx%d | "
+            "frame=%dx%d | frames=%d",
+            playerWindBladeSpriteSheet.width,
+            playerWindBladeSpriteSheet.height,
+            playerWindBladeFrameWidth,
+            playerWindBladeFrameHeight,
+            playerWindBladeFrameCount
+        );
+    }
+    else
+    {
+        playerWindBladeSpriteLoaded =
+            false;
+
+        TraceLog(
+            LOG_WARNING,
+            "[PLAYER WINDBLADE] Failed to load "
+            "Assets/player/player_windblade.png"
         );
     }
 
@@ -8125,9 +8215,9 @@ void Game::Update(float dt)
 
     if (gameState == GameState::ChoosingUpgrade)
     {
-        // Recalculate the cards every frame so window resizing,
-        // browser resizing and mobile orientation changes are handled.
         UpdateUpgradeChoiceLayout();
+
+        upgradeChoicePopupTimer += dt;
 
         UpdateInput(dt);
         UpdateVfx(dt);
@@ -14984,6 +15074,8 @@ void Game::OpenManualUpgradeMenu()
     gameState =
         GameState::ChoosingUpgrade;
 
+    upgradeChoicePopupTimer = 0.0f;
+
     // Release gameplay controls so they do not remain
     // held when the player returns from the menu.
     attackButtonDown =
@@ -18568,6 +18660,143 @@ Vector2 Game::GetRandomSpawnPosition() const
         );
 }
 
+Vector2 Game::GetBossChamberCenterPosition(
+    int chamberId
+) const
+{
+    const DungeonChamber* chamber =
+        FindChamberById(
+            chamberId
+        );
+
+    if (
+        chamber == nullptr ||
+        !chamber->hasCells
+        )
+    {
+        return GetRandomSpawnPositionInChamber(
+            chamberId
+        );
+    }
+
+    const Vector2 desiredCenter{
+        chamber->worldBounds.x +
+            chamber->worldBounds.width *
+            0.5f,
+
+        chamber->worldBounds.y +
+            chamber->worldBounds.height *
+            0.5f
+    };
+
+    bool foundValidCell =
+        false;
+
+    Vector2 bestPosition =
+        desiredCenter;
+
+    float bestDistanceSquared =
+        std::numeric_limits<float>::max();
+
+    for (
+        int cellY =
+        chamber->minCellY;
+        cellY <=
+        chamber->maxCellY;
+        ++cellY
+        )
+    {
+        for (
+            int cellX =
+            chamber->minCellX;
+            cellX <=
+            chamber->maxCellX;
+            ++cellX
+            )
+        {
+            if (
+                !IsCellInside(
+                    cellX,
+                    cellY
+                ) ||
+                !IsCellEnabled(
+                    cellX,
+                    cellY
+                )
+                )
+            {
+                continue;
+            }
+
+            const TerrainCell& cell =
+                terrainCells[
+                    CellIndex(
+                        cellX,
+                        cellY
+                    )
+                ];
+
+            if (
+                cell.chamberId !=
+                chamberId
+                )
+            {
+                continue;
+            }
+
+            // Avoid walls, blocked floor and occupied
+            // collision cells near the geometric center.
+            if (
+                IsCellBlocked(
+                    cellX,
+                    cellY
+                )
+                )
+            {
+                continue;
+            }
+
+            const Vector2 candidate =
+                CellToWorld(
+                    cellX,
+                    cellY
+                );
+
+            const float distanceSquared =
+                DistanceSquared(
+                    candidate,
+                    desiredCenter
+                );
+
+            if (
+                !foundValidCell ||
+                distanceSquared <
+                bestDistanceSquared
+                )
+            {
+                foundValidCell =
+                    true;
+
+                bestDistanceSquared =
+                    distanceSquared;
+
+                bestPosition =
+                    candidate;
+            }
+        }
+    }
+
+    if (foundValidCell)
+    {
+        return bestPosition;
+    }
+
+    // Fallback for an unusually blocked or malformed chamber.
+    return GetRandomSpawnPositionInChamber(
+        chamberId
+    );
+}
+
 Vector2 Game::GetRandomSpawnPositionInChamber(
     int chamberId
 ) const
@@ -18875,13 +19104,23 @@ bool Game::IsEnemySpawnProtected(
         return false;
     }
 
-    // The enemy is protected only before it has
-    // completely emerged from the ground.
-    return
+    const bool undergroundSpawnProtected =
         enemy.spawnState ==
         EnemySpawnState::GroundEffect ||
         enemy.spawnState ==
         EnemySpawnState::Emerging;
+
+    const bool dormantBossProtected =
+        enemy.type ==
+        EnemyType::Boss &&
+        enemy.bossActivationRequired &&
+        !enemy.bossActivated &&
+        enemy.bossActionState !=
+        BossActionState::Dying;
+
+    return
+        undergroundSpawnProtected ||
+        dormantBossProtected;
 }
 
 float Game::GetEnemySpawnDepth(
@@ -19237,10 +19476,20 @@ void Game::SpawnEnemyInChamber(
     enemy.id = nextEnemyId++;
     enemy.chamberId = chamberId;
     enemy.type = type;
+
+    const bool finalChamberBoss =
+        type == EnemyType::Boss &&
+        chamberId == BossChamberId;
+
     enemy.pos =
-        GetRandomSpawnPositionInChamber(
+        finalChamberBoss
+        ? GetBossChamberCenterPosition(
+            chamberId
+        )
+        : GetRandomSpawnPositionInChamber(
             chamberId
         );
+
     enemy.active = true;
 
     if (type == EnemyType::Grunt)
@@ -19299,11 +19548,20 @@ void Game::SpawnEnemyInChamber(
     }
     else if (type == EnemyType::Boss)
     {
+        enemy.bossActivationRequired =
+            finalChamberBoss;
+
+        enemy.bossActivated =
+            !finalChamberBoss;
+
+        enemy.bossDormantPosition =
+            enemy.pos;
+
         enemy.radius = 62.0f;
         enemy.speed = 72.0f;
 
         enemy.hp =
-            50 +
+            2000 +
             wave.wave * 80;
 
         enemy.maxHp =
@@ -19447,15 +19705,27 @@ void Game::SpawnEnemyInChamber(
         enemy.spawnStateTimer =
             0.0f;
 
-        RefreshEnemyPath(
-            enemy
-        );
+        enemy.path.clear();
+        enemy.pathIndex = 0;
+        enemy.pathRefreshTimer = 0.0f;
+
+        // Ordinary/debug bosses can behave immediately.
+        // The final Boss receives a path only after activation.
+        if (enemy.bossActivated)
+        {
+            RefreshEnemyPath(
+                enemy
+            );
+        }
     }
 
+    // IMPORTANT:
+    // Actually add the completed enemy to the game.
     enemies.push_back(
         enemy
     );
 }
+
 
 void Game::UpdateEnemies(float dt)
 {
@@ -19503,6 +19773,149 @@ void Game::UpdateEnemies(float dt)
             UpdateEnemySpawnState(
                 enemy,
                 dt
+            );
+        }
+
+        // --------------------------------------------------
+// Dormant final Boss
+//
+// The Boss remains fixed at the chamber center and
+// cannot move or attack until the player approaches.
+// --------------------------------------------------
+
+        if (
+            enemy.type ==
+            EnemyType::Boss &&
+            enemy.bossActivationRequired &&
+            !enemy.bossActivated
+            )
+        {
+            // Keep the Boss exactly at its authored activation point.
+            enemy.pos =
+                enemy.bossDormantPosition;
+
+            enemy.velocity = {
+                0.0f,
+                0.0f
+            };
+
+            enemy.knockbackVelocity = {
+                0.0f,
+                0.0f
+            };
+
+            enemy.visualHeight =
+                0.0f;
+
+            enemy.airborneTimer =
+                0.0f;
+
+            enemy.airborneMaxTimer =
+                0.0f;
+
+            enemy.landingStunTimer =
+                0.0f;
+
+            enemy.path.clear();
+            enemy.pathIndex = 0;
+            enemy.pathRefreshTimer = 0.0f;
+
+            enemy.attackTimer =
+                0.0f;
+
+            enemy.shootTimer =
+                0.0f;
+
+            enemy.animationState =
+                EnemyAnimationState::Idle;
+
+            enemy.bossActionState =
+                BossActionState::None;
+
+            const float activationDistance =
+                Vector2Distance(
+                    playerPosition,
+                    enemy.bossDormantPosition
+                );
+
+            if (
+                activationDistance >
+                bossActivationRadius
+                )
+            {
+                // The Boss may continue its idle animation,
+                // but performs no gameplay behaviour.
+                UpdateBossAnimation(
+                    enemy,
+                    dt
+                );
+
+                continue;
+            }
+
+            // --------------------------------------------------
+            // Boss activation
+            // --------------------------------------------------
+
+            enemy.bossActivated =
+                true;
+
+            enemy.bossDecisionTimer =
+                bossActivationGraceDuration;
+
+            enemy.bossForwardDashCooldownTimer =
+                std::max(
+                    enemy.bossForwardDashCooldownTimer,
+                    bossActivationGraceDuration
+                );
+
+            enemy.bossChargeCooldownTimer =
+                std::max(
+                    enemy.bossChargeCooldownTimer,
+                    bossActivationGraceDuration
+                );
+
+            enemy.bossBombardmentCooldownTimer =
+                std::max(
+                    enemy.bossBombardmentCooldownTimer,
+                    bossActivationGraceDuration
+                );
+
+            enemy.bossLaserCooldownTimer =
+                std::max(
+                    enemy.bossLaserCooldownTimer,
+                    bossActivationGraceDuration
+                );
+
+            Vector2 facingDirection =
+                Vector2Subtract(
+                    playerPosition,
+                    enemy.pos
+                );
+
+            if (
+                Vector2Length(
+                    facingDirection
+                ) >
+                0.001f
+                )
+            {
+                SetEnemyFacingFromWorldDirection(
+                    enemy,
+                    facingDirection
+                );
+            }
+
+            RefreshEnemyPath(
+                enemy
+            );
+
+            TraceLog(
+                LOG_INFO,
+                "[BOSS] Activated id=%d distance=%.1f radius=%.1f",
+                enemy.id,
+                activationDistance,
+                bossActivationRadius
             );
         }
 
@@ -20224,6 +20637,12 @@ void Game::SpawnEnemyProjectile(
 
     direction = Vector2Normalize(direction);
 
+    const float rotationDegrees =
+        atan2f(
+            direction.y,
+            direction.x
+        ) * RAD2DEG;
+
     Projectile projectile;
     projectile.owner = ProjectileOwner::Enemy;
     projectile.pos = startPos;
@@ -20248,38 +20667,61 @@ void Game::SpawnEnemyProjectile(
     projectile.life = 3.2f;
     projectile.active = true;
 
+    projectile.rotationDegrees =
+        rotationDegrees;
+
+    projectile.trailSpawnTimer =
+        0.0f;
+
     projectile.visualType =
         visualType;
 
     projectile.visualFrame =
-        GetRandomValue(
-            0,
-            std::max(
-                0,
-                fireLoopVfxFrameCount -
-                1
-            )
-        );
+        0;
 
     projectile.visualFrameTimer =
         0.0f;
 
     projectile.visualFrameDuration =
-        std::max(
-            0.01f,
-            fireLoopVfxFrameDuration
-        );
+        0.0f;
 
     projectile.visualSize =
+        radius * 2.0f;
+
+    if (
         visualType ==
         ProjectileVisualType::FireLoop
-        ? std::max(
-            44.0f,
-            radius *
-            5.0f
         )
-        : radius *
-        2.0f;
+    {
+        projectile.visualFrame =
+            GetRandomValue(
+                0,
+                std::max(
+                    0,
+                    fireLoopVfxFrameCount - 1
+                )
+            );
+
+        projectile.visualFrameDuration =
+            std::max(
+                0.01f,
+                fireLoopVfxFrameDuration
+            );
+
+        projectile.visualSize =
+            std::max(
+                44.0f,
+                radius * 5.0f
+            );
+    }
+    else if (
+        visualType ==
+        ProjectileVisualType::ArcherArrow
+        )
+    {
+        projectile.visualSize =
+            archerArrowDrawWidth;
+    }
 
     projectiles.push_back(projectile);
 }
@@ -20521,6 +20963,53 @@ void Game::UpdateProjectiles(float dt)
 
         projectile.pos =
             nextPosition;
+
+        if (
+            projectile.visualType ==
+            ProjectileVisualType::ArcherArrow &&
+            archerArrowTrailLoaded &&
+            archerArrowTrailSpriteSheet.id != 0 &&
+            Vector2Length(projectile.velocity) > 0.001f
+            )
+        {
+            projectile.rotationDegrees =
+                atan2f(
+                    projectile.velocity.y,
+                    projectile.velocity.x
+                ) * RAD2DEG;
+
+            projectile.trailSpawnTimer +=
+                dt;
+
+            const Vector2 direction =
+                Vector2Normalize(
+                    projectile.velocity
+                );
+
+            while (
+                projectile.trailSpawnTimer >=
+                archerArrowTrailSpawnInterval
+                )
+            {
+                projectile.trailSpawnTimer -=
+                    archerArrowTrailSpawnInterval;
+
+                const Vector2 trailPosition =
+                    Vector2Subtract(
+                        projectile.pos,
+                        Vector2Scale(
+                            direction,
+                            10.0f
+                        )
+                    );
+
+                SpawnArcherArrowTrail(
+                    trailPosition,
+                    projectile.visualHeight,
+                    projectile.rotationDegrees
+                );
+            }
+        }
 
         projectile.life -=
             dt;
@@ -21439,6 +21928,19 @@ void Game::LoadCombatVfxSpriteSheets()
         rockDebrisVfxSpriteSheet,
         rockDebrisVfxLoaded
     );
+
+    LoadSheet(
+        "Assets/vfx/archer_arrow.png",
+        archerArrowTexture,
+        archerArrowTextureLoaded
+    );
+
+    LoadSheet(
+        "Assets/vfx/spark_little.png",
+        archerArrowTrailSpriteSheet,
+        archerArrowTrailLoaded
+    );
+
     LoadSheet(
         "Assets/vfx/spark_big.png",
         dongfengChargeStarSpriteSheet,
@@ -21584,15 +22086,18 @@ void Game::LoadCombatVfxSpriteSheets()
 
 void Game::UpdateSkillButtonRects()
 {
-    float size = 56.0f;
-    float gap = 12.0f;
+    float size = 68.0f;
+    float gap = 10.0f;
 
     float screenW = static_cast<float>(GetScreenWidth());
     float screenH = static_cast<float>(GetScreenHeight());
 
     float totalW = size * 3.0f + gap * 2.0f;
     float startX = screenW * 0.5f - totalW * 0.5f;
-    float y = screenH - 92.0f;
+    float y =
+        screenH -
+        size -
+        24.0f;
 
     for (int i = 0; i < 3; ++i)
     {
@@ -22062,15 +22567,78 @@ void Game::ActivateDongfeng()
             GetPlayerFacingWorldDirection();
     }
 
-    direction = Vector2Normalize(direction);
+    direction =
+        Vector2Normalize(
+            direction
+        );
 
-    dongfengCasting = true;
-    dongfengCastTimer = 0.0f;
+    // Cancel an unfinished ordinary melee swing first.
+    CancelPlayerAttackAnimation();
 
-    // Upgrade scaling:
-    // Lv1 = 0.50s
-    // Each level reduces cast by 0.025s
-    // Minimum = 0.22s
+    // --------------------------------------------------
+    // Face the Dongfeng launch direction
+    // --------------------------------------------------
+
+    Vector2 attackViewDirection =
+        WorldVectorToView(
+            direction
+        );
+
+    if (
+        Vector2Length(
+            attackViewDirection
+        ) >
+        0.01f
+        )
+    {
+        attackViewDirection =
+            Vector2Normalize(
+                attackViewDirection
+            );
+
+        playerDirection =
+            GetPlayerDirectionFromVector(
+                attackViewDirection
+            );
+
+        lastPlayerDirection =
+            playerDirection;
+    }
+
+    // --------------------------------------------------
+    // Dedicated Dongfeng attack-animation state
+    // --------------------------------------------------
+
+    playerAnimationState =
+        PlayerAnimationState::DongfengCasting;
+
+    playerAnimFrame =
+        0;
+
+    playerAnimTimer =
+        0.0f;
+
+    playerAttackImpactTriggered =
+        false;
+
+    playerAttackImpactPending =
+        false;
+
+    playerAttackTargetId =
+        0;
+
+    dongfengAttackReleasePoseTimer =
+        0.0f;
+
+    
+
+    dongfengCasting =
+        true;
+
+    dongfengCastTimer =
+        0.0f;
+
+
     dongfengCastDuration =
         dongfengFixedCastDuration;
 
@@ -22193,6 +22761,50 @@ void Game::UpdateDongfeng(
     float realDt
 )
 {
+    // --------------------------------------------------
+ // Short release-pose hold AFTER Dongfeng fires.
+ // --------------------------------------------------
+
+    if (
+        dongfengAttackReleasePoseTimer >
+        0.0f
+        )
+    {
+        dongfengAttackReleasePoseTimer -=
+            realDt;
+
+        if (
+            dongfengAttackReleasePoseTimer <=
+            0.0f
+            )
+        {
+            dongfengAttackReleasePoseTimer =
+                0.0f;
+
+            if (
+                playerAnimationState ==
+                PlayerAnimationState::DongfengCasting
+                )
+            {
+                playerAnimationState =
+                    PlayerAnimationState::Idle;
+
+                playerAnimFrame =
+                    0;
+
+                playerAnimTimer =
+                    0.0f;
+
+                playerDirection =
+                    lastPlayerDirection;
+            }
+        }
+    }
+
+    // --------------------------------------------------
+    // Dongfeng cast + directional attack animation
+    // --------------------------------------------------
+
     if (dongfengCasting)
     {
         dongfengCastTimer +=
@@ -22205,6 +22817,89 @@ void Game::UpdateDongfeng(
         {
             dongfengCastTimer =
                 dongfengCastDuration;
+        }
+
+        const int frameCount =
+            std::max(
+                1,
+                playerAttackFramesPerRow
+            );
+
+        const int finalFrame =
+            frameCount -
+            1;
+
+        if (finalFrame <= 0)
+        {
+            playerAnimFrame =
+                0;
+        }
+        else
+        {
+            // --------------------------------------------------
+            // Frames 0 through second-last use almost
+            // the entire casting period.
+            //
+            // The FINAL frame is reserved for the short moment
+            // immediately before Dongfeng actually fires.
+            // --------------------------------------------------
+
+            const float finalFrameLead =
+                Clamp(
+                    dongfengAttackFinalFrameLeadTime,
+                    0.01f,
+                    std::max(
+                        0.01f,
+                        dongfengCastDuration *
+                        0.40f
+                    )
+                );
+
+            const float preReleaseDuration =
+                std::max(
+                    0.01f,
+                    dongfengCastDuration -
+                    finalFrameLead
+                );
+
+            if (
+                dongfengCastTimer <
+                preReleaseDuration
+                )
+            {
+                const float progress =
+                    Clamp(
+                        dongfengCastTimer /
+                        preReleaseDuration,
+                        0.0f,
+                        0.9999f
+                    );
+
+                // finalFrame also equals the number of
+                // frames before the final pose.
+                //
+                // With 7 frames:
+                //
+                // 0 1 2 3 4 5 | 6
+                //
+                playerAnimFrame =
+                    std::min(
+                        finalFrame - 1,
+                        static_cast<int>(
+                            progress *
+                            static_cast<float>(
+                                finalFrame
+                                )
+                            )
+                    );
+            }
+            else
+            {
+                // Only show the actual strike pose immediately
+                // before projectile release.
+                playerAnimFrame =
+                    finalFrame;
+            }
         }
     }
 
@@ -22219,6 +22914,14 @@ void Game::UpdateDongfeng(
         dongfengCastDuration
         )
     {
+        // Ensure the attack is visibly on its final pose
+        // at the exact instant Dongfeng is released.
+        playerAnimFrame =
+            std::max(
+                0,
+                playerAttackFramesPerRow - 1
+            );
+
         dongfengCasting =
             false;
 
@@ -22226,6 +22929,11 @@ void Game::UpdateDongfeng(
             0.0f;
 
         LaunchDongfengWave();
+
+        // Do not instantly switch to idle on the same frame
+        // that the projectile appears.
+        dongfengAttackReleasePoseTimer =
+            dongfengAttackReleaseHoldDuration;
     }
 
     if (!dongfengWaveActive)
@@ -23179,23 +23887,9 @@ void Game::DrawProjectiles()
 {
     for (const Projectile& projectile : projectiles)
     {
-        if (!projectile.active)
-        {
-            continue;
-        }
-
-        Vector2 viewPosition = WorldToView(projectile.pos);
-
-        if (projectile.owner == ProjectileOwner::Enemy)
-        {
-            DrawCircleV(viewPosition, projectile.radius + 5.0f, { 255, 80, 80, 100 });
-            DrawCircleV(viewPosition, projectile.radius, { 255, 80, 60, 255 });
-        }
-        else
-        {
-            DrawCircleV(viewPosition, projectile.radius + 5.0f, { 255, 220, 80, 100 });
-            DrawCircleV(viewPosition, projectile.radius, YELLOW);
-        }
+        DrawProjectileVisual(
+            projectile
+        );
     }
 }
 void Game::DrawVfx()
@@ -23550,7 +24244,7 @@ void Game::DrawCombatHud()
         );
     }
 }
-
+/*
 void Game::DrawSkillUi()
 {
     for (const SkillSlot& skill : skills)
@@ -23629,6 +24323,8 @@ void Game::DrawSkillUi()
         }
     }
 }
+*/
+
 
 void Game::DrawUpgradeChoices()
 {
@@ -23661,8 +24357,12 @@ void Game::DrawUpgradeChoices()
 
     const char* heading = "Choose a Skill";
 
-    int headingWidth =
-        MeasureText(heading, titleSize);
+    float headingWidth =
+        MeasureUiTextWidth(
+            heading,
+            static_cast<float>(titleSize)
+        );
+
 
     int titleY = static_cast<int>(
         Clamp(
@@ -23672,11 +24372,13 @@ void Game::DrawUpgradeChoices()
         )
         );
 
-    DrawText(
+    DrawUiText(
         heading,
-        screenW / 2 - headingWidth / 2,
-        titleY,
-        titleSize,
+        {
+            screenW * 0.5f - headingWidth * 0.5f,
+            static_cast<float>(titleY)
+        },
+        static_cast<float>(titleSize),
         WHITE
     );
 
@@ -23711,6 +24413,41 @@ void Game::DrawUpgradeChoices()
 
         Rectangle card = choice.cardRect;
 
+        const float appearRaw =
+            (upgradeChoicePopupTimer -
+                static_cast<float>(i) * upgradeChoicePopupStagger) /
+            upgradeChoicePopupDuration;
+
+        const float appear =
+            Clamp(
+                appearRaw,
+                0.0f,
+                1.0f
+            );
+
+        const float eased =
+            EaseOutBack(appear);
+
+        const float scale =
+            0.84f + 0.16f * eased;
+
+        const float alphaMul =
+            appear;
+
+        Rectangle animatedCard{
+            card.x + (card.width - card.width * scale) * 0.5f,
+            card.y + (card.height - card.height * scale) * 0.5f,
+            card.width * scale,
+            card.height * scale
+        };
+
+        card = animatedCard;
+
+        if (appear <= 0.0f)
+        {
+            continue;
+        }
+
         bool hovered =
             CheckCollisionPointRec(
                 GetMousePosition(),
@@ -23727,20 +24464,66 @@ void Game::DrawUpgradeChoices()
             ? GOLD
             : Color{ 210, 210, 210, 255 };
 
-        DrawRectangleRounded(
-            card,
-            0.10f,
-            8,
-            fill
-        );
+        if (upgradeCardFrameLoaded)
+        {
+            NPatchInfo patch{};
+            patch.source = {
+                0.0f,
+                0.0f,
+                static_cast<float>(
+                    upgradeCardFrameTexture.width
+                ),
+                static_cast<float>(
+                    upgradeCardFrameTexture.height
+                )
+             };
+            patch.left = 22;
+            patch.top = 22;
+            patch.right = 22;
+            patch.bottom = 22;
+            patch.layout = NPATCH_NINE_PATCH;
 
-        DrawRectangleRoundedLinesEx(
-            card,
-            0.10f,
-            8,
-            3.0f,
-            outline
-        );
+            Color tint =
+                hovered
+                ? Color{ 255, 255, 255, static_cast<unsigned char>(255.0f * alphaMul) }
+            : Color{ 235, 235, 235, static_cast<unsigned char>(255.0f * alphaMul) };
+
+            DrawTextureNPatch(
+                upgradeCardFrameTexture,
+                patch,
+                card,
+                { 0.0f, 0.0f },
+                0.0f,
+                tint
+            );
+        }
+        else
+        {
+            Color fill =
+                hovered
+                ? Color{ 68, 68, 86, static_cast<unsigned char>(248.0f * alphaMul) }
+            : Color{ 48, 48, 60, static_cast<unsigned char>(240.0f * alphaMul) };
+
+            Color outline =
+                hovered
+                ? Color{ 255, 215, 0, static_cast<unsigned char>(255.0f * alphaMul) }
+            : Color{ 210, 210, 210, static_cast<unsigned char>(255.0f * alphaMul) };
+
+            DrawRectangleRounded(
+                card,
+                0.10f,
+                8,
+                fill
+            );
+
+            DrawRectangleRoundedLinesEx(
+                card,
+                0.10f,
+                8,
+                3.0f,
+                outline
+            );
+        }
 
         float padding = Clamp(
             card.width * 0.055f,
@@ -23763,73 +24546,83 @@ void Game::DrawUpgradeChoices()
 
         if (usePortraitRow)
         {
-            float imageSize = std::min(
-                card.width - padding * 2.0f,
+            const float contentInset =
                 Clamp(
-                    card.height * 0.34f,
-                    86.0f,
-                    150.0f
-                )
-            );
+                    card.width * 0.105f,
+                    24.0f,
+                    30.0f
+                );
+
+            float imageSize =
+                std::min(
+                    card.width -
+                    contentInset *
+                    2.0f,
+
+                    Clamp(
+                        card.height *
+                        0.31f,
+                        118.0f,
+                        148.0f
+                    )
+                );
 
             Rectangle imageRect{
                 card.x +
                     card.width * 0.5f -
                     imageSize * 0.5f,
-                card.y + padding,
+
+                card.y +
+                    contentInset +
+                    4.0f,
+
                 imageSize,
                 imageSize
-            };
+                        };
 
-            DrawRectangleRounded(
-                imageRect,
-                0.10f,
-                6,
-                Color{ 80, 80, 95, 255 }
-            );
+            Texture2D* iconTexture =
+                GetSkillIconTexture(
+                    choice.skillType
+                );
 
-            DrawRectangleRoundedLinesEx(
-                imageRect,
-                0.10f,
-                6,
-                2.0f,
-                Color{ 180, 180, 190, 255 }
-            );
-
-            int imageTextSize = static_cast<int>(
-                Clamp(
-                    imageSize * 0.18f,
-                    15.0f,
-                    22.0f
+            if (
+                iconTexture != nullptr &&
+                iconTexture->id != 0
                 )
-                );
+            {
+                Rectangle iconRect =
+                    FitTextureInRect(
+                        *iconTexture,
+                        imageRect,
+                        4.0f
+                    );
 
-            int imageTextWidth =
-                MeasureText(
-                    "IMAGE",
-                    imageTextSize
+                DrawTexturePro(
+                    *iconTexture,
+                    {
+                        0.0f,
+                        0.0f,
+                        static_cast<float>(
+                            iconTexture->width
+                        ),
+                        static_cast<float>(
+                            iconTexture->height
+                        )
+                    },
+                    iconRect,
+                    {
+                        0.0f,
+                        0.0f
+                    },
+                    0.0f,
+                    WHITE
                 );
-
-            DrawText(
-                "IMAGE",
-                static_cast<int>(
-                    imageRect.x +
-                    imageRect.width * 0.5f -
-                    imageTextWidth * 0.5f
-                    ),
-                static_cast<int>(
-                    imageRect.y +
-                    imageRect.height * 0.5f -
-                    imageTextSize * 0.5f
-                    ),
-                imageTextSize,
-                LIGHTGRAY
-            );
+            }
 
             float textY =
                 imageRect.y +
                 imageRect.height +
-                padding * 0.75f;
+                20.0f;
 
             int cardTitleSize =
                 static_cast<int>(
@@ -23858,49 +24651,84 @@ void Game::DrawUpgradeChoices()
                     )
                     );
 
-            DrawText(
-                choice.title.c_str(),
-                static_cast<int>(card.x + padding),
-                static_cast<int>(textY),
-                cardTitleSize,
+            DrawUiText(
+                choice.title,
+                {
+                    card.x +
+                        contentInset,
+
+                    textY
+                },
+                static_cast<float>(
+                    cardTitleSize
+                    ),
                 WHITE
             );
 
             textY +=
-                static_cast<float>(cardTitleSize) +
-                5.0f;
+                static_cast<float>(
+                    cardTitleSize
+                    ) +
+                3.0f;
 
-            DrawText(
-                choice.subtitle.c_str(),
-                static_cast<int>(card.x + padding),
-                static_cast<int>(textY),
-                cardSubtitleSize,
-                Color{ 255, 210, 90, 255 }
+            DrawUiText(
+                choice.subtitle,
+                {
+                    card.x +
+                        contentInset,
+
+                    textY
+                },
+                static_cast<float>(
+                    cardSubtitleSize
+                    ),
+                Color{
+                    255,
+                    210,
+                    90,
+                    255
+                }
             );
 
             textY +=
-                static_cast<float>(cardSubtitleSize) +
-                10.0f;
+                static_cast<float>(
+                    cardSubtitleSize
+                    ) +
+                20.0f;
 
-            float statusAreaHeight = 34.0f;
+            float statusAreaHeight =
+                44.0f;
 
             Rectangle descriptionBounds{
-                card.x + padding,
+                card.x +
+                    contentInset,
+
                 textY,
-                card.width - padding * 2.0f,
+
+                card.width -
+                    contentInset *
+                    2.0f,
+
                 card.y +
                     card.height -
-                    padding -
+                    contentInset -
                     statusAreaHeight -
                     textY
             };
 
-            DrawWrappedText(
+            DrawWrappedUiText(
                 choice.description,
                 descriptionBounds,
-                descriptionSize,
+                static_cast<float>(
+                    descriptionSize
+                    ),
                 4.0f,
-                Color{ 220, 220, 220, 255 },
+                Color{
+                    220,
+                    220,
+                    220,
+                    255
+                },
                 5
             );
 
@@ -23913,95 +24741,99 @@ void Game::DrawUpgradeChoices()
                     )
                     );
 
-            int statusWidth =
-                MeasureText(
-                    status.c_str(),
-                    statusSize
+            float statusWidth =
+                MeasureUiTextWidth(
+                    status,
+                    static_cast<float>(
+                        statusSize
+                        )
                 );
 
-            DrawText(
-                status.c_str(),
-                static_cast<int>(
+            DrawUiText(
+                status,
+                {
                     card.x +
-                    card.width -
-                    padding -
-                    statusWidth
-                    ),
-                static_cast<int>(
+                        card.width -
+                        contentInset -
+                        statusWidth,
+
                     card.y +
-                    card.height -
-                    padding -
+                        card.height -
+                        contentInset -
+                        static_cast<float>(
+                            statusSize
+                        )
+                },
+                static_cast<float>(
                     statusSize
                     ),
-                statusSize,
                 YELLOW
             );
         }
         else
         {
             // Compact mobile layout.
-            float imageSize = std::min(
-                card.height - padding * 2.0f,
-                Clamp(
-                    card.width * 0.24f,
-                    58.0f,
-                    96.0f
-                )
-            );
+            float imageSize =
+                std::min(
+                    card.height -
+                    padding * 2.0f,
+                    Clamp(
+                        card.width * 0.24f,
+                        58.0f,
+                        96.0f
+                    )
+                );
 
             Rectangle imageRect{
-                card.x + padding,
+                card.x +
+                    padding,
+
                 card.y +
                     card.height * 0.5f -
                     imageSize * 0.5f,
+
                 imageSize,
                 imageSize
             };
 
-            DrawRectangleRounded(
-                imageRect,
-                0.10f,
-                6,
-                Color{ 80, 80, 95, 255 }
-            );
+            Texture2D* iconTexture =
+                GetSkillIconTexture(
+                    choice.skillType
+                );
 
-            DrawRectangleRoundedLinesEx(
-                imageRect,
-                0.10f,
-                6,
-                2.0f,
-                Color{ 180, 180, 190, 255 }
-            );
-
-            int imageTextSize = static_cast<int>(
-                Clamp(
-                    imageSize * 0.17f,
-                    12.0f,
-                    18.0f
+            if (
+                iconTexture != nullptr &&
+                iconTexture->id != 0
                 )
-                );
+            {
+                Rectangle iconRect =
+                    FitTextureInRect(
+                        *iconTexture,
+                        imageRect,
+                        4.0f
+                    );
 
-            int imageTextWidth =
-                MeasureText(
-                    "IMAGE",
-                    imageTextSize
+                DrawTexturePro(
+                    *iconTexture,
+                    {
+                        0.0f,
+                        0.0f,
+                        static_cast<float>(
+                            iconTexture->width
+                        ),
+                        static_cast<float>(
+                            iconTexture->height
+                        )
+                    },
+                    iconRect,
+                    {
+                        0.0f,
+                        0.0f
+                    },
+                    0.0f,
+                    WHITE
                 );
-
-            DrawText(
-                "IMAGE",
-                static_cast<int>(
-                    imageRect.x +
-                    imageRect.width * 0.5f -
-                    imageTextWidth * 0.5f
-                    ),
-                static_cast<int>(
-                    imageRect.y +
-                    imageRect.height * 0.5f -
-                    imageTextSize * 0.5f
-                    ),
-                imageTextSize,
-                LIGHTGRAY
-            );
+            }
 
             float textX =
                 imageRect.x +
@@ -24041,30 +24873,49 @@ void Game::DrawUpgradeChoices()
                     )
                     );
 
-            float textY = card.y + padding;
+            float textY =
+                card.y +
+                padding;
 
-            DrawText(
-                choice.title.c_str(),
-                static_cast<int>(textX),
-                static_cast<int>(textY),
-                cardTitleSize,
+            DrawUiText(
+                choice.title,
+                {
+                    textX,
+                    textY
+                },
+                static_cast<float>(
+                    cardTitleSize
+                    ),
                 WHITE
             );
 
             textY +=
-                static_cast<float>(cardTitleSize) +
+                static_cast<float>(
+                    cardTitleSize
+                    ) +
                 3.0f;
 
-            DrawText(
-                choice.subtitle.c_str(),
-                static_cast<int>(textX),
-                static_cast<int>(textY),
-                cardSubtitleSize,
-                Color{ 255, 210, 90, 255 }
+            DrawUiText(
+                choice.subtitle,
+                {
+                    textX,
+                    textY
+                },
+                static_cast<float>(
+                    cardSubtitleSize
+                    ),
+                Color{
+                    255,
+                    210,
+                    90,
+                    255
+                }
             );
 
             textY +=
-                static_cast<float>(cardSubtitleSize) +
+                static_cast<float>(
+                    cardSubtitleSize
+                    ) +
                 5.0f;
 
             Rectangle descriptionBounds{
@@ -24078,12 +24929,19 @@ void Game::DrawUpgradeChoices()
                     textY
             };
 
-            DrawWrappedText(
+            DrawWrappedUiText(
                 choice.description,
                 descriptionBounds,
-                descriptionSize,
+                static_cast<float>(
+                    descriptionSize
+                    ),
                 3.0f,
-                Color{ 220, 220, 220, 255 },
+                Color{
+                    220,
+                    220,
+                    220,
+                    255
+                },
                 2
             );
 
@@ -24096,27 +24954,32 @@ void Game::DrawUpgradeChoices()
                     )
                     );
 
-            int statusWidth =
-                MeasureText(
-                    status.c_str(),
-                    statusSize
+            float statusWidth =
+                MeasureUiTextWidth(
+                    status,
+                    static_cast<float>(
+                        statusSize
+                        )
                 );
 
-            DrawText(
-                status.c_str(),
-                static_cast<int>(
+            DrawUiText(
+                status,
+                {
                     card.x +
-                    card.width -
-                    padding -
-                    statusWidth
-                    ),
-                static_cast<int>(
+                        card.width -
+                        padding -
+                        statusWidth,
+
                     card.y +
-                    card.height -
-                    padding -
+                        card.height -
+                        padding -
+                        static_cast<float>(
+                            statusSize
+                        )
+                },
+                static_cast<float>(
                     statusSize
                     ),
-                statusSize,
                 YELLOW
             );
         }
@@ -24268,6 +25131,8 @@ void Game::TryOpenPendingSkillChoice()
     pendingSkillChoiceCount--;
     upgradeMenuOpenedManually = false;
     gameState = GameState::ChoosingUpgrade;
+
+    upgradeChoicePopupTimer = 0.0f;
 
     attackButtonDown = false;
     dashButtonDown = false;
@@ -24630,7 +25495,13 @@ const char* Game::GetSkillDescription(SkillType type) const
 
 Rectangle Game::GetUpgradeCardRect(int index) const
 {
-    constexpr int choiceCount = 3;
+    const int choiceCount =
+        std::max(
+            1,
+            static_cast<int>(
+                currentUpgradeChoices.size()
+                )
+        );
 
     float screenW =
         static_cast<float>(GetScreenWidth());
@@ -24664,39 +25535,58 @@ Rectangle Game::GetUpgradeCardRect(int index) const
 
     if (usePortraitRow)
     {
-        float marginX = Clamp(
-            screenW * 0.035f,
-            16.0f,
-            56.0f
-        );
+        float marginX =
+            Clamp(
+                screenW * 0.020f,
+                12.0f,
+                30.0f
+            );
 
-        float gap = Clamp(
-            screenW * 0.018f,
-            10.0f,
-            22.0f
-        );
+        float gap =
+            Clamp(
+                screenW * 0.012f,
+                10.0f,
+                16.0f
+            );
 
         float cardW =
             (
                 screenW -
                 marginX * 2.0f -
-                gap * static_cast<float>(choiceCount - 1)
+                gap *
+                static_cast<float>(
+                    choiceCount - 1
+                    )
                 ) /
-            static_cast<float>(choiceCount);
+            static_cast<float>(
+                choiceCount
+                );
 
-        cardW = std::min(cardW, 340.0f);
-
-        float cardH = std::min(
-            availableH,
+        // Allows a slightly broader card on normal desktop screens.
+        cardW =
             std::min(
-                460.0f,
-                cardW * 1.85f
-            )
-        );
+                cardW,
+                300.0f
+            );
+
+        float cardH =
+            std::min(
+                availableH,
+                std::min(
+                    520.0f,
+                    cardW * 1.90f
+                )
+            );
 
         float totalW =
-            cardW * choiceCount +
-            gap * static_cast<float>(choiceCount - 1);
+            cardW *
+            static_cast<float>(
+                choiceCount
+                ) +
+            gap *
+            static_cast<float>(
+                choiceCount - 1
+                );
 
         float startX =
             screenW * 0.5f -
@@ -24706,14 +25596,25 @@ Rectangle Game::GetUpgradeCardRect(int index) const
             topY +
             std::max(
                 0.0f,
-                (availableH - cardH) * 0.5f
+                (
+                    availableH -
+                    cardH
+                    ) *
+                0.5f
             );
 
         return {
             startX +
-                static_cast<float>(index) *
-                (cardW + gap),
+                static_cast<float>(
+                    index
+                ) *
+                (
+                    cardW +
+                    gap
+                ),
+
             y,
+
             cardW,
             cardH
         };
@@ -27290,8 +28191,20 @@ void Game::ApplyDamageToEnemy(
 )
 {
     if (
-        enemy.type == EnemyType::Boss &&
-        enemy.bossActionState == BossActionState::Dying
+        !enemy.active ||
+        IsEnemySpawnProtected(
+            enemy
+        )
+        )
+    {
+        return;
+    }
+
+    if (
+        enemy.type ==
+        EnemyType::Boss &&
+        enemy.bossActionState ==
+        BossActionState::Dying
         )
     {
         return;
@@ -28277,22 +29190,22 @@ void Game::UpdatePlayerAnimation(float dt)
     // Do not let ordinary locomotion animation replace it mid-spin.
     if (
         playerAnimationState ==
-        PlayerAnimationState::SkillSpinning
+        PlayerAnimationState::SkillSpinning ||
+        playerAnimationState ==
+        PlayerAnimationState::DongfengCasting
         )
     {
         return;
     }
 
-    // Attack animation has priority over walking and idle.
     if (
         playerAnimationState ==
         PlayerAnimationState::Attacking
         )
     {
-        playerAnimTimer += dt;
+        playerAnimTimer +=
+            dt;
 
-        // Use while instead of if so animation timing remains
-        // correct during occasional frame-rate drops.
         while (
             playerAnimTimer >=
             playerAttackFrameDuration &&
@@ -28305,19 +29218,19 @@ void Game::UpdatePlayerAnimation(float dt)
 
             playerAnimFrame++;
 
-            // Trigger melee damage when the attack animation
-            // reaches its configured impact frame.
             if (
                 !playerAttackImpactTriggered &&
                 playerAnimFrame >=
                 playerAttackImpactFrame
                 )
             {
-                playerAttackImpactTriggered = true;
-                playerAttackImpactPending = true;
+                playerAttackImpactTriggered =
+                    true;
+
+                playerAttackImpactPending =
+                    true;
             }
 
-            // Return to idle after the final attack frame.
             if (
                 playerAnimFrame >=
                 playerAttackFramesPerRow
@@ -28463,12 +29376,100 @@ void Game::DrawPlayerSprite(
     int activeFrame =
         playerAnimFrame;
 
+    // --------------------------------------------------
+// Dedicated Wind Blade character animation
+// --------------------------------------------------
+
+    if (
+        playerAnimationState ==
+        PlayerAnimationState::SkillSpinning &&
+        playerWindBladeSpriteLoaded &&
+        playerWindBladeSpriteSheet.id != 0
+        )
+    {
+        const int safeFrame =
+            std::max(
+                0,
+                std::min(
+                    playerAnimFrame,
+                    playerWindBladeFrameCount - 1
+                )
+            );
+
+        const int column =
+            safeFrame %
+            playerWindBladeColumns;
+
+        const int row =
+            safeFrame /
+            playerWindBladeColumns;
+
+        Rectangle source{
+            static_cast<float>(
+                column *
+                playerWindBladeFrameWidth
+            ),
+
+            static_cast<float>(
+                row *
+                playerWindBladeFrameHeight
+            ),
+
+            static_cast<float>(
+                playerWindBladeFrameWidth
+            ),
+
+            static_cast<float>(
+                playerWindBladeFrameHeight
+            )
+        };
+
+        const float drawScale =
+            playerSpriteDrawScale;
+
+        Rectangle destination{
+            drawPosition.x,
+            drawPosition.y,
+
+            static_cast<float>(
+                playerWindBladeFrameWidth
+            ) *
+            drawScale,
+
+            static_cast<float>(
+                playerWindBladeFrameHeight
+            ) *
+            drawScale
+        };
+
+        Vector2 origin{
+            destination.width *
+                0.5f,
+
+            destination.height *
+                0.84f
+        };
+
+        DrawTexturePro(
+            playerWindBladeSpriteSheet,
+            source,
+            destination,
+            origin,
+            0.0f,
+            WHITE
+        );
+
+        return;
+    }
+
     bool isDrawingAttack =
         (
             playerAnimationState ==
             PlayerAnimationState::Attacking ||
             playerAnimationState ==
-            PlayerAnimationState::SkillSpinning
+            PlayerAnimationState::SkillSpinning ||
+            playerAnimationState ==
+            PlayerAnimationState::DongfengCasting
             ) &&
         playerAttackSpriteLoaded &&
         playerAttackSpriteSheet.id != 0;
@@ -28531,6 +29532,8 @@ void Game::DrawPlayerSprite(
             PlayerAnimationState::Attacking ||
             playerAnimationState ==
             PlayerAnimationState::SkillSpinning ||
+            playerAnimationState ==
+            PlayerAnimationState::DongfengCasting ||
             playerAnimationState ==
             PlayerAnimationState::Idle
             )
@@ -30708,6 +31711,58 @@ void Game::DrawProjectileVisual(
     }
 
     if (
+        projectile.visualType ==
+        ProjectileVisualType::ArcherArrow &&
+        archerArrowTextureLoaded &&
+        archerArrowTexture.id != 0
+        )
+    {
+        Vector2 displayedDirection =
+            WorldVectorToView(
+                projectile.velocity
+            );
+
+        float arrowRotation =
+            projectile.rotationDegrees;
+
+        if (
+            Vector2Length(
+                displayedDirection
+            ) > 0.001f
+            )
+        {
+            arrowRotation =
+                atan2f(
+                    displayedDirection.y,
+                    displayedDirection.x
+                ) *
+                RAD2DEG;
+        }
+
+        DrawTexturePro(
+            archerArrowTexture,
+            archerArrowSourceRect,
+            Rectangle{
+                viewPosition.x,
+                viewPosition.y,
+                archerArrowDrawWidth,
+                archerArrowDrawHeight
+            },
+            Vector2{
+                archerArrowDrawWidth *
+                    0.5f,
+
+                archerArrowDrawHeight *
+                    0.5f
+            },
+            arrowRotation,
+            WHITE
+        );
+
+        return;
+    }
+
+    if (
         projectile.owner ==
         ProjectileOwner::Enemy
         )
@@ -30842,6 +31897,7 @@ void Game::DrawVfxParticleVisual(
         particle.type == VfxType::DongfengChargeStarSprite ||
         particle.type == VfxType::BossDeathGemShardSprite ||
         particle.type == VfxType::BossDeathGlassShardSprite ||
+        particle.type == VfxType::ArcherArrowTrailSprite ||
         particle.type == VfxType::BossDeathExplosionSprite
         )
     {
@@ -30920,28 +31976,27 @@ void Game::DrawVfxParticleVisual(
                 particle.value
             );
 
-        constexpr int fontSize =
-            22;
+        const float fontSize =
+            damageNumberFontSize;
 
-        const int textWidth =
-            MeasureText(
+        const float spacing =
+            damageNumberFontSpacing;
+
+        const Vector2 textSize =
+            MeasureTextEx(
+                damageFont,
                 text,
-                fontSize
+                fontSize,
+                spacing
             );
 
-        const int textX =
-            static_cast<int>(
-                numberPosition.x -
-                static_cast<float>(
-                    textWidth
-                    ) *
-                0.5f
-                );
+        Vector2 textPosition{
+            numberPosition.x -
+                textSize.x *
+                0.5f,
 
-        const int textY =
-            static_cast<int>(
-                numberPosition.y
-                );
+            numberPosition.y
+        };
 
         const Color outlineColor{
             20,
@@ -30950,43 +32005,50 @@ void Game::DrawVfxParticleVisual(
             color.a
         };
 
-        DrawText(
-            text,
-            textX - 2,
-            textY,
-            fontSize,
-            outlineColor
-        );
+        const float outline =
+            damageNumberOutlineSize;
 
-        DrawText(
-            text,
-            textX + 2,
-            textY,
-            fontSize,
-            outlineColor
-        );
+        const Vector2 outlineOffsets[] =
+        {
+            { -outline,  0.0f },
+            {  outline,  0.0f },
+            {  0.0f,    -outline },
+            {  0.0f,     outline },
 
-        DrawText(
-            text,
-            textX,
-            textY - 2,
-            fontSize,
-            outlineColor
-        );
+            { -outline, -outline },
+            {  outline, -outline },
+            { -outline,  outline },
+            {  outline,  outline }
+        };
 
-        DrawText(
-            text,
-            textX,
-            textY + 2,
-            fontSize,
-            outlineColor
-        );
+        for (
+            const Vector2& offset :
+            outlineOffsets
+            )
+        {
+            DrawTextEx(
+                damageFont,
+                text,
+                {
+                    textPosition.x +
+                        offset.x,
 
-        DrawText(
+                    textPosition.y +
+                        offset.y
+                },
+                fontSize,
+                spacing,
+                outlineColor
+            );
+        }
+
+        // Main number
+        DrawTextEx(
+            damageFont,
             text,
-            textX,
-            textY,
+            textPosition,
             fontSize,
+            spacing,
             color
         );
     }
@@ -34153,7 +35215,8 @@ void Game::UpdateEnemyShooter(
                 enemy.bulletDamage,
                 enemy.bulletSpeed,
                 7.0f,
-                shooterProjectileVisualHeight
+                shooterProjectileVisualHeight,
+                ProjectileVisualType::ArcherArrow
             );
 
             enemy.shooterProjectileFired =
@@ -38755,7 +39818,8 @@ void Game::DrawHybridBillboardFrame(
     float additionalHeightPixels,
     Color tint,
     HybridBillboardOrientation orientation,
-    float whiteFlashAmount
+    float whiteFlashAmount,
+    float localRotationDegrees
 ) const
 {
     if (
@@ -38957,6 +40021,48 @@ void Game::DrawHybridBillboardFrame(
             1.0f,
             0.0f
         };
+    }
+
+    if (fabsf(localRotationDegrees) > 0.001f)
+    {
+        const float radians =
+            localRotationDegrees * DEG2RAD;
+
+        const float cosine =
+            cosf(radians);
+
+        const float sine =
+            sinf(radians);
+
+        const Vector3 rotatedRight =
+            Vector3Add(
+                Vector3Scale(
+                    billboardRight,
+                    cosine
+                ),
+                Vector3Scale(
+                    billboardUp,
+                    sine
+                )
+            );
+
+        const Vector3 rotatedUp =
+            Vector3Add(
+                Vector3Scale(
+                    billboardUp,
+                    cosine
+                ),
+                Vector3Scale(
+                    billboardRight,
+                    -sine
+                )
+            );
+
+        billboardRight =
+            rotatedRight;
+
+        billboardUp =
+            rotatedUp;
     }
 
     // WorldToHybrid3D() returns the terrain contact point. anchorY is the
@@ -39161,6 +40267,83 @@ bool Game::GetActivePlayerFrame(
     outAnchorY =
         0.98f;
 
+    // --------------------------------------------------
+// Dedicated Wind Blade animation
+// --------------------------------------------------
+
+    if (
+        playerAnimationState ==
+        PlayerAnimationState::SkillSpinning &&
+        playerWindBladeSpriteLoaded &&
+        playerWindBladeSpriteSheet.id != 0
+        )
+    {
+        const int safeFrame =
+            std::max(
+                0,
+                std::min(
+                    playerAnimFrame,
+                    playerWindBladeFrameCount - 1
+                )
+            );
+
+        const int column =
+            safeFrame %
+            playerWindBladeColumns;
+
+        const int row =
+            safeFrame /
+            playerWindBladeColumns;
+
+        outTexture =
+            playerWindBladeSpriteSheet;
+
+        const float bottomTrim =
+            Clamp(
+                playerSpriteBottomTrim,
+                0.0f,
+                static_cast<float>(
+                    playerWindBladeFrameHeight - 1
+                    )
+            );
+
+        outSource = {
+            static_cast<float>(
+                column *
+                playerWindBladeFrameWidth
+            ),
+
+            static_cast<float>(
+                row *
+                playerWindBladeFrameHeight
+            ),
+
+            static_cast<float>(
+                playerWindBladeFrameWidth
+            ),
+
+            static_cast<float>(
+                playerWindBladeFrameHeight
+            ) -
+            bottomTrim
+        };
+
+        outWidthPixels =
+            static_cast<float>(
+                playerWindBladeFrameWidth
+                ) *
+            playerSpriteDrawScale;
+
+        outHeightPixels =
+            outSource.height *
+            playerSpriteDrawScale;
+
+        outAnchorY =
+            0.98f;
+
+        return true;
+    }
+
     int frameWidth =
         playerFrameWidth;
 
@@ -39178,7 +40361,9 @@ bool Game::GetActivePlayerFrame(
             playerAnimationState ==
             PlayerAnimationState::Attacking ||
             playerAnimationState ==
-            PlayerAnimationState::SkillSpinning
+            PlayerAnimationState::SkillSpinning ||
+            playerAnimationState ==
+            PlayerAnimationState::DongfengCasting
             ) &&
         playerAttackSpriteLoaded &&
         playerAttackSpriteSheet.id !=
@@ -39234,11 +40419,12 @@ bool Game::GetActivePlayerFrame(
             playerAnimationState ==
             PlayerAnimationState::Attacking ||
             playerAnimationState ==
-            PlayerAnimationState::SkillSpinning
+            PlayerAnimationState::SkillSpinning ||
+            playerAnimationState ==
+            PlayerAnimationState::DongfengCasting
             )
         {
-            frame =
-                0;
+            frame = 0;
         }
     }
     else
@@ -40344,6 +41530,124 @@ void Game::DrawHybridProjectile3D(
 {
     if (!projectile.active)
     {
+        return;
+    }
+
+    if (
+        projectile.visualType ==
+        ProjectileVisualType::ArcherArrow &&
+        archerArrowTextureLoaded &&
+        archerArrowTexture.id != 0
+        )
+    {
+        float localRotation =
+            0.0f;
+
+        if (
+            Vector2Length(
+                projectile.velocity
+            ) > 0.001f
+            )
+        {
+            const Vector2 direction =
+                Vector2Normalize(
+                    projectile.velocity
+                );
+
+            const Vector2 directionEnd =
+                Vector2Add(
+                    projectile.pos,
+                    Vector2Scale(
+                        direction,
+                        100.0f
+                    )
+                );
+
+            // IMPORTANT:
+            // Both points use exactly the same height.
+            // Terrain underneath the projectile must not
+            // affect its visual rotation.
+            const float fixedHeight =
+                static_cast<float>(
+                    projectile.terrainElevation
+                    ) *
+                PixelsToHybridUnits(
+                    terrainElevationStep
+                ) +
+                PixelsToHybridUnits(
+                    projectile.visualHeight
+                );
+
+            const Vector3 start3D{
+                projectile.pos.x *
+                    hybridUnitsPerPixel,
+
+                fixedHeight,
+
+                projectile.pos.y *
+                    hybridUnitsPerPixel
+            };
+
+            const Vector3 end3D{
+                directionEnd.x *
+                    hybridUnitsPerPixel,
+
+                fixedHeight,
+
+                directionEnd.y *
+                    hybridUnitsPerPixel
+            };
+
+            const Vector2 startScreen =
+                GetWorldToScreen(
+                    start3D,
+                    hybridCamera
+                );
+
+            const Vector2 endScreen =
+                GetWorldToScreen(
+                    end3D,
+                    hybridCamera
+                );
+
+            const Vector2 screenDirection =
+                Vector2Subtract(
+                    endScreen,
+                    startScreen
+                );
+
+            if (
+                Vector2Length(
+                    screenDirection
+                ) > 0.001f
+                )
+            {
+                // Negative is intentional.
+                // Hybrid billboard local rotation is opposite
+                // to screen-space atan2 rotation.
+                localRotation =
+                    -atan2f(
+                        screenDirection.y,
+                        screenDirection.x
+                    ) *
+                    RAD2DEG;
+            }
+        }
+
+        DrawHybridBillboardFrame(
+            archerArrowTexture,
+            archerArrowSourceRect,
+            projectile.pos,
+            archerArrowDrawWidth,
+            archerArrowDrawHeight,
+            0.5f,
+            projectile.visualHeight,
+            WHITE,
+            HybridBillboardOrientation::FaceCamera,
+            0.0f,
+            localRotation
+        );
+
         return;
     }
 
@@ -43980,6 +45284,16 @@ void Game::ResolveBossSlamImpact(
     enemy.bossSlamImpactVisualTimer =
         bossSlamImpactVisualDuration;
 
+    SpawnRockImpactVfx(
+        enemy.pos,
+        42.0f
+    );
+
+    AddScreenShake(
+        bossSlamShakeDuration,
+        bossSlamShakeStrength
+    );
+
     const bool sameTerrainLevel =
         GetTerrainElevationAtWorld(
             enemy.pos
@@ -47530,6 +48844,11 @@ void Game::UpdateBossBombardment(
             enemy
         );
 
+    AddScreenShake(
+        bossRoarShakeDuration,
+        bossRoarShakeStrength
+    );
+
     enemy.bossBombardmentTimer -=
         dt;
 
@@ -49547,6 +50866,54 @@ Vector2 Game::GetVfxDrawPosition(
         visualHeight
     );
 }
+
+void Game::AddScreenShake(
+    float duration,
+    float strength
+)
+{
+    if (
+        duration <= 0.0f ||
+        strength <= 0.0f
+        )
+    {
+        return;
+    }
+
+    if (
+        huashanScreenShakeTimer <= 0.0f ||
+        strength >= huashanScreenShakeStrength
+        )
+    {
+        huashanScreenShakeDuration =
+            duration;
+
+        huashanScreenShakeStrength =
+            strength;
+    }
+
+    huashanScreenShakeTimer =
+        std::max(
+            huashanScreenShakeTimer,
+            duration
+        );
+
+    const float randomX =
+        static_cast<float>(
+            GetRandomValue(-1000, 1000)
+            ) / 1000.0f;
+
+    const float randomY =
+        static_cast<float>(
+            GetRandomValue(-1000, 1000)
+            ) / 1000.0f;
+
+    huashanScreenShakeOffset = {
+        randomX * huashanScreenShakeStrength,
+        randomY * huashanScreenShakeStrength * 0.65f
+    };
+}
+
 void Game::SpawnRockImpactVfx(
     Vector2 worldPosition,
     float rockVisualRadius
@@ -49817,6 +51184,80 @@ void Game::SpawnRockImpactVfx(
     }
 }
 
+void Game::SpawnArcherArrowTrail(
+    Vector2 worldPosition,
+    float visualHeight,
+    float rotationDegrees
+)
+{
+    if (
+        !archerArrowTrailLoaded ||
+        archerArrowTrailSpriteSheet.id == 0 ||
+        !CanSpawnVfx(1)
+        )
+    {
+        return;
+    }
+
+    VfxParticle trail;
+
+    trail.type =
+        VfxType::ArcherArrowTrailSprite;
+
+    trail.pos =
+        worldPosition;
+
+    trail.drawSize = {
+        archerArrowTrailDrawWidth,
+        archerArrowTrailDrawHeight
+    };
+
+    trail.endDrawSize =
+        trail.drawSize;
+
+    trail.visualHeight =
+        visualHeight;
+
+    trail.anchorY =
+        0.5f;
+
+    trail.spriteFrame =
+        0;
+
+    trail.spriteFrameCount =
+        archerArrowTrailFrameCount;
+
+    trail.spriteFrameOffset =
+        0;
+
+    trail.spriteFrameTimer =
+        0.0f;
+
+    trail.spriteFrameDuration =
+        archerArrowTrailFrameDuration;
+
+    trail.rotationDegrees =
+        rotationDegrees;
+
+    trail.life =
+        static_cast<float>(
+            archerArrowTrailFrameCount
+            ) * archerArrowTrailFrameDuration;
+
+    trail.maxLife =
+        trail.life;
+
+    trail.color =
+        WHITE;
+
+    trail.active =
+        true;
+
+    vfxParticles.push_back(
+        trail
+    );
+}
+
 void Game::SpawnDongfengChargeStar(
     float duration
 )
@@ -50012,6 +51453,15 @@ void Game::DrawSpriteVfxParticle(
 
         sheetFrameCount =
             fireLoopVfxFrameCount;
+
+        break;
+
+    case VfxType::ArcherArrowTrailSprite:
+        texture =
+            archerArrowTrailSpriteSheet;
+
+        sheetFrameCount =
+            archerArrowTrailFrameCount;
 
         break;
 
@@ -50257,6 +51707,20 @@ void Game::DrawSpriteVfxParticle(
                 1.0f
             );
     }
+    else if (
+        particle.type ==
+        VfxType::ArcherArrowTrailSprite
+        )
+    {
+        alphaMultiplier =
+            Clamp(
+                particle.life /
+                0.08f,
+                0.0f,
+                1.0f
+            );
+    }
+
     else if (
         particle.type ==
         VfxType::DongfengChargeStarSprite
@@ -50982,8 +52446,10 @@ void Game::DrawDongfengShapeLights()
         )
     {
         const Rectangle source =
-            GetDongfengCrescentSourceRect(
-                dongfengLockedDirectionIndex
+            GetHorizontalVfxSourceRect(
+                dongfengSpiralSpriteSheet,
+                dongfengSpiralFrameCount,
+                dongfengSpiralFrame
             );
 
         auto DrawSpiralLightLayer =
@@ -51071,17 +52537,17 @@ void Game::DrawDongfengShapeLights()
                 );
             };
 
-        // Sharp inner illumination.
+        // Strong shaped illumination immediately around
+        // the visible spiral.
         DrawSpiralLightLayer(
-            1.05f,
-            46
+            1.08f,
+            82
         );
 
-        // Softer surrounding illumination while retaining
-        // the spiral's transparent shape.
+        // Broader, softer spill into the surrounding environment.
         DrawSpiralLightLayer(
-            1.28f,
-            18
+            1.45f,
+            34
         );
     }
 
@@ -51216,14 +52682,16 @@ void Game::DrawDongfengShapeLights()
                 );
             };
 
+        // Bright light matching the crescent itself.
         DrawCrescentLightLayer(
-            1.0f,
-            40
+            1.02f,
+            78
         );
 
+        // Wider environmental spill.
         DrawCrescentLightLayer(
-            1.18f,
-            14
+            1.35f,
+            30
         );
     }
 }
@@ -51847,10 +53315,65 @@ void Game::UpdateWindBlade(float dt)
             dt
         );
 
-    const float safeDuration =
+    const int configuredLoopStart =
+        std::max(
+            0,
+            std::min(
+                windBladeSpinLoopStartFrame,
+                playerWindBladeFrameCount - 1
+            )
+        );
+
+    const int configuredLoopEnd =
+        std::max(
+            configuredLoopStart,
+            std::min(
+                windBladeSpinLoopEndFrame,
+                playerWindBladeFrameCount - 1
+            )
+        );
+
+    const int configuredLoopLength =
+        configuredLoopEnd -
+        configuredLoopStart +
+        1;
+
+    const int configuredLoopCount =
+        std::max(
+            1,
+            windBladeSpinLoopCount
+        );
+
+    const int configuredPostFrames =
+        std::max(
+            0,
+            playerWindBladeFrameCount -
+            configuredLoopEnd -
+            1
+        );
+
+    const int configuredPlaybackFrames =
+        configuredLoopStart +
+        configuredLoopLength *
+        configuredLoopCount +
+        configuredPostFrames;
+
+    const float characterAnimationDuration =
+        static_cast<float>(
+            configuredPlaybackFrames
+            ) *
         std::max(
             0.01f,
-            windBladeCastDuration
+            windBladePlayerFrameDuration
+        );
+
+    const float safeDuration =
+        std::max(
+            std::max(
+                0.01f,
+                windBladeCastDuration
+            ),
+            characterAnimationDuration
         );
 
     const float progress =
@@ -51925,50 +53448,158 @@ void Game::UpdateWindBlade(float dt)
         );
     }
 
-    // Reuse the attack animation frames, but cycle through every directional
-    // row to create an actual character spin rather than rotating the flat
-    // character billboard like a card.
-    const int safeAttackFrameCount =
+    // --------------------------------------------------
+ // Dedicated Wind Blade character animation
+ //
+ // Playback:
+ //
+ // 1-9
+ // 10-17
+ // 10-17
+ // 10-17
+ // 18-21
+ //
+ // Internally all indices are zero-based.
+ // --------------------------------------------------
+
+    const int safeWindBladeFrameCount =
         std::max(
             1,
-            playerAttackFramesPerRow
+            playerWindBladeFrameCount
         );
 
-    playerAnimFrame =
-        static_cast<int>(
-            windBladeCastTimer /
+    const int loopStartFrame =
+        std::max(
+            0,
+            std::min(
+                windBladeSpinLoopStartFrame,
+                safeWindBladeFrameCount - 1
+            )
+        );
+
+    const int loopEndFrame =
+        std::max(
+            loopStartFrame,
+            std::min(
+                windBladeSpinLoopEndFrame,
+                safeWindBladeFrameCount - 1
+            )
+        );
+
+    const int loopFrameCount =
+        loopEndFrame -
+        loopStartFrame +
+        1;
+
+    const int loopCount =
+        std::max(
+            1,
+            windBladeSpinLoopCount
+        );
+
+    // Frames before frame 10.
+    // With loopStartFrame = 9, this is frames 0-8.
+    const int preLoopFrameCount =
+        loopStartFrame;
+
+    // Frames after frame 17.
+    const int postLoopStartFrame =
+        loopEndFrame +
+        1;
+
+    const int postLoopFrameCount =
+        std::max(
+            0,
+            safeWindBladeFrameCount -
+            postLoopStartFrame
+        );
+
+    const int repeatedLoopFrameCount =
+        loopFrameCount *
+        loopCount;
+
+    const int totalPlaybackFrameCount =
+        preLoopFrameCount +
+        repeatedLoopFrameCount +
+        postLoopFrameCount;
+
+    const float safePlayerFrameDuration =
+        std::max(
+            0.01f,
+            windBladePlayerFrameDuration
+        );
+
+    const int playbackFrame =
+        std::min(
             std::max(
-                0.01f,
-                windBladePlayerFrameDuration
-            )
-            ) %
-        safeAttackFrameCount;
-
-    const int startingDirection =
-        static_cast<int>(
-            windBladeStartDirection
-            );
-
-    const int directionStep =
-        static_cast<int>(
-            std::floor(
-                progress *
-                8.0f *
-                std::max(
-                    0.25f,
-                    windBladeSpinTurns
+                0,
+                totalPlaybackFrameCount - 1
+            ),
+            static_cast<int>(
+                windBladeCastTimer /
+                safePlayerFrameDuration
                 )
-            )
-            );
+        );
 
-    playerDirection =
-        static_cast<PlayerDirection>(
+    // --------------------------------------------------
+    // Before spinning loop: frames 1-9
+    // --------------------------------------------------
+
+    if (
+        playbackFrame <
+        preLoopFrameCount
+        )
+    {
+        playerAnimFrame =
+            playbackFrame;
+    }
+
+    // --------------------------------------------------
+    // Spinning loop: frames 10-17 repeated
+    // --------------------------------------------------
+
+    else if (
+        playbackFrame <
+        preLoopFrameCount +
+        repeatedLoopFrameCount
+        )
+    {
+        const int loopPlaybackFrame =
+            playbackFrame -
+            preLoopFrameCount;
+
+        playerAnimFrame =
+            loopStartFrame +
             (
-                startingDirection +
-                directionStep
-                ) %
-            8
+                loopPlaybackFrame %
+                loopFrameCount
+                );
+    }
+
+    // --------------------------------------------------
+    // Ending animation: frames 18-21
+    // --------------------------------------------------
+
+    else
+    {
+        const int endingPlaybackFrame =
+            playbackFrame -
+            preLoopFrameCount -
+            repeatedLoopFrameCount;
+
+        playerAnimFrame =
+            std::min(
+                safeWindBladeFrameCount - 1,
+                postLoopStartFrame +
+                endingPlaybackFrame
             );
+    }
+
+    // The dedicated sprite itself contains the complete
+    // body rotation, including front/back poses.
+    // Do not rotate through directional sprite rows.
+    playerDirection =
+        windBladeStartDirection;
 
     const float groundProgress =
         Clamp(
@@ -52456,6 +54087,7 @@ void Game::DrawWindBladeSlash3D()
         windBladeSlashVisualHeight,
         windBladeSlashSwordHeight,
         windBladeSlashRotationOffsetDegrees,
+        windBladeSlashGroundTiltDegrees,
         false,
         false,
         WHITE
@@ -52469,6 +54101,7 @@ void Game::DrawWindBladeSlash3D()
         windBladeSlashVisualHeight,
         windBladeSlashSwordHeight,
         windBladeSlashRotationOffsetDegrees,
+        windBladeSlashGroundTiltDegrees,
         true,
         true,
         WHITE
@@ -52485,6 +54118,7 @@ void Game::DrawHybridBillboardFrameRotated(
     float heightPixels,
     float additionalHeightPixels,
     float rotationDegrees,
+    float groundTiltDegrees,
     bool flipX,
     bool flipY,
     Color tint
@@ -52500,6 +54134,10 @@ void Game::DrawHybridBillboardFrameRotated(
     {
         return;
     }
+
+    // --------------------------------------------------
+    // Camera-facing billboard basis
+    // --------------------------------------------------
 
     Vector3 cameraForward =
         Vector3Normalize(
@@ -52520,8 +54158,7 @@ void Game::DrawHybridBillboardFrameRotated(
     if (
         Vector3Length(
             screenRight
-        ) <=
-        0.0001f
+        ) <= 0.0001f
         )
     {
         screenRight = {
@@ -52539,43 +54176,138 @@ void Game::DrawHybridBillboardFrameRotated(
             )
         );
 
-    const float radians =
+    // --------------------------------------------------
+    // Ground tilt
+    //
+    // screenUp = fully camera-facing.
+    // groundForward = completely horizontal.
+    //
+    // Blending between them physically tilts the quad
+    // toward the XZ terrain plane.
+    // --------------------------------------------------
+
+    const Vector3 worldUp{
+        0.0f,
+        1.0f,
+        0.0f
+    };
+
+    Vector3 groundForward =
+        Vector3CrossProduct(
+            worldUp,
+            screenRight
+        );
+
+    if (
+        Vector3Length(
+            groundForward
+        ) <= 0.0001f
+        )
+    {
+        groundForward = {
+            0.0f,
+            0.0f,
+            -1.0f
+        };
+    }
+    else
+    {
+        groundForward =
+            Vector3Normalize(
+                groundForward
+            );
+    }
+
+    const float tiltRadians =
+        Clamp(
+            groundTiltDegrees,
+            -85.0f,
+            85.0f
+        ) *
+        DEG2RAD;
+
+    const float tiltCosine =
+        cosf(
+            tiltRadians
+        );
+
+    const float tiltSine =
+        sinf(
+            tiltRadians
+        );
+
+    Vector3 tiltedUp =
+        Vector3Add(
+            Vector3Scale(
+                screenUp,
+                tiltCosine
+            ),
+            Vector3Scale(
+                groundForward,
+                tiltSine
+            )
+        );
+
+    if (
+        Vector3Length(
+            tiltedUp
+        ) > 0.0001f
+        )
+    {
+        tiltedUp =
+            Vector3Normalize(
+                tiltedUp
+            );
+    }
+
+    // --------------------------------------------------
+    // Ordinary sprite-plane rotation
+    //
+    // This is what your existing -8 degree setting does.
+    // It now rotates inside the already-tilted plane.
+    // --------------------------------------------------
+
+    const float rotationRadians =
         rotationDegrees *
         DEG2RAD;
 
-    const float cosine =
+    const float rotationCosine =
         cosf(
-            radians
+            rotationRadians
         );
 
-    const float sine =
+    const float rotationSine =
         sinf(
-            radians
+            rotationRadians
         );
 
     const Vector3 rotatedRight =
         Vector3Add(
             Vector3Scale(
                 screenRight,
-                cosine
+                rotationCosine
             ),
             Vector3Scale(
-                screenUp,
-                sine
+                tiltedUp,
+                rotationSine
             )
         );
 
     const Vector3 rotatedUp =
         Vector3Add(
             Vector3Scale(
-                screenUp,
-                cosine
+                tiltedUp,
+                rotationCosine
             ),
             Vector3Scale(
                 screenRight,
-                -sine
+                -rotationSine
             )
         );
+
+    // --------------------------------------------------
+    // Quad position / dimensions
+    // --------------------------------------------------
 
     const Vector3 center =
         WorldToHybrid3D(
@@ -52637,6 +54369,10 @@ void Game::DrawHybridBillboardFrameRotated(
             halfUp
         );
 
+    // --------------------------------------------------
+    // Texture coordinates
+    // --------------------------------------------------
+
     const float inverseTextureWidth =
         1.0f /
         static_cast<float>(
@@ -52687,12 +54423,16 @@ void Game::DrawHybridBillboardFrameRotated(
         );
     }
 
+    // --------------------------------------------------
+    // Draw
+    // --------------------------------------------------
+
     rlSetTexture(
         texture.id
     );
 
     rlBegin(
-        RL_TRIANGLES
+        RL_QUADS
     );
 
     rlColor4ub(
@@ -52702,42 +54442,44 @@ void Game::DrawHybridBillboardFrameRotated(
         tint.a
     );
 
-    rlTexCoord2f(u0, v0);
+    rlTexCoord2f(
+        u0,
+        v0
+    );
+
     rlVertex3f(
         topLeft.x,
         topLeft.y,
         topLeft.z
     );
 
-    rlTexCoord2f(u0, v1);
+    rlTexCoord2f(
+        u0,
+        v1
+    );
+
     rlVertex3f(
         bottomLeft.x,
         bottomLeft.y,
         bottomLeft.z
     );
 
-    rlTexCoord2f(u1, v1);
+    rlTexCoord2f(
+        u1,
+        v1
+    );
+
     rlVertex3f(
         bottomRight.x,
         bottomRight.y,
         bottomRight.z
     );
 
-    rlTexCoord2f(u0, v0);
-    rlVertex3f(
-        topLeft.x,
-        topLeft.y,
-        topLeft.z
+    rlTexCoord2f(
+        u1,
+        v0
     );
 
-    rlTexCoord2f(u1, v1);
-    rlVertex3f(
-        bottomRight.x,
-        bottomRight.y,
-        bottomRight.z
-    );
-
-    rlTexCoord2f(u1, v0);
     rlVertex3f(
         topRight.x,
         topRight.y,
@@ -52745,6 +54487,573 @@ void Game::DrawHybridBillboardFrameRotated(
     );
 
     rlEnd();
-    rlSetTexture(0);
+
+    rlSetTexture(
+        0
+    );
 }
 
+float Game::MeasureUiTextWidth(
+    const std::string& text,
+    float fontSize,
+    float spacing
+) const
+{
+    return MeasureTextEx(
+        uiFont,
+        text.c_str(),
+        fontSize,
+        spacing
+    ).x;
+}
+
+void Game::DrawSkillUi()
+{
+    for (const SkillSlot& skill : skills)
+    {
+        DrawRectangleRec(
+            skill.buttonRect,
+            Color{ 18, 18, 24, 220 }
+        );
+
+        DrawRectangleLinesEx(
+            skill.buttonRect,
+            2.0f,
+            WHITE
+        );
+
+        Texture2D* iconTexture =
+            GetSkillIconTexture(
+                skill.type
+            );
+
+        Rectangle iconRect{
+            skill.buttonRect.x + 3.0f,
+            skill.buttonRect.y + 3.0f,
+            skill.buttonRect.width - 6.0f,
+            skill.buttonRect.height - 6.0f
+        };
+
+        if (
+            iconTexture != nullptr &&
+            iconTexture->id != 0
+            )
+        {
+            DrawTexturePro(
+                *iconTexture,
+                {
+                    0.0f,
+                    0.0f,
+                    static_cast<float>(
+                        iconTexture->width
+                    ),
+                    static_cast<float>(
+                        iconTexture->height
+                    )
+                },
+                iconRect,
+                { 0.0f, 0.0f },
+                0.0f,
+                WHITE
+            );
+        }
+
+        if (!skill.unlocked)
+        {
+            DrawRectangleRec(
+                skill.buttonRect,
+                Color{ 12, 12, 12, 175 }
+            );
+
+            DrawRectangleLinesEx(
+                skill.buttonRect,
+                2.0f,
+                GRAY
+            );
+
+            float lockSize =
+                12.0f;
+
+            std::string lockText =
+                "LOCK";
+
+            float lockWidth =
+                MeasureUiTextWidth(
+                    lockText,
+                    lockSize
+                );
+
+            DrawUiText(
+                lockText,
+                {
+                    skill.buttonRect.x +
+                        skill.buttonRect.width * 0.5f -
+                        lockWidth * 0.5f,
+
+                    skill.buttonRect.y +
+                        skill.buttonRect.height * 0.5f -
+                        lockSize * 0.5f
+                },
+                lockSize,
+                WHITE
+            );
+
+            continue;
+        }
+
+        if (
+            skill.cooldownRemaining >
+            0.0f
+            )
+        {
+            float ratio =
+                skill.cooldownRemaining /
+                skill.cooldown;
+
+            Rectangle overlay =
+                skill.buttonRect;
+
+            overlay.y +=
+                overlay.height *
+                (1.0f - ratio);
+
+            overlay.height *=
+                ratio;
+
+            DrawRectangleRec(
+                overlay,
+                Color{ 0, 0, 0, 155 }
+            );
+
+            std::string cdText =
+                TextFormat(
+                    "%.1f",
+                    skill.cooldownRemaining
+                );
+
+            float cdSize =
+                13.0f;
+
+            float cdWidth =
+                MeasureUiTextWidth(
+                    cdText,
+                    cdSize
+                );
+
+            DrawUiText(
+                cdText,
+                {
+                    skill.buttonRect.x +
+                        skill.buttonRect.width * 0.5f -
+                        cdWidth * 0.5f,
+
+                    skill.buttonRect.y +
+                        skill.buttonRect.height * 0.5f -
+                        cdSize * 0.5f
+                },
+                cdSize,
+                YELLOW
+            );
+        }
+    }
+}
+
+Rectangle Game::FitTextureInRect(
+    const Texture2D& texture,
+    Rectangle bounds,
+    float padding
+) const
+{
+    Rectangle padded = bounds;
+    padded.x += padding;
+    padded.y += padding;
+    padded.width -= padding * 2.0f;
+    padded.height -= padding * 2.0f;
+
+    if (texture.width <= 0 || texture.height <= 0 ||
+        padded.width <= 0.0f || padded.height <= 0.0f)
+    {
+        return padded;
+    }
+
+    const float scale =
+        std::min(
+            padded.width / static_cast<float>(texture.width),
+            padded.height / static_cast<float>(texture.height)
+        );
+
+    const float drawW =
+        static_cast<float>(texture.width) * scale;
+
+    const float drawH =
+        static_cast<float>(texture.height) * scale;
+
+    return {
+        padded.x + (padded.width - drawW) * 0.5f,
+        padded.y + (padded.height - drawH) * 0.5f,
+        drawW,
+        drawH
+    };
+}
+
+Texture2D* Game::GetSkillIconTexture(SkillType type)
+{
+    switch (type)
+    {
+    case SkillType::SpinningBlade:
+        return skillIconWindBladeLoaded ? &skillIconWindBlade : nullptr;
+
+    case SkillType::Huashan:
+        return skillIconHuashanLoaded ? &skillIconHuashan : nullptr;
+
+    case SkillType::Dongfeng:
+        return skillIconDongfengLoaded ? &skillIconDongfeng : nullptr;
+
+    default:
+        return nullptr;
+    }
+}
+
+void Game::LoadSkillUiAssets()
+{
+    const char* uiFontPath =
+        "Assets/fonts/toxigenesis bd.otf";
+
+    if (FileExists(uiFontPath))
+    {
+        uiFont =
+            LoadFontEx(
+                uiFontPath,
+                48,
+                nullptr,
+                0
+            );
+
+        if (uiFont.texture.id != 0)
+        {
+            uiFontLoaded = true;
+            SetTextureFilter(
+                uiFont.texture,
+                TEXTURE_FILTER_BILINEAR
+            );
+        }
+    }
+
+
+    // --------------------------------------------------
+// Damage number font
+// --------------------------------------------------
+
+    damageFont =
+        GetFontDefault();
+
+    damageFontLoaded =
+        false;
+
+    const char* damageFontPath =
+        "Assets/fonts/Pink Blue.ttf";
+
+    if (
+        FileExists(
+            damageFontPath
+        )
+        )
+    {
+        Font loadedDamageFont =
+            LoadFontEx(
+                damageFontPath,
+                64,
+                nullptr,
+                0
+            );
+
+        if (
+            loadedDamageFont.texture.id != 0
+            )
+        {
+            damageFont =
+                loadedDamageFont;
+
+            damageFontLoaded =
+                true;
+
+            SetTextureFilter(
+                damageFont.texture,
+                TEXTURE_FILTER_BILINEAR
+            );
+
+            TraceLog(
+                LOG_INFO,
+                "[DAMAGE FONT] Loaded: %s",
+                damageFontPath
+            );
+        }
+        else
+        {
+            TraceLog(
+                LOG_WARNING,
+                "[DAMAGE FONT] Failed to load %s. "
+                "Using Raylib default font.",
+                damageFontPath
+            );
+        }
+    }
+    else
+    {
+        TraceLog(
+            LOG_WARNING,
+            "[DAMAGE FONT] Font not found: %s. "
+            "Using Raylib default font.",
+            damageFontPath
+        );
+    }
+
+    const char* framePath =
+        "Assets/ui/skill_card_frame.png";
+
+    if (FileExists(framePath))
+    {
+        upgradeCardFrameTexture =
+            LoadTexture(framePath);
+
+        if (upgradeCardFrameTexture.id != 0)
+        {
+            upgradeCardFrameLoaded = true;
+        }
+    }
+
+    const char* windBladePath =
+        "Assets/ui/icon_wind_blade.png";
+
+    if (FileExists(windBladePath))
+    {
+        skillIconWindBlade =
+            LoadTexture(windBladePath);
+
+        if (skillIconWindBlade.id != 0)
+        {
+            skillIconWindBladeLoaded = true;
+        }
+    }
+
+    const char* huashanPath =
+        "Assets/ui/icon_huashan.png";
+
+    if (FileExists(huashanPath))
+    {
+        skillIconHuashan =
+            LoadTexture(huashanPath);
+
+        if (skillIconHuashan.id != 0)
+        {
+            skillIconHuashanLoaded = true;
+        }
+    }
+
+    const char* dongfengPath =
+        "Assets/ui/icon_dongfeng.png";
+
+    if (FileExists(dongfengPath))
+    {
+        skillIconDongfeng =
+            LoadTexture(dongfengPath);
+
+        if (skillIconDongfeng.id != 0)
+        {
+            skillIconDongfengLoaded = true;
+        }
+    }
+}
+
+void Game::UnloadSkillUiAssets()
+{
+    if (uiFontLoaded)
+    {
+        UnloadFont(uiFont);
+        uiFontLoaded = false;
+    }
+
+    if (damageFontLoaded)
+    {
+        UnloadFont(
+            damageFont
+        );
+
+        damageFontLoaded =
+            false;
+    }
+
+    damageFont =
+        GetFontDefault();
+
+    if (upgradeCardFrameLoaded)
+    {
+        UnloadTexture(upgradeCardFrameTexture);
+        upgradeCardFrameLoaded = false;
+    }
+
+    if (skillIconWindBladeLoaded)
+    {
+        UnloadTexture(skillIconWindBlade);
+        skillIconWindBladeLoaded = false;
+    }
+
+    if (skillIconHuashanLoaded)
+    {
+        UnloadTexture(skillIconHuashan);
+        skillIconHuashanLoaded = false;
+    }
+
+    if (skillIconDongfengLoaded)
+    {
+        UnloadTexture(skillIconDongfeng);
+        skillIconDongfengLoaded = false;
+    }
+}
+
+void Game::DrawWrappedUiText(
+    const std::string& text,
+    Rectangle bounds,
+    float fontSize,
+    float lineGap,
+    Color color,
+    int maxLines,
+    float spacing
+) const
+{
+    if (
+        bounds.width <= 0.0f ||
+        bounds.height <= 0.0f ||
+        fontSize <= 0.0f ||
+        maxLines <= 0
+        )
+    {
+        return;
+    }
+
+    std::istringstream stream(
+        text
+    );
+
+    std::string word;
+    std::string line;
+
+    float y =
+        bounds.y;
+
+    int linesDrawn =
+        0;
+
+    while (
+        stream >>
+        word
+        )
+    {
+        const std::string testLine =
+            line.empty()
+            ? word
+            : line +
+            " " +
+            word;
+
+        const float testWidth =
+            MeasureUiTextWidth(
+                testLine,
+                fontSize,
+                spacing
+            );
+
+        const bool exceedsWidth =
+            testWidth >
+            bounds.width;
+
+        if (
+            exceedsWidth &&
+            !line.empty()
+            )
+        {
+            DrawUiText(
+                line,
+                {
+                    bounds.x,
+                    y
+                },
+                fontSize,
+                color,
+                spacing
+            );
+
+            linesDrawn++;
+
+            if (
+                linesDrawn >=
+                maxLines
+                )
+            {
+                return;
+            }
+
+            y +=
+                fontSize +
+                lineGap;
+
+            if (
+                y +
+                fontSize >
+                bounds.y +
+                bounds.height
+                )
+            {
+                return;
+            }
+
+            line =
+                word;
+        }
+        else
+        {
+            line =
+                testLine;
+        }
+    }
+
+    if (
+        !line.empty() &&
+        linesDrawn <
+        maxLines &&
+        y +
+        fontSize <=
+        bounds.y +
+        bounds.height
+        )
+    {
+        DrawUiText(
+            line,
+            {
+                bounds.x,
+                y
+            },
+            fontSize,
+            color,
+            spacing
+        );
+    }
+}
+
+void Game::DrawUiText(
+    const std::string& text,
+    Vector2 pos,
+    float fontSize,
+    Color color,
+    float spacing
+) const
+{
+    DrawTextEx(
+        uiFont,
+        text.c_str(),
+        pos,
+        fontSize,
+        spacing,
+        color
+    );
+}
