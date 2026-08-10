@@ -3264,9 +3264,14 @@ void Game::UpdateActiveChamber(
         gameState == GameState::Playing
         )
     {
-        StartChamberEncounter(
-            activeChamberId
-        );
+        // Chamber 0 waits until the player approaches
+        // the central combat area.
+        if (newChamber->id != 0)
+        {
+            StartChamberEncounter(
+                activeChamberId
+            );
+        }
     }
     else if (
         newChamber != nullptr &&
@@ -3419,10 +3424,14 @@ void Game::ResetChamberEncounterProgress()
     {
         chamber.cleared = false;
         chamber.encounterStarted = false;
-        chamber.wavesRequired =
-            chamber.id == BossChamberId
-            ? 1
-            : 2;
+		chamber.wavesRequired =
+			chamber.id == BossChamberId
+			? 1
+			: (
+				chamber.id == 0
+				? 5
+				: 2
+				);  
         chamber.wavesCompleted = 0;
         chamber.currentWave = 0;
 
@@ -3481,7 +3490,11 @@ void Game::StartChamberEncounter(
     chamber->wavesRequired =
         chamber->id == BossChamberId
         ? 1
-        : 2;
+        : (
+            chamber->id == 0
+            ? 5
+            : 2
+            );
     chamber->wavesCompleted = 0;
     chamber->currentWave = 1;
 
@@ -8176,6 +8189,8 @@ void Game::Update(float dt)
         UpdateActiveChamber();
         UpdateChamberVisibility(dt);
 
+        UpdateFirstChamberEncounterTrigger();
+
         player.pos = playerPosition;
 
         for (Light2D& light : lights)
@@ -8294,6 +8309,10 @@ void Game::Update(float dt)
     // path movement, joystick movement, dash and knockback.
     UpdateActiveChamber();
     UpdateChamberVisibility(dt);
+
+    // Chamber 0 begins only once the player reaches
+    // the inner combat area.
+    UpdateFirstChamberEncounterTrigger();
 
     if (chamberClearedMessageTimer > 0.0f)
     {
@@ -17902,6 +17921,34 @@ void Game::InitCombat()
     vfxParticles.clear();
     orbitalBlades.clear();
 
+    enemies.reserve(
+        MaximumActiveEnemies
+    );
+
+    pendingEnemySpawns.reserve(
+        MaximumActiveEnemies
+    );
+
+    projectiles.reserve(
+        128
+    );
+
+    vfxParticles.reserve(
+        MaxVfxParticles
+    );
+
+    orbitalBlades.reserve(
+        32
+    );
+
+    bossFallingRocks.reserve(
+        32
+    );
+
+    dongfengSparkTrail.reserve(
+        64
+    );
+
     windBladeCasting = false;
     windBladeResolvedStrikeCount = 0;
     windBladeCastTimer = 0.0f;
@@ -17981,9 +18028,18 @@ void Game::InitCombat()
     bossFallingRocks.clear();
 
     ResetChamberEncounterProgress();
-    StartChamberEncounter(
-        activeChamberId
-    );
+
+    // Chamber 0 is triggered later by player proximity.
+    // Other chambers retain immediate encounter startup.
+    if (
+        activeChamberId >= 0 &&
+        activeChamberId != 0
+        )
+    {
+        StartChamberEncounter(
+            activeChamberId
+        );
+    }
 }
 
 void Game::RestartGameplay()
@@ -18148,6 +18204,13 @@ void Game::UpdateCombat(
                 worldDt,
                 realDt
             );
+
+            UpdateFinalWaveUltimate(
+                worldDt,
+                realDt
+            );
+
+
         }
     );
 
@@ -18213,7 +18276,15 @@ void Game::UpdateCombat(
             UpdateVfx(
                 worldDt
             );
+
+            UpdateDeathSmokeClusters(
+                realDt
+            );
+
         }
+
+
+
     );
 
     PERF_TIME_BLOCK(
@@ -18464,20 +18535,65 @@ void Game::StartChamberWave(
     wave.enemiesSpawned = 0;
 
     // Chamber 0 is a fast progression arena. Chamber 1 is Boss-only.
-    wave.enemiesToSpawn =
-        bossChamber
-        ? 1
-        : (
-            chamberWave == 1
-            ? 8
-            : 10
-            );
+    if (bossChamber)
+    {
+        wave.enemiesToSpawn =
+            1;
+
+        wave.spawnInterval =
+            0.20f;
+    }
+    else if (
+        chamber->id == 0
+        )
+    {
+        switch (chamberWave)
+        {
+        case 1:
+            wave.enemiesToSpawn =
+                16;
+            break;
+
+        case 2:
+            wave.enemiesToSpawn =
+                22;
+            break;
+
+        case 3:
+            wave.enemiesToSpawn =
+                28;
+            break;
+
+        case 4:
+            wave.enemiesToSpawn =
+                34;
+            break;
+
+        case 5:
+            wave.enemiesToSpawn =
+                42;
+            break;
+
+        default:
+            wave.enemiesToSpawn =
+                16;
+            break;
+        }
+
+        // Original normal-enemy spawn pacing.
+        wave.spawnInterval =
+            0.30f;
+    }
+    else
+    {
+        wave.enemiesToSpawn =
+            10;
+
+        wave.spawnInterval =
+            0.30f;
+    }
 
     wave.spawnTimer = 0.0f;
-    wave.spawnInterval =
-        bossChamber
-        ? 0.20f
-        : 0.30f;
 
     wave.waveActive = true;
     wave.waitingForNextWave = true;
@@ -18500,6 +18616,138 @@ void Game::StartChamberWave(
         chamber->wavesRequired,
         wave.enemiesToSpawn
     );
+}
+
+int Game::GetChamber0WaveSpawnBatchSize(
+    int chamberWave
+) const
+{
+    switch (chamberWave)
+    {
+    case 1:
+        return 3;
+
+    case 2:
+        return 4;
+
+    case 3:
+        return 4;
+
+    case 4:
+        return 5;
+
+    case 5:
+        return 5;
+
+    default:
+        return 3;
+    }
+}
+
+EnemyType Game::ChooseEnemyTypeForChamberWave(
+    int chamberWave
+) const
+{
+    const int roll =
+        GetRandomValue(
+            1,
+            100
+        );
+
+    switch (chamberWave)
+    {
+    case 1:
+        if (roll <= 45)
+        {
+            return EnemyType::Grunt;
+        }
+
+        if (roll <= 75)
+        {
+            return EnemyType::Runner;
+        }
+
+        if (roll <= 90)
+        {
+            return EnemyType::Tank;
+        }
+
+        return EnemyType::Shooter;
+
+    case 2:
+        if (roll <= 30)
+        {
+            return EnemyType::Grunt;
+        }
+
+        if (roll <= 50)
+        {
+            return EnemyType::Runner;
+        }
+
+        if (roll <= 85)
+        {
+            return EnemyType::Tank;
+        }
+
+        return EnemyType::Shooter;
+
+    case 3:
+        // Tank showcase wave.
+        if (roll <= 15)
+        {
+            return EnemyType::Grunt;
+        }
+
+        if (roll <= 25)
+        {
+            return EnemyType::Runner;
+        }
+
+        if (roll <= 85)
+        {
+            return EnemyType::Tank;
+        }
+
+        return EnemyType::Shooter;
+
+    case 4:
+        if (roll <= 15)
+        {
+            return EnemyType::Grunt;
+        }
+
+        if (roll <= 25)
+        {
+            return EnemyType::Runner;
+        }
+
+        if (roll <= 75)
+        {
+            return EnemyType::Tank;
+        }
+
+        return EnemyType::Shooter;
+
+    case 5:
+    default:
+        if (roll <= 10)
+        {
+            return EnemyType::Grunt;
+        }
+
+        if (roll <= 15)
+        {
+            return EnemyType::Runner;
+        }
+
+        if (roll <= 75)
+        {
+            return EnemyType::Tank;
+        }
+
+        return EnemyType::Shooter;
+    }
 }
 
 void Game::UpdateWave(float dt)
@@ -18540,54 +18788,111 @@ void Game::UpdateWave(float dt)
 
     if (
         !waveSpawningPaused &&
-        wave.enemiesSpawned < wave.enemiesToSpawn
+        wave.enemiesSpawned <
+        wave.enemiesToSpawn
         )
     {
-        wave.spawnTimer += dt;
+        wave.spawnTimer +=
+            dt;
 
-        if (wave.spawnTimer >= wave.spawnInterval)
+        if (
+            wave.spawnTimer >=
+            wave.spawnInterval
+            )
         {
-            wave.spawnTimer = 0.0f;
+            wave.spawnTimer =
+                0.0f;
 
-            EnemyType type =
-                EnemyType::Grunt;
+            const bool swarmWave =
+                chamber->id !=
+                BossChamberId &&
+                wave.chamberWave >=
+                2;
 
-            if (chamber->id == BossChamberId)
+            const int batchSize =
+                chamber->id == 0
+                ? GetChamber0WaveSpawnBatchSize(
+                    chamber->currentWave
+                )
+                : 1;
+
+            for (
+                int batchIndex = 0;
+                batchIndex < batchSize &&
+                wave.enemiesSpawned <
+                wave.enemiesToSpawn;
+                ++batchIndex
+                )
             {
-                type = EnemyType::Boss;
-            }
-            else
-            {
-                const int roll =
-                    GetRandomValue(
-                        1,
-                        100
-                    );
+                if (
+                    static_cast<int>(
+                        enemies.size()
+                        ) >=
+                    MaximumActiveEnemies
+                    )
+                {
+                    // Wait for some enemies to die before
+                    // spawning the rest of the wave.
+                    break;
+                }
 
-                if (roll <= 45)
+                EnemyType type =
+                    EnemyType::Grunt;
+
+                if (
+                    chamber->id ==
+                    BossChamberId
+                    )
                 {
-                    type = EnemyType::Grunt;
+                    type =
+                        EnemyType::Boss;
                 }
-                else if (roll <= 68)
+                else if (
+                    chamber->id == 0
+                    )
                 {
-                    type = EnemyType::Runner;
-                }
-                else if (roll <= 88)
-                {
-                    type = EnemyType::Shooter;
+                    type =
+                        ChooseEnemyTypeForChamberWave(
+                            chamber->currentWave
+                        );
                 }
                 else
                 {
-                    type = EnemyType::Tank;
+                    const int roll =
+                        GetRandomValue(
+                            1,
+                            100
+                        );
+
+                    if (roll <= 45)
+                    {
+                        type =
+                            EnemyType::Grunt;
+                    }
+                    else if (roll <= 68)
+                    {
+                        type =
+                            EnemyType::Runner;
+                    }
+                    else if (roll <= 88)
+                    {
+                        type =
+                            EnemyType::Shooter;
+                    }
+                    else
+                    {
+                        type =
+                            EnemyType::Tank;
+                    }
                 }
+
+                SpawnEnemyInChamber(
+                    type,
+                    chamber->id
+                );
+
+                wave.enemiesSpawned++;
             }
-
-            SpawnEnemyInChamber(
-                type,
-                chamber->id
-            );
-
-            wave.enemiesSpawned++;
         }
     }
 
@@ -18618,39 +18923,199 @@ void Game::UpdateWave(float dt)
             chamber->currentWave
         );
 
-    if (
+    wave.waveActive =
+        false;
+
+    wave.waitingForNextWave =
+        false;
+
+    const bool hasAnotherWave =
         chamber->wavesCompleted <
-        chamber->wavesRequired
-        )
-    {
-        StartChamberWave(
-            chamber->id,
-            chamber->wavesCompleted + 1
-        );
-
-        return;
-    }
-
-    chamber->cleared = true;
-    chamber->currentWave =
         chamber->wavesRequired;
 
-    wave.waveActive = false;
-    wave.waitingForNextWave = false;
+    // --------------------------------------------------
+    // Chamber 0:
+    // Every wave ends with a NEW ABILITY choice.
+    // --------------------------------------------------
 
-    chamberClearedMessageTimer = 3.5f;
+    if (
+        chamber->id == 0
+        )
+    {
+        const int completedWave =
+            chamber->wavesCompleted;
 
-    currentPath.clear();
-    pathIndex = 0;
-    hasPath = false;
+        // --------------------------------------------------
+        // Waves 1-3:
+        // choose one of the remaining abilities.
+        // --------------------------------------------------
 
-    TraceLog(
-        LOG_INFO,
-        "[CHAMBER] Chamber %d (%s) cleared. Exit unlocked.",
-        chamber->id,
-        chamber->name.c_str()
-    );
+        if (
+            completedWave >= 1 &&
+            completedWave <= 3
+            )
+        {
+            GenerateSkillChoices();
+
+            pendingSkillChoiceChamberId =
+                chamber->id;
+
+            pendingNextWaveAfterSkillChoice =
+                completedWave +
+                1;
+
+            pendingClearChamberAfterSkillChoice =
+                false;
+
+            if (
+                !currentUpgradeChoices.empty()
+                )
+            {
+                gameState =
+                    GameState::ChoosingUpgrade;
+
+                upgradeMenuOpenedManually =
+                    false;
+
+                upgradeChoicePopupTimer =
+                    0.0f;
+
+                attackButtonDown =
+                    false;
+
+                dashButtonDown =
+                    false;
+
+                dashButtonPressed =
+                    false;
+
+                joystickActive =
+                    false;
+
+                joystickDirection = {
+                    0.0f,
+                    0.0f
+                };
+
+                return;
+            }
+
+            // Debug fallback if all abilities were
+            // manually unlocked beforehand.
+            ApplyCompletedWaveSkillLevels();
+
+            StartChamberWave(
+                chamber->id,
+                completedWave + 1
+            );
+
+            return;
+        }
+
+        // --------------------------------------------------
+        // Wave 4:
+        // no ability card remains.
+        //
+        // Upgrade all owned abilities and enable the
+        // combined final-wave ultimate.
+        // --------------------------------------------------
+
+        if (completedWave == 4)
+        {
+            ApplyCompletedWaveSkillLevels();
+
+            finalWaveUltimateEnabled =
+                true;
+
+            finalWaveUltimateActive =
+                false;
+
+            finalWaveUltimateStage =
+                FinalWaveUltimateStage::None;
+
+            StartChamberWave(
+                chamber->id,
+                5
+            );
+
+            return;
+        }
+
+        // --------------------------------------------------
+        // Wave 5:
+        // normal chamber-completion code below handles
+        // opening the exit.
+        // --------------------------------------------------
+
+       if (completedWave >= 5)
+{
+    finalWaveUltimateEnabled =
+        false;
+
+    finalWaveUltimateActive =
+        false;
+
+    finalWaveUltimateStage =
+        FinalWaveUltimateStage::None;
 }
+}
+
+// --------------------------------------------------
+// Generic chamber progression.
+//
+// Chamber 0 reaches here after Wave 5.
+// Other normal chambers can also use this.
+// --------------------------------------------------
+
+if (hasAnotherWave)
+{
+    StartChamberWave(
+        chamber->id,
+        chamber->wavesCompleted + 1
+    );
+
+    return;
+}
+
+// --------------------------------------------------
+// Final wave completed.
+// Unlock the chamber exit.
+// --------------------------------------------------
+
+chamber->cleared =
+    true;
+
+chamber->currentWave =
+    chamber->wavesRequired;
+
+wave.waveActive =
+    false;
+
+wave.waitingForNextWave =
+    false;
+
+wave.enemiesSpawned =
+    wave.enemiesToSpawn;
+
+chamberClearedMessageTimer =
+    3.5f;
+
+currentPath.clear();
+
+pathIndex =
+    0;
+
+hasPath =
+    false;
+
+TraceLog(
+    LOG_INFO,
+    "[CHAMBER] Chamber %d (%s) cleared. Exit unlocked.",
+    chamber->id,
+    chamber->name.c_str()
+);
+}
+
 
 Vector2 Game::GetRandomSpawnPosition() const
 {
@@ -18801,39 +19266,167 @@ Vector2 Game::GetRandomSpawnPositionInChamber(
     int chamberId
 ) const
 {
-    for (int attempt = 0; attempt < 48; ++attempt)
+    const DungeonChamber* spawnChamber =
+        FindChamberById(
+            chamberId
+        );
+
+    const bool useArenaDistribution =
+        chamberId == 0 &&
+        wave.waveActive &&
+        wave.chamberId == chamberId &&
+        spawnChamber != nullptr &&
+        spawnChamber->hasCells;
+
+    Vector2 spawnCenter =
+        playerPosition;
+
+    if (useArenaDistribution)
     {
-        const float distance =
-            static_cast<float>(
-                GetRandomValue(
-                    360,
-                    720
-                )
+        spawnCenter = {
+            spawnChamber->worldBounds.x +
+                spawnChamber->worldBounds.width *
+                0.5f,
+
+            spawnChamber->worldBounds.y +
+                spawnChamber->worldBounds.height *
+                0.5f
+        };
+    }
+
+    // Reuse one temporary path buffer instead of creating
+    // another vector every spawn attempt.
+    std::vector<Vector2> connectionPath;
+
+    connectionPath.reserve(
+        48
+    );
+
+    for (
+        int attempt = 0;
+        attempt < 48;
+        ++attempt
+        )
+    {
+        float distance =
+            0.0f;
+
+        float angle =
+            0.0f;
+
+        // --------------------------------------------------
+        // Chamber 0:
+        // evenly distribute rapid wave spawns around
+        // several concentric rings.
+        // --------------------------------------------------
+
+        if (useArenaDistribution)
+        {
+            const int distributionIndex =
+                wave.enemiesSpawned +
+                attempt * 5;
+
+            // Golden angle prevents consecutive enemies
+            // from stacking on the same side.
+            angle =
+                fmodf(
+                    static_cast<float>(
+                        distributionIndex
+                        ) *
+                    137.507764f,
+                    360.0f
+                ) *
+                DEG2RAD;
+
+            const float minimumDimension =
+                std::min(
+                    spawnChamber->worldBounds.width,
+                    spawnChamber->worldBounds.height
                 );
 
-        const float angle =
-            static_cast<float>(
-                GetRandomValue(
-                    0,
-                    359
-                )
-                ) *
-            DEG2RAD;
+            const float chamberRadius =
+                Clamp(
+                    minimumDimension *
+                    0.42f,
+                    220.0f,
+                    720.0f
+                );
+
+            const int ring =
+                distributionIndex %
+                3;
+
+            float ringScale =
+                0.56f;
+
+            switch (ring)
+            {
+            case 0:
+                ringScale =
+                    0.56f;
+                break;
+
+            case 1:
+                ringScale =
+                    0.72f;
+                break;
+
+            case 2:
+            default:
+                ringScale =
+                    0.88f;
+                break;
+            }
+
+            distance =
+                chamberRadius *
+                ringScale;
+        }
+        else
+        {
+            // Other chambers retain the existing
+            // random-around-player behaviour.
+            distance =
+                static_cast<float>(
+                    GetRandomValue(
+                        360,
+                        720
+                    )
+                    );
+
+            angle =
+                static_cast<float>(
+                    GetRandomValue(
+                        0,
+                        359
+                    )
+                    ) *
+                DEG2RAD;
+        }
 
         const Vector2 candidate{
-            playerPosition.x +
-                cosf(angle) * distance,
+            spawnCenter.x +
+                cosf(angle) *
+                distance,
 
-            playerPosition.y +
-                sinf(angle) * distance
+            spawnCenter.y +
+                sinf(angle) *
+                distance
         };
 
-        int cellX = 0;
-        int cellY = 0;
+        int cellX =
+            0;
+
+        int cellY =
+            0;
 
         if (
             !WorldToCell(
                 candidate,
+                cellX,
+                cellY
+            ) ||
+            !IsCellEnabled(
                 cellX,
                 cellY
             ) ||
@@ -18846,19 +19439,29 @@ Vector2 Game::GetRandomSpawnPositionInChamber(
                     cellX,
                     cellY
                 )
-            ].chamberId != chamberId
+            ].chamberId !=
+            chamberId
+                    )
+        {
+            continue;
+        }
+
+        // Never spawn directly on top of the player.
+        if (
+            Vector2Distance(
+                candidate,
+                playerPosition
+            ) <
+            TileSize *
+            2.5f
             )
         {
             continue;
         }
 
-        std::vector<Vector2> connectionPath;
+        connectionPath.clear();
 
         if (
-            Vector2Distance(
-                candidate,
-                playerPosition
-            ) >= TileSize * 2.5f &&
             FindPath(
                 candidate,
                 playerPosition,
@@ -18870,15 +19473,28 @@ Vector2 Game::GetRandomSpawnPositionInChamber(
         }
     }
 
+    // --------------------------------------------------
+    // Fallback:
+    // find the furthest valid reachable cell.
+    // --------------------------------------------------
+
     Vector2 bestPosition =
         playerPosition;
 
     float bestDistanceSquared =
         -1.0f;
 
-    for (int y = 0; y < MapHeight; ++y)
+    for (
+        int y = 0;
+        y < MapHeight;
+        ++y
+        )
     {
-        for (int x = 0; x < MapWidth; ++x)
+        for (
+            int x = 0;
+            x < MapWidth;
+            ++x
+            )
         {
             if (
                 !IsCellEnabled(
@@ -18894,8 +19510,9 @@ Vector2 Game::GetRandomSpawnPositionInChamber(
                         x,
                         y
                     )
-                ].chamberId != chamberId
-                )
+                ].chamberId !=
+                chamberId
+                        )
             {
                 continue;
             }
@@ -18906,10 +19523,11 @@ Vector2 Game::GetRandomSpawnPositionInChamber(
                     y
                 );
 
-            std::vector<Vector2> connectionPath;
+            connectionPath.clear();
 
             if (
-                chamberId == activeChamberId &&
+                chamberId ==
+                activeChamberId &&
                 !FindPath(
                     candidate,
                     playerPosition,
@@ -19467,7 +20085,12 @@ void Game::SpawnEnemyInChamber(
     int chamberId
 )
 {
-    if (enemies.size() >= 80)
+    if (
+        static_cast<int>(
+            enemies.size()
+            ) >=
+        MaximumActiveEnemies
+        )
     {
         return;
     }
@@ -21494,12 +22117,27 @@ void Game::SpawnHitSpark(
         particle.type =
             VfxType::ImpactSprite;
 
-        particle.pos =
-            pos;
+        particle.pos = {
+            pos.x +
+                static_cast<float>(
+                    GetRandomValue(
+                        -9,
+                        9
+                    )
+                ),
+
+            pos.y +
+                static_cast<float>(
+                    GetRandomValue(
+                        -9,
+                        9
+                    )
+                )
+        };
 
         particle.drawSize = {
-            136.0f * visualScale,
-            118.0f * visualScale
+            154.0f * visualScale,
+            134.0f * visualScale
         };
 
         particle.endDrawSize =
@@ -21635,31 +22273,117 @@ void Game::SpawnDamageNumber(
         particle
     );
 }
-void Game::SpawnDeathBurst(Vector2 pos)
+void Game::SpawnDeathBurst(
+    Vector2 pos
+)
 {
-    const int particleCount = 6;
+    // Fewer particles per death, but each particle
+    // travels much farther and remains visible longer.
+    const int particleCount =
+        2;
 
-    if (!CanSpawnVfx(particleCount))
+    if (
+        !CanSpawnVfx(
+            particleCount
+        )
+        )
     {
         return;
     }
 
-    for (int i = 0; i < particleCount; ++i)
+    for (
+        int i = 0;
+        i < particleCount;
+        ++i
+        )
     {
-        float angle = static_cast<float>(GetRandomValue(0, 360)) * DEG2RAD;
-        float speed = static_cast<float>(GetRandomValue(120, 260));
+        const float angle =
+            static_cast<float>(
+                GetRandomValue(
+                    0,
+                    359
+                )
+                ) *
+            DEG2RAD;
 
-        VfxParticle p;
-        p.type = VfxType::DeathBurst;
-        p.pos = pos;
-        p.velocity = { cosf(angle) * speed, sinf(angle) * speed };
-        p.radius = static_cast<float>(GetRandomValue(5, 10));
-        p.life = 0.28f;
-        p.maxLife = 0.28f;
-        p.color = { 255, 90, 45, 210 };
-        p.active = true;
+        const float speed =
+            static_cast<float>(
+                GetRandomValue(
+                    240,
+                    480
+                )
+                );
 
-        vfxParticles.push_back(p);
+        const Vector2 direction{
+            cosf(angle),
+            sinf(angle)
+        };
+
+        const float startOffset =
+            static_cast<float>(
+                GetRandomValue(
+                    4,
+                    16
+                )
+                );
+
+        VfxParticle particle;
+
+        particle.type =
+            VfxType::DeathBurst;
+
+        particle.pos =
+            Vector2Add(
+                pos,
+                Vector2Scale(
+                    direction,
+                    startOffset
+                )
+            );
+
+        particle.velocity =
+            Vector2Scale(
+                direction,
+                speed
+            );
+
+        particle.radius =
+            static_cast<float>(
+                GetRandomValue(
+                    8,
+                    14
+                )
+                );
+
+        particle.life =
+            0.42f;
+
+        particle.maxLife =
+            particle.life;
+
+        // Give the blood/death fragments some height
+        // rather than concentrating them on the feet.
+        particle.visualHeight =
+            static_cast<float>(
+                GetRandomValue(
+                    32,
+                    82
+                )
+                );
+
+        particle.color = {
+            255,
+            70,
+            42,
+            220
+        };
+
+        particle.active =
+            true;
+
+        vfxParticles.push_back(
+            particle
+        );
     }
 }
 
@@ -22128,22 +22852,64 @@ void Game::UpdateSkills(float dt)
     UpdateWindBlade(dt);
 }
 
-bool Game::TryActivateSkillAtScreen(Vector2 screenPos)
+bool Game::TryActivateSkillAtScreen(
+    Vector2 screenPos
+)
 {
-    for (SkillSlot& skill : skills)
+    for (
+        SkillSlot& skill :
+        skills
+        )
     {
         if (!skill.unlocked)
         {
             continue;
         }
 
-        if (CheckCollisionPointRec(screenPos, skill.buttonRect) &&
-            skill.cooldownRemaining <= 0.0f)
+        if (
+            !CheckCollisionPointRec(
+                screenPos,
+                skill.buttonRect
+            )
+            )
         {
-            ActivateSkill(skill.type);
-            skill.cooldownRemaining = skill.cooldown;
+            continue;
+        }
+
+        // --------------------------------------------------
+        // Final wave:
+        // ANY unlocked ability button activates the
+        // combined ultimate regardless of cooldown.
+        // --------------------------------------------------
+
+        if (
+            IsFinalWaveUltimateAvailable()
+            )
+        {
+            ActivateSkill(
+                skill.type
+            );
+
             return true;
         }
+
+        // Normal skill behaviour.
+        if (
+            skill.cooldownRemaining >
+            0.0f
+            )
+        {
+            return false;
+        }
+
+        ActivateSkill(
+            skill.type
+        );
+
+        skill.cooldownRemaining =
+            skill.cooldown;
+
+        return true;
     }
 
     return false;
@@ -22374,7 +23140,7 @@ bool Game::IsPlayerMovementLocked() const
     return
         huashanJumpActive ||
         dongfengCasting ||
-        windBladeCasting;
+        windBladeCasting || finalWaveUltimateActive;
 }
 
 float Game::GetHuashanJumpHeight() const
@@ -22509,7 +23275,17 @@ void Game::ResolveHuashanImpact()
         float force = insideDamageRadius ? huashanPrimaryKnockback : huashanOuterKnockback;
         float airborne = insideDamageRadius ? huashanAirborneDuration : huashanAirborneDuration * 0.90f;
 
-        SpawnHitSpark(enemy.pos);
+        // Damaged enemies already received their impact VFX
+// through ApplyDamageToEnemy(). Only show an extra
+// knockback spark for enemies outside the damage radius.
+        if (!insideDamageRadius)
+        {
+            SpawnHitSpark(
+                enemy.pos,
+                0.85f,
+                68.0f
+            );
+        }
 
         if (IsBossEnemy(enemy))
         {
@@ -22518,6 +23294,11 @@ void Game::ResolveHuashanImpact()
         }
         else
         {
+            // Every enemy launched by Huashan receives
+            // another heavy hit when it crashes down.
+            enemy.huashanLandingDamageOnLand =
+                huashanMainDamage;
+
             ApplyKnockbackToEnemy(
                 enemy,
                 huashanImpactCenter,
@@ -22975,17 +23756,41 @@ void Game::UpdateDongfeng(
     const float radius =
         GetDongfengWaveRadius();
 
-    DestroyEnemyProjectilesInDongfengPath(
-        dongfengWavePrevPos,
-        dongfengWavePos,
-        radius
-    );
+    for (
+        int lane = -1;
+        lane <= 1;
+        ++lane
+        )
+    {
+        const Vector2 offset =
+            GetDongfengLaneOffset(
+                lane
+            );
 
-    ResolveDongfengWaveHits(
-        dongfengWavePrevPos,
-        dongfengWavePos,
-        radius
-    );
+        const Vector2 previousPosition =
+            Vector2Add(
+                dongfengWavePrevPos,
+                offset
+            );
+
+        const Vector2 currentPosition =
+            Vector2Add(
+                dongfengWavePos,
+                offset
+            );
+
+        DestroyEnemyProjectilesInDongfengPath(
+            previousPosition,
+            currentPosition,
+            radius
+        );
+
+        ResolveDongfengWaveHits(
+            previousPosition,
+            currentPosition,
+            radius
+        );
+    }
 
     if (
         dongfengWaveTravelled >=
@@ -23460,6 +24265,19 @@ void Game::ResolveDongfengWaveHits(
 
 void Game::ActivateSkill(SkillType type)
 {
+    if (finalWaveUltimateActive)
+    {
+        return;
+    }
+
+    if (
+        IsFinalWaveUltimateAvailable()
+        )
+    {
+        StartFinalWaveUltimate();
+        return;
+    }
+
     if (type == SkillType::SpinningBlade)
     {
         ActivateWindBlade();
@@ -24383,7 +25201,7 @@ void Game::DrawUpgradeChoices()
     );
 
     const char* instruction =
-        "Select one martial skill to strengthen your build";
+        "Select one new martial skill to unlock";
 
     int instructionWidth =
         MeasureText(
@@ -24531,18 +25349,8 @@ void Game::DrawUpgradeChoices()
             18.0f
         );
 
-        std::string status;
-
-        if (choice.unlocksSkill)
-        {
-            status = "Unlock";
-        }
-        else
-        {
-            status =
-                "Lv." +
-                std::to_string(choice.targetLevel);
-        }
+        const std::string status =
+            "Unlock";
 
         if (usePortraitRow)
         {
@@ -25000,7 +25808,9 @@ bool Game::TryChooseUpgradeAtScreen(Vector2 screenPos)
     return false;
 }
 
-void Game::ApplyUpgradeChoice(int choiceIndex)
+void Game::ApplyUpgradeChoice(
+    int choiceIndex
+)
 {
     if (
         choiceIndex < 0 ||
@@ -25014,14 +25824,20 @@ void Game::ApplyUpgradeChoice(int choiceIndex)
     }
 
     const UpgradeChoice choice =
-        currentUpgradeChoices[choiceIndex];
+        currentUpgradeChoices[
+            choiceIndex
+        ];
 
     const int slotIndex =
         FindSkillSlotIndex(
             choice.skillType
         );
 
-    // Choice screens now unlock skills only. Later levels are automatic.
+    // --------------------------------------------------
+    // Ability choice = unlock only.
+    // There are no manual level-up cards anymore.
+    // --------------------------------------------------
+
     if (
         slotIndex >= 0 &&
         !skills[slotIndex].unlocked
@@ -25031,36 +25847,124 @@ void Game::ApplyUpgradeChoice(int choiceIndex)
             slotIndex
         );
 
-        skills[slotIndex].level = 1;
+        skills[slotIndex].level =
+            1;
     }
 
-    upgradeMenuOpenedManually = false;
+    // --------------------------------------------------
+    // Every ability currently owned, including the newly
+    // selected one, gains +5 levels after this wave.
+    // --------------------------------------------------
+
+    ApplyCompletedWaveSkillLevels();
+
+    // --------------------------------------------------
+    // Close choice screen.
+    // --------------------------------------------------
+
+    upgradeMenuOpenedManually =
+        false;
+
     currentUpgradeChoices.clear();
 
-    gameState = GameState::Playing;
+    gameState =
+        GameState::Playing;
 
-    attackButtonDown = false;
-    dashButtonDown = false;
-    dashButtonPressed = false;
-    joystickActive = false;
-    joystickDirection = { 0.0f, 0.0f };
+    attackButtonDown =
+        false;
 
-    // Area attacks may pass more than one unlock threshold in one frame.
-    TryOpenPendingSkillChoice();
+    dashButtonDown =
+        false;
 
-    // Catch up automatic upgrades if the last unlock was chosen late.
-    if (AreAllCoreSkillsUnlocked())
+    dashButtonPressed =
+        false;
+
+    joystickActive =
+        false;
+
+    joystickDirection = {
+        0.0f,
+        0.0f
+    };
+
+    const int chamberId =
+        pendingSkillChoiceChamberId;
+
+    const int nextWave =
+        pendingNextWaveAfterSkillChoice;
+
+    const bool shouldClear =
+        pendingClearChamberAfterSkillChoice;
+
+    pendingSkillChoiceChamberId =
+        -1;
+
+    pendingNextWaveAfterSkillChoice =
+        0;
+
+    pendingClearChamberAfterSkillChoice =
+        false;
+
+    // --------------------------------------------------
+    // More waves remain.
+    // --------------------------------------------------
+
+    if (nextWave > 0)
     {
-        while (
-            enemiesDefeatedTotal >=
-            nextAutomaticUpgradeKillCount
-            )
-        {
-            ApplyAutomaticSkillUpgrade();
+        StartChamberWave(
+            chamberId,
+            nextWave
+        );
 
-            nextAutomaticUpgradeKillCount +=
-                automaticUpgradeKillInterval;
+        return;
+    }
+
+    // --------------------------------------------------
+    // Final wave reward was chosen.
+    // Now actually clear the chamber.
+    // --------------------------------------------------
+
+    if (shouldClear)
+    {
+        DungeonChamber* chamber =
+            FindChamberById(
+                chamberId
+            );
+
+        if (chamber == nullptr)
+        {
+            return;
         }
+
+        chamber->cleared =
+            true;
+
+        chamber->currentWave =
+            chamber->wavesRequired;
+
+        wave.waveActive =
+            false;
+
+        wave.waitingForNextWave =
+            false;
+
+        chamberClearedMessageTimer =
+            3.5f;
+
+        currentPath.clear();
+
+        pathIndex =
+            0;
+
+        hasPath =
+            false;
+
+        TraceLog(
+            LOG_INFO,
+            "[CHAMBER] Chamber %d (%s) cleared after final skill reward.",
+            chamber->id,
+            chamber->name.c_str()
+        );
     }
 }
 
@@ -25096,6 +26000,43 @@ void Game::LevelUpSkill(int slotIndex)
         skills[slotIndex].level = 20;
     }
 }
+
+void Game::ApplyCompletedWaveSkillLevels()
+{
+    for (
+        int slotIndex = 0;
+        slotIndex < 3;
+        ++slotIndex
+        )
+    {
+        SkillSlot& skill =
+            skills[slotIndex];
+
+        if (!skill.unlocked)
+        {
+            continue;
+        }
+
+        skill.level +=
+            skillLevelsPerCompletedWave;
+
+        skill.level =
+            std::min(
+                skill.level,
+                20
+            );
+
+        TraceLog(
+            LOG_INFO,
+            "[WAVE REWARD] %s increased to Lv.%d.",
+            GetSkillDisplayName(
+                skill.type
+            ),
+            skill.level
+        );
+    }
+}
+
 bool Game::AreAllCoreSkillsUnlocked() const
 {
     for (const SkillSlot& skill : skills)
@@ -25202,7 +26143,8 @@ void Game::RegisterEnemyDefeat()
 {
     enemiesDefeatedTotal++;
 
-    while (
+    /*
+        while (
         nextSkillUnlockThresholdIndex <
         static_cast<int>(
             skillUnlockKillThresholds.size()
@@ -25233,6 +26175,8 @@ void Game::RegisterEnemyDefeat()
         nextAutomaticUpgradeKillCount +=
             automaticUpgradeKillInterval;
     }
+    */
+
 }
 
 void Game::UpdateJoystick(float dt)
@@ -25679,28 +26623,61 @@ void Game::GenerateSkillChoices()
         SkillType::Dongfeng
     };
 
-    for (const SkillType type : pool)
+    for (
+        const SkillType type :
+    pool
+        )
     {
         const int slotIndex =
             FindSkillSlotIndex(
                 type
             );
 
-        if (
-            slotIndex < 0 ||
-            skills[slotIndex].unlocked
-            )
+        if (slotIndex < 0)
+        {
+            continue;
+        }
+
+        const SkillSlot& skill =
+            skills[slotIndex];
+
+        // --------------------------------------------------
+        // Skill-selection screen:
+        // already-owned abilities NEVER appear.
+        // --------------------------------------------------
+
+        if (skill.unlocked)
         {
             continue;
         }
 
         UpgradeChoice choice;
-        choice.skillType = type;
-        choice.title = GetSkillDisplayName(type);
-        choice.subtitle = GetSkillSubtitle(type);
-        choice.description = GetSkillDescription(type);
-        choice.unlocksSkill = true;
-        choice.targetLevel = 1;
+
+        choice.skillType =
+            type;
+
+        choice.title =
+            GetSkillDisplayName(
+                type
+            );
+
+        choice.subtitle =
+            GetSkillSubtitle(
+                type
+            );
+
+        choice.description =
+            GetSkillDescription(
+                type
+            );
+
+        // Every card in this menu is always an unlock.
+        choice.unlocksSkill =
+            true;
+
+        choice.targetLevel =
+            1;
+
         choice.cardRect = {};
 
         currentUpgradeChoices.push_back(
@@ -27708,14 +28685,60 @@ void Game::UpdateEnemyReactionTimers(Enemy& enemy, float dt)
 
         if (enemy.airborneTimer <= 0.0f)
         {
-            enemy.airborneTimer = 0.0f;
-            enemy.airborneMaxTimer = 0.0f;
-            enemy.visualHeight = 0.0f;
+            enemy.airborneTimer =
+                0.0f;
 
-            if (enemy.landingStunOnLand > 0.0f)
+            enemy.airborneMaxTimer =
+                0.0f;
+
+            enemy.visualHeight =
+                0.0f;
+
+            const int landingDamage =
+                enemy.huashanLandingDamageOnLand;
+
+            enemy.huashanLandingDamageOnLand =
+                0;
+
+            const float landingStun =
+                enemy.landingStunOnLand;
+
+            enemy.landingStunOnLand =
+                0.0f;
+
+            // --------------------------------------------------
+            // Huashan crash damage
+            // --------------------------------------------------
+
+            if (
+                landingDamage > 0 &&
+                enemy.active &&
+                !IsBossEnemy(
+                    enemy
+                )
+                )
             {
-                enemy.landingStunTimer = enemy.landingStunOnLand;
-                enemy.landingStunOnLand = 0.0f;
+                ApplySkillDamageToEnemy(
+                    enemy,
+                    SkillType::Huashan,
+                    landingDamage,
+                    enemy.pos
+                );
+
+                // Landing damage may have killed the enemy.
+                if (!enemy.active)
+                {
+                    return;
+                }
+            }
+
+            if (landingStun > 0.0f)
+            {
+                enemy.landingStunTimer =
+                    std::max(
+                        enemy.landingStunTimer,
+                        landingStun
+                    );
             }
         }
     }
@@ -28271,7 +29294,12 @@ void Game::ApplyDamageToEnemy(
         }
         else
         {
-            enemy.active = false;
+            enemy.active =
+                false;
+
+            RecordEnemyDeathForSmoke(
+                enemy.pos
+            );
 
             SpawnDeathBurst(
                 enemy.pos
@@ -52124,66 +53152,246 @@ void Game::DrawDongfengWaveUnlit()
     if (
         rendererMode !=
         WorldRendererMode::Hybrid3D ||
-        !dongfengWaveActive ||
         !dongfengCrescentLoaded ||
-        dongfengCrescentSpriteSheet.id == 0
+        dongfengCrescentSpriteSheet.id ==
+        0
         )
     {
         return;
     }
 
-    const Vector2 screenPosition =
-        GetWorldToScreen(
-            WorldToHybrid3D(
-                dongfengWavePos,
-                dongfengCrescentVisualHeight
-            ),
-            hybridCamera
-        );
+    const bool drawNormalDongfeng =
+        dongfengWaveActive;
 
-    const Rectangle source =
-        GetDongfengCrescentSourceRect(
-            dongfengLockedDirectionIndex
-        );
+    const bool drawFinalBurst =
+        finalWaveUltimateActive &&
+        finalWaveUltimateStage ==
+        FinalWaveUltimateStage::DongfengBurst;
 
-    const float radius =
-        std::max(
-            1.0f,
-            GetDongfengWaveRadius()
-        );
+    if (
+        !drawNormalDongfeng &&
+        !drawFinalBurst
+        )
+    {
+        return;
+    }
 
-    const float drawSize =
-        radius *
-        dongfengCrescentSizeMultiplier *
-        camera.zoom;
+    auto DrawCrescent =
+        [this](
+            Vector2 worldPosition,
+            Vector2 worldDirection,
+            float drawSize,
+            Color tint,
+            int forcedDirectionIndex
+            )
+        {
+            int directionIndex =
+                forcedDirectionIndex;
 
-    const Rectangle destination{
-        screenPosition.x,
-        screenPosition.y,
-        drawSize,
-        drawSize
-    };
+            if (directionIndex < 0)
+            {
+                Vector2 displayedDirection =
+                    WorldVectorToView(
+                        worldDirection
+                    );
 
-    const Vector2 origin{
-        drawSize * 0.5f,
-        drawSize * 0.5f
-    };
+                if (
+                    Vector2Length(
+                        displayedDirection
+                    ) <=
+                    0.001f
+                    )
+                {
+                    displayedDirection = {
+                        1.0f,
+                        0.0f
+                    };
+                }
+                else
+                {
+                    displayedDirection =
+                        Vector2Normalize(
+                            displayedDirection
+                        );
+                }
+
+                directionIndex =
+                    GetDongfengCrescentDirectionIndex(
+                        displayedDirection
+                    );
+            }
+
+            const Rectangle source =
+                GetDongfengCrescentSourceRect(
+                    directionIndex
+                );
+
+            const Vector2 screenPosition =
+                GetWorldToScreen(
+                    WorldToHybrid3D(
+                        worldPosition,
+                        dongfengCrescentVisualHeight
+                    ),
+                    hybridCamera
+                );
+
+            const Rectangle destination{
+                screenPosition.x,
+                screenPosition.y,
+                drawSize,
+                drawSize
+            };
+
+            const Vector2 origin{
+                drawSize * 0.5f,
+                drawSize * 0.5f
+            };
+
+            DrawTexturePro(
+                dongfengCrescentSpriteSheet,
+                source,
+                destination,
+                origin,
+                0.0f,
+                tint
+            );
+        };
 
     BeginBlendMode(
         BLEND_ALPHA
     );
 
-    DrawTexturePro(
-        dongfengCrescentSpriteSheet,
-        source,
-        destination,
-        origin,
-        0.0f,
-        WHITE
-    );
+    // --------------------------------------------------
+    // Normal Dongfeng:
+    // three parallel strikes.
+    // --------------------------------------------------
+
+    if (drawNormalDongfeng)
+    {
+        const float radius =
+            std::max(
+                1.0f,
+                GetDongfengWaveRadius()
+            );
+
+        const float drawSize =
+            radius *
+            dongfengCrescentSizeMultiplier *
+            camera.zoom;
+
+        for (
+            int lane = -1;
+            lane <= 1;
+            ++lane
+            )
+        {
+            const Vector2 worldPosition =
+                Vector2Add(
+                    dongfengWavePos,
+                    GetDongfengLaneOffset(
+                        lane
+                    )
+                );
+
+            DrawCrescent(
+                worldPosition,
+                dongfengWaveDirection,
+                drawSize,
+                WHITE,
+                dongfengLockedDirectionIndex
+            );
+        }
+    }
+
+    // --------------------------------------------------
+    // Final Wave:
+    // Dongfeng fires outward in eight directions.
+    // --------------------------------------------------
+
+    if (drawFinalBurst)
+    {
+        const float duration =
+            std::max(
+                0.01f,
+                finalWaveDongfengDuration
+            );
+
+        const float progress =
+            Clamp(
+                finalWaveUltimateTimer /
+                duration,
+                0.0f,
+                1.0f
+            );
+
+        // Smooth acceleration.
+        const float easedProgress =
+            progress *
+            progress *
+            (
+                3.0f -
+                2.0f *
+                progress
+                );
+
+        const float travelDistance =
+            finalWaveDongfengRange *
+            easedProgress;
+
+        // Crescents grow slightly as they travel.
+        const float visualRadius =
+            105.0f +
+            progress *
+            85.0f;
+
+        const float drawSize =
+            visualRadius *
+            dongfengCrescentSizeMultiplier *
+            camera.zoom;
+
+        for (
+            int directionIndex = 0;
+            directionIndex < 8;
+            ++directionIndex
+            )
+        {
+            const float angle =
+                (
+                    static_cast<float>(
+                        directionIndex
+                        ) /
+                    8.0f
+                    ) *
+                PI *
+                2.0f;
+
+            const Vector2 direction{
+                cosf(angle),
+                sinf(angle)
+            };
+
+            const Vector2 worldPosition =
+                Vector2Add(
+                    finalWaveUltimateCenter,
+                    Vector2Scale(
+                        direction,
+                        travelDistance
+                    )
+                );
+
+            DrawCrescent(
+                worldPosition,
+                direction,
+                drawSize,
+                WHITE,
+                -1
+            );
+        }
+    }
 
     EndBlendMode();
 }
+
 
 void Game::UpdateDongfengCastVfx(
     float realDt
@@ -53245,11 +54453,16 @@ void Game::UpdateBossDeath(
             enemy.pos
         );
 
-        SpawnDeathBurst(
+        enemy.active =
+            false;
+
+        RecordEnemyDeathForSmoke(
             enemy.pos
         );
 
-        enemy.active = false;
+        SpawnDeathBurst(
+            enemy.pos
+        );
 
         RegisterEnemyDefeat();
     }
@@ -55057,3 +56270,641 @@ void Game::DrawUiText(
         color
     );
 }
+
+void Game::UpdateFirstChamberEncounterTrigger()
+{
+    if (
+        activeChamberId != 0 ||
+        buildMode ||
+        gameState != GameState::Playing
+        )
+    {
+        return;
+    }
+
+    DungeonChamber* chamber =
+        FindChamberById(
+            0
+        );
+
+    if (
+        chamber == nullptr ||
+        !chamber->hasCells ||
+        chamber->cleared ||
+        chamber->encounterStarted
+        )
+    {
+        return;
+    }
+
+    const Vector2 chamberCenter{
+        chamber->worldBounds.x +
+            chamber->worldBounds.width *
+            0.5f,
+
+        chamber->worldBounds.y +
+            chamber->worldBounds.height *
+            0.5f
+    };
+
+    if (
+        Vector2Distance(
+            playerPosition,
+            chamberCenter
+        ) >
+        firstChamberStartRadius
+        )
+    {
+        return;
+    }
+
+    StartChamberEncounter(
+        0
+    );
+}
+
+void Game::RecordEnemyDeathForSmoke(
+    Vector2 worldPosition
+)
+{
+    DeathSmokeCluster* bestCluster =
+        nullptr;
+
+    float bestDistance =
+        deathSmokeClusterRadius;
+
+    for (
+        DeathSmokeCluster& cluster :
+        deathSmokeClusters
+        )
+    {
+        if (
+            !cluster.active ||
+            cluster.deathCount >=
+            deathSmokeClusterMaximum
+            )
+        {
+            continue;
+        }
+
+        const float distance =
+            Vector2Distance(
+                cluster.center,
+                worldPosition
+            );
+
+        if (
+            distance <=
+            bestDistance
+            )
+        {
+            bestDistance =
+                distance;
+
+            bestCluster =
+                &cluster;
+        }
+    }
+
+    if (bestCluster == nullptr)
+    {
+        for (
+            DeathSmokeCluster& cluster :
+            deathSmokeClusters
+            )
+        {
+            if (cluster.active)
+            {
+                continue;
+            }
+
+            cluster.active =
+                true;
+
+            cluster.center =
+                worldPosition;
+
+            cluster.deathCount =
+                1;
+
+            cluster.age =
+                0.0f;
+
+            cluster.idleTime =
+                0.0f;
+
+            return;
+        }
+
+        return;
+    }
+
+    const float oldCount =
+        static_cast<float>(
+            bestCluster->deathCount
+            );
+
+    bestCluster->center =
+        Vector2Scale(
+            Vector2Add(
+                Vector2Scale(
+                    bestCluster->center,
+                    oldCount
+                ),
+                worldPosition
+            ),
+            1.0f /
+            (
+                oldCount +
+                1.0f
+                )
+        );
+
+    bestCluster->deathCount++;
+
+    bestCluster->idleTime =
+        0.0f;
+}
+
+void Game::UpdateDeathSmokeClusters(
+    float dt
+)
+{
+    for (
+        DeathSmokeCluster& cluster :
+        deathSmokeClusters
+        )
+    {
+        if (!cluster.active)
+        {
+            continue;
+        }
+
+        cluster.age +=
+            dt;
+
+        cluster.idleTime +=
+            dt;
+
+        const bool fullCluster =
+            cluster.deathCount >=
+            deathSmokeClusterMaximum;
+
+        const bool settledCluster =
+            cluster.deathCount >=
+            deathSmokeClusterMinimum &&
+            cluster.idleTime >=
+            deathSmokeClusterSettleTime;
+
+        const bool expiredCluster =
+            cluster.age >=
+            deathSmokeClusterLifetime;
+
+        if (
+            !fullCluster &&
+            !settledCluster &&
+            !expiredCluster
+            )
+        {
+            continue;
+        }
+
+        if (
+            cluster.deathCount >=
+            deathSmokeClusterMinimum
+            )
+        {
+            SpawnDeathClusterSmoke(
+                cluster.center,
+                cluster.deathCount
+            );
+        }
+
+        cluster =
+            DeathSmokeCluster{};
+    }
+}
+
+void Game::SpawnDeathClusterSmoke(
+    Vector2 worldPosition,
+    int deathCount
+)
+{
+    if (
+        !smokeVfxLoaded ||
+        smokeVfxSpriteSheet.id == 0 ||
+        !CanSpawnVfx(1)
+        )
+    {
+        return;
+    }
+
+    const float scale =
+        Clamp(
+            1.0f +
+            static_cast<float>(
+                deathCount - 3
+                ) *
+            0.15f,
+            1.0f,
+            1.35f
+        );
+
+    VfxParticle smoke;
+
+    smoke.type =
+        VfxType::SmokeSprite;
+
+    smoke.pos =
+        worldPosition;
+
+    smoke.drawSize = {
+        190.0f * scale,
+        205.0f * scale
+    };
+
+    smoke.endDrawSize =
+        smoke.drawSize;
+
+    smoke.visualHeight =
+        10.0f;
+
+    smoke.verticalVelocity =
+        52.0f;
+
+    smoke.anchorY =
+        1.0f;
+
+    smoke.spriteFrame =
+        0;
+
+    smoke.spriteFrameCount =
+        smokeVfxFrameCount;
+
+    smoke.spriteFrameOffset =
+        0;
+
+    smoke.spriteFrameTimer =
+        0.0f;
+
+    smoke.spriteFrameDuration =
+        smokeVfxFrameDuration;
+
+    smoke.life =
+        static_cast<float>(
+            smokeVfxFrameCount
+            ) *
+        smokeVfxFrameDuration;
+
+    smoke.maxLife =
+        smoke.life;
+
+    smoke.color =
+        WHITE;
+
+    smoke.active =
+        true;
+
+    vfxParticles.push_back(
+        smoke
+    );
+}
+
+Vector2 Game::GetDongfengLaneOffset(
+    int lane
+) const
+{
+    const Vector2 perpendicular{
+        -dongfengWaveDirection.y,
+        dongfengWaveDirection.x
+    };
+
+    return Vector2Scale(
+        perpendicular,
+        static_cast<float>(
+            lane
+            ) *
+        dongfengSideStrikeSpacing
+    );
+}
+
+bool Game::IsFinalWaveUltimateAvailable()
+const
+{
+    return
+        activeChamberId == 0 &&
+        wave.chamberWave == 5 &&
+        wave.waveActive &&
+        finalWaveUltimateEnabled &&
+        gameState ==
+        GameState::Playing;
+}
+
+
+void Game::StartFinalWaveUltimate()
+{
+    DungeonChamber* chamber =
+        FindChamberById(
+            activeChamberId
+        );
+
+    if (
+        chamber == nullptr ||
+        !chamber->hasCells
+        )
+    {
+        return;
+    }
+
+    finalWaveUltimateEnabled =
+        false;
+
+    finalWaveUltimateActive =
+        true;
+
+    finalWaveUltimateStage =
+        FinalWaveUltimateStage::
+        JumpToCenter;
+
+    finalWaveUltimateTimer =
+        0.0f;
+
+    CancelPlayerAttackAnimation();
+
+    dashActive =
+        false;
+
+    playerKnockbackActive =
+        false;
+
+    dongfengCasting =
+        false;
+
+    dongfengWaveActive =
+        false;
+
+    windBladeCasting =
+        false;
+
+    finalWaveUltimateCenter =
+        GetBossChamberCenterPosition(
+            activeChamberId
+        );
+
+    const float halfWidth =
+        chamber->worldBounds.width *
+        0.5f;
+
+    const float halfHeight =
+        chamber->worldBounds.height *
+        0.5f;
+
+    finalWaveDongfengRange =
+        sqrtf(
+            halfWidth *
+            halfWidth +
+            halfHeight *
+            halfHeight
+        ) +
+        180.0f;
+
+    currentPath.clear();
+    pathIndex =
+        0;
+
+    hasPath =
+        false;
+
+    pendingNpc =
+        -1;
+
+    huashanJumpStart =
+        playerPosition;
+
+    huashanJumpEnd =
+        finalWaveUltimateCenter;
+
+    huashanImpactCenter =
+        finalWaveUltimateCenter;
+
+    huashanJumpTimer =
+        0.0f;
+
+    huashanJumpDuration =
+        0.42f;
+
+    huashanJumpActive =
+        true;
+}
+
+void Game::UpdateFinalWaveUltimate(
+    float worldDt,
+    float realDt
+)
+{
+    (void)worldDt;
+
+    if (!finalWaveUltimateActive)
+    {
+        return;
+    }
+
+    switch (
+        finalWaveUltimateStage
+        )
+    {
+        // --------------------------------------------------
+        // Phase 1:
+        // Huashan-style leap toward arena center.
+        // --------------------------------------------------
+
+    case FinalWaveUltimateStage::JumpToCenter:
+    {
+        if (huashanJumpActive)
+        {
+            return;
+        }
+
+        // Huashan landed.
+        // Immediately begin the full Wind Blade sequence.
+        ActivateWindBlade();
+
+        if (windBladeCasting)
+        {
+            finalWaveUltimateStage =
+                FinalWaveUltimateStage::WindBlade;
+        }
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Phase 2:
+    // Wait for Wind Blade to completely finish.
+    // --------------------------------------------------
+
+    case FinalWaveUltimateStage::WindBlade:
+    {
+        if (windBladeCasting)
+        {
+            return;
+        }
+
+        finalWaveUltimateTimer =
+            0.0f;
+
+        finalWaveUltimateStage =
+            FinalWaveUltimateStage::DongfengBurst;
+
+        AddScreenShake(
+            0.16f,
+            10.0f
+        );
+
+        return;
+    }
+
+    // --------------------------------------------------
+    // Phase 3:
+    // radial Dongfeng projectiles travel outward.
+    // --------------------------------------------------
+
+    case FinalWaveUltimateStage::DongfengBurst:
+    {
+        finalWaveUltimateTimer +=
+            realDt;
+
+        if (
+            finalWaveUltimateTimer <
+            finalWaveDongfengDuration
+            )
+        {
+            return;
+        }
+
+        // The waves reached the edge of the chamber.
+        // Now destroy everything remaining.
+        ClearActiveChamberEnemiesForFinale();
+
+        finalWaveUltimateActive =
+            false;
+
+        finalWaveUltimateStage =
+            FinalWaveUltimateStage::None;
+
+        finalWaveUltimateTimer =
+            0.0f;
+
+        if (
+            playerAnimationState ==
+            PlayerAnimationState::SkillSpinning
+            )
+        {
+            playerAnimationState =
+                PlayerAnimationState::Idle;
+
+            playerAnimFrame =
+                0;
+
+            playerAnimTimer =
+                0.0f;
+        }
+
+        return;
+    }
+
+    case FinalWaveUltimateStage::None:
+    default:
+        return;
+    }
+}
+
+void Game::ClearActiveChamberEnemiesForFinale()
+{
+    int deathVisualIndex =
+        0;
+
+    for (
+        Enemy& enemy :
+        enemies
+        )
+    {
+        if (
+            !enemy.active ||
+            enemy.chamberId !=
+            activeChamberId ||
+            enemy.type ==
+            EnemyType::Boss
+            )
+        {
+            continue;
+        }
+
+        enemy.hp =
+            0;
+
+        enemy.active =
+            false;
+
+        RecordEnemyDeathForSmoke(
+            enemy.pos
+        );
+
+        // Do not create 42 expensive death bursts
+        // on the exact same frame.
+        if (
+            deathVisualIndex %
+            3 ==
+            0
+            )
+        {
+            SpawnDeathBurst(
+                enemy.pos
+            );
+        }
+
+        deathVisualIndex++;
+
+        RegisterEnemyDefeat();
+    }
+
+    for (
+        Projectile& projectile :
+        projectiles
+        )
+    {
+        if (
+            projectile.owner ==
+            ProjectileOwner::Enemy
+            )
+        {
+            projectile.active =
+                false;
+        }
+    }
+
+    pendingEnemySpawns.erase(
+        std::remove_if(
+            pendingEnemySpawns.begin(),
+            pendingEnemySpawns.end(),
+            [this](
+                const PendingEnemySpawn& pending
+                )
+            {
+                return
+                    pending.chamberId ==
+                    activeChamberId;
+            }
+        ),
+        pendingEnemySpawns.end()
+    );
+
+    wave.enemiesSpawned =
+        wave.enemiesToSpawn;
+
+    AddScreenShake(
+        0.35f,
+        20.0f
+    );
+}
+

@@ -20,6 +20,14 @@ enum class PlayerDirection
     DownLeft = 7
 };
 
+enum class FinalWaveUltimateStage
+{
+    None,
+    JumpToCenter,
+    WindBlade,
+    DongfengBurst
+};
+
 enum class PlayerAnimationState
 {
     Idle,
@@ -146,6 +154,26 @@ struct Light2D
     float flickerSpeed = 0.0f;
     float flickerRadiusAmount = 0.0f;
     float flickerPhase = 0.0f;
+};
+
+struct DeathSmokeCluster
+{
+    bool active =
+        false;
+
+    Vector2 center{
+        0.0f,
+        0.0f
+    };
+
+    int deathCount =
+        0;
+
+    float age =
+        0.0f;
+
+    float idleTime =
+        0.0f;
 };
 
 struct VfxParticle
@@ -843,6 +871,10 @@ struct Enemy
     float landingStunOnLand = 0.0f;
     float visualHeight = 0.0f;
 
+    // Huashan can store a second damage hit that is
+// released when this enemy touches the ground.
+    int huashanLandingDamageOnLand = 0;
+
     int dongfengHitId = 0;
 
     float shootTimer = 0.0f;
@@ -1232,6 +1264,11 @@ private:
     void StartChamberEncounter(
         int chamberId
     );
+
+    float firstChamberStartRadius =
+        260.0f;
+
+    void UpdateFirstChamberEncounterTrigger();
 
     void StartChamberWave(
         int chamberId,
@@ -2532,6 +2569,17 @@ private:
     float slashVfxRotationOffsetDegrees = 0.0f;
 
 
+    static constexpr int MaximumActiveEnemies =
+        64;
+
+    int GetChamber0WaveSpawnBatchSize(
+        int chamberWave
+    ) const;
+
+    EnemyType ChooseEnemyTypeForChamberWave(
+        int chamberWave
+    ) const;
+
 
     // Delay between the third and later burst arrows.
 //
@@ -2910,6 +2958,24 @@ private:
 
     WaveManager wave;
 
+    int pendingSkillChoiceChamberId =
+        -1;
+
+    int pendingNextWaveAfterSkillChoice =
+        0;
+
+    bool pendingClearChamberAfterSkillChoice =
+        false;
+
+    // Every completed Chamber 0 wave grants this
+    // many levels to every currently unlocked ability.
+    int skillLevelsPerCompletedWave =
+        5;
+
+    int pendingWaveAfterUpgrade = 0;
+    int pendingUpgradeChamberId = -1;
+    bool pendingChamberClearAfterUpgrade = false;
+
     // Stops only automatic wave spawning.
 // Existing enemies continue updating normally.
     bool waveSpawningPaused = false;
@@ -3226,7 +3292,7 @@ private:
     static constexpr int MaxVfxParticles = 120;
 
     int vfxSpawnedThisFrame = 0;
-    int maxVfxSpawnPerFrame = 24;
+    int maxVfxSpawnPerFrame = 32;
 
     bool CanSpawnVfx(int count = 1);
 
@@ -3856,9 +3922,53 @@ private:
     Texture2D skillIconDongfeng{};
     bool skillIconDongfengLoaded = false;
 
+    float dongfengSideStrikeSpacing =
+        165.0f;
+
+    Vector2 GetDongfengLaneOffset(
+        int lane
+    ) const;
+
     float upgradeChoicePopupTimer = 0.0f;
     float upgradeChoicePopupDuration = 0.5f;
     float upgradeChoicePopupStagger = 0.2f;
+
+    bool finalWaveUltimateActive =
+        false;
+
+    FinalWaveUltimateStage
+        finalWaveUltimateStage =
+        FinalWaveUltimateStage::None;
+
+    float finalWaveUltimateTimer =
+        0.0f;
+
+    float finalWaveDongfengDuration =
+        0.72f;
+
+    float finalWaveDongfengRange =
+        1000.0f;
+
+
+    bool finalWaveUltimateEnabled =
+        false;
+
+    Vector2 finalWaveUltimateCenter{
+        0.0f,
+        0.0f
+    };
+
+    void StartFinalWaveUltimate();
+
+    void UpdateFinalWaveUltimate(
+        float worldDt,
+        float realDt
+    );
+
+    bool IsFinalWaveUltimateAvailable()
+        const;
+
+    void ClearActiveChamberEnemiesForFinale();
 
     void LoadSkillUiAssets();
     void UnloadSkillUiAssets();
@@ -3878,5 +3988,39 @@ private:
     ) const;
 
     Rectangle FitTextureInRect(const Texture2D& texture, Rectangle bounds, float padding = 0.0f) const;
+
+    void ApplyCompletedWaveSkillLevels();
+
+    DeathSmokeCluster
+        deathSmokeClusters[6]{};
+
+    float deathSmokeClusterRadius =
+        145.0f;
+
+    float deathSmokeClusterLifetime =
+        0.20f;
+
+    float deathSmokeClusterSettleTime =
+        0.065f;
+
+    int deathSmokeClusterMinimum =
+        3;
+
+    int deathSmokeClusterMaximum =
+        5;
+
+    void RecordEnemyDeathForSmoke(
+        Vector2 worldPosition
+    );
+
+    void UpdateDeathSmokeClusters(
+        float dt
+    );
+
+    void SpawnDeathClusterSmoke(
+        Vector2 worldPosition,
+        int deathCount
+    );
+
 
 };
